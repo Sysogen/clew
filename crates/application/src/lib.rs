@@ -9,4 +9,4 @@
 
 pub mod discover_surfaces;
 
-pub use discover_surfaces::{DiscoverSurfaces, DiscoveryReport};
+pub use discover_surfaces::{DiscoverSurfaces, DiscoveryReport, RegisteredHook};

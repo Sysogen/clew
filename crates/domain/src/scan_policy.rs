@@ -13,18 +13,39 @@ pub const DEFAULT_PRUNED: &[&str] = &[".git", "node_modules", "target", "vendor"
 /// The default recursion limit when the operator sets none.
 pub const DEFAULT_MAX_DEPTH: usize = 12;
 
+/// The default cap on a configuration file, generous for JSON or TOML.
+pub const DEFAULT_MAX_FILE_BYTES: u64 = 1024 * 1024;
+
 /// The bounds of a single scan.
 #[derive(Debug, Clone)]
 pub struct ScanPolicy {
     max_depth: usize,
     pruned: Vec<String>,
+    max_file_bytes: u64,
 }
 
 impl ScanPolicy {
     /// A policy with an explicit depth limit and pruning set.
     #[must_use]
     pub fn new(max_depth: usize, pruned: Vec<String>) -> Self {
-        Self { max_depth, pruned }
+        Self {
+            max_depth,
+            pruned,
+            max_file_bytes: DEFAULT_MAX_FILE_BYTES,
+        }
+    }
+
+    /// Cap the size of any single file read during the scan.
+    #[must_use]
+    pub fn with_max_file_bytes(mut self, bytes: u64) -> Self {
+        self.max_file_bytes = bytes;
+        self
+    }
+
+    /// The per-file size cap.
+    #[must_use]
+    pub fn max_file_bytes(&self) -> u64 {
+        self.max_file_bytes
     }
 
     /// A policy with the given depth limit and [`DEFAULT_PRUNED`].
