@@ -4,8 +4,14 @@
 
 Report privately through GitHub's private vulnerability reporting: open the
 [Security tab](https://github.com/sysogen/clew/security/advisories) and choose
-"Report a vulnerability". Please do not open a public issue for a security
-problem.
+"Report a vulnerability".
+
+If that page does not offer a reporting option, email **fn@sysogen.com** with
+the details instead. A reporting channel that turns out to be closed is the
+reason findings go unreported, so please use the fallback rather than assuming
+we are uninterested.
+
+Please do not open a public issue for a security problem.
 
 We aim to acknowledge a report within three working days and to agree a
 disclosure timeline with you. We will credit you in the advisory unless you ask
