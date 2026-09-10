@@ -39,7 +39,7 @@ mod tests {
     }
 
     #[test]
-    fn no_two_tools_claim_the_same_path() {
+    fn no_two_tools_claim_the_claude_settings_path() {
         let path = RepoPath::root().join(".claude").join("settings.json");
         let claimants: Vec<&str> = REGISTRY
             .iter()
