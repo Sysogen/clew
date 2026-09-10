@@ -45,5 +45,5 @@ first tagged release.
   devcontainers.
 - `CLEW_MAX_DEPTH` sets the directory recursion limit.
 
-[Unreleased]: https://github.com/Sysogen/clew/commits/main
+[Unreleased]: https://github.com/sysogen/clew/commits/main
 [0.0.0]: https://crates.io/crates/clew-cli/0.0.0
