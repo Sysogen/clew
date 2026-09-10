@@ -10,5 +10,5 @@
 pub mod args;
 pub mod render;
 
-pub use args::{parse, Command, ParseError};
+pub use args::{Command, ParseError, parse};
 pub use render::report;

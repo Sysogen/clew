@@ -4,7 +4,7 @@
 //! Walk a repository and report the agent surfaces it configures.
 
 use clew_domain::ports::file_tree::{FileTree, FileTreeError};
-use clew_domain::{classify, RepoPath, ScanPolicy, Surface};
+use clew_domain::{RepoPath, ScanPolicy, Surface, classify};
 
 /// What a scan found, and where it could not look.
 ///
@@ -78,8 +78,8 @@ impl<'a, T: FileTree> DiscoverSurfaces<'a, T> {
 mod tests {
     use std::collections::BTreeMap;
 
-    use clew_domain::ports::file_tree::{DirEntry, EntryKind};
     use clew_domain::SurfaceKind;
+    use clew_domain::ports::file_tree::{DirEntry, EntryKind};
 
     use super::*;
 

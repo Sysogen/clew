@@ -25,7 +25,12 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
 
       - name: Toolchain
-        run: rustup component add rustfmt clippy
+        # rustup reads rust-toolchain.toml and installs the pinned channel and
+        # its components, so the version here matches the one developers use.
+        run: |
+          rustup show active-toolchain
+          rustc --version
+          cargo --version
 
       - name: Format
         run: cargo fmt --all --check
@@ -38,6 +43,23 @@ jobs:
 
       - name: Package
         run: cargo package --allow-dirty
+
+  msrv:
+    name: MSRV
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Build at the declared minimum
+        # rust-version is a promise to consumers. Verify the workspace really
+        # does build on it rather than trusting the number in the manifest.
+        run: |
+          set -euo pipefail
+          msrv="$(cargo metadata --format-version 1 --no-deps \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["rust_version"])')"
+          echo "Declared MSRV: $msrv"
+          rustup toolchain install "$msrv" --profile minimal --no-self-update
+          cargo "+$msrv" check --workspace --all-targets
 
   commits:
     name: Commit messages

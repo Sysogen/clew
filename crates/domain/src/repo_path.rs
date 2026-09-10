@@ -104,8 +104,10 @@ mod tests {
 
     #[test]
     fn an_exact_root_level_path_matches_its_own_suffix() {
-        assert!(RepoPath::root()
-            .join("CLAUDE.md")
-            .ends_with_segments("CLAUDE.md"));
+        assert!(
+            RepoPath::root()
+                .join("CLAUDE.md")
+                .ends_with_segments("CLAUDE.md")
+        );
     }
 }

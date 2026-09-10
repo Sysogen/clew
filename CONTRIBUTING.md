@@ -1,14 +1,29 @@
 # Contributing
 
+## Toolchain
+
+`rust-toolchain.toml` pins the channel, so `rustup` installs the right one on
+first build and no setup step is needed.
+
+Two version numbers do different jobs and are allowed to differ:
+
+| Where | Meaning |
+| --- | --- |
+| `rust-toolchain.toml` | The toolchain this repository is developed and checked with |
+| `rust-version` in `Cargo.toml` | The minimum a consumer needs, verified by the `MSRV` CI job |
+
+The workspace is on edition 2024.
+
 ## Before you open a pull request
 
 ```sh
 cargo fmt --all --check
-cargo clippy --all-targets -- -D warnings
-cargo test --all
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
 ```
 
-CI runs exactly these on Linux, macOS, and Windows.
+CI runs exactly these on Linux, macOS, and Windows, plus an `MSRV` job that
+builds on the declared minimum and a `Commit messages` job.
 
 ## Architecture
 

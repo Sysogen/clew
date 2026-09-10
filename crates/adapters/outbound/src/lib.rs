@@ -1,4 +1,4 @@
- // SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Sysogen Lda
 
 //! Outbound filesystem adapter.
@@ -11,8 +11,8 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use clew_domain::ports::file_tree::{DirEntry, EntryKind, FileTree, FileTreeError};
 use clew_domain::RepoPath;
+use clew_domain::ports::file_tree::{DirEntry, EntryKind, FileTree, FileTreeError};
 
 /// A [`FileTree`] backed by the real filesystem, rooted at a directory.
 pub struct StdFileTree {

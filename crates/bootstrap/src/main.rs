@@ -7,11 +7,11 @@ use std::env;
 use std::path::Path;
 use std::process::ExitCode;
 
-use clew_adapter_cli::{parse, report, Command};
+use clew_adapter_cli::{Command, parse, report};
 use clew_adapter_fs::StdFileTree;
 use clew_application::DiscoverSurfaces;
-use clew_domain::scan_policy::DEFAULT_MAX_DEPTH;
 use clew_domain::ScanPolicy;
+use clew_domain::scan_policy::DEFAULT_MAX_DEPTH;
 
 const USAGE: &str = "\
 Discover AI coding agent configuration surfaces in a repository.
