@@ -1,17 +1,21 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
 #
-# Refuse to create an unsigned commit. Runs before the commit object exists,
-# so it fails with an explanation rather than leaving an unsigned commit to
-# discover later.
+# Refuse to create a commit that is unsigned or authored under the wrong
+# identity. Runs before the commit object exists, so both fail with an
+# explanation rather than leaving a bad commit to discover later.
 set -euo pipefail
 
-resolve() {
-    if [ -x "$(git rev-parse --show-toplevel)/scripts/check-signing.sh" ]; then
-        printf '%s\n' "$(git rev-parse --show-toplevel)/scripts/check-signing.sh"
+root="$(git rev-parse --show-toplevel)"
+
+run() {
+    local local_copy="$root/scripts/$1"
+    if [ -x "$local_copy" ]; then
+        "$local_copy" "${@:2}"
     else
-        printf '%s\n' "$HOME/.claude/skills/git-workflow/check-signing.sh"
+        "$HOME/.claude/skills/git-workflow/$1" "${@:2}"
     fi
 }
 
-exec "$(resolve)" --config
+run check-identity.sh
+run check-signing.sh --config
