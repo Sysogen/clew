@@ -5,7 +5,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-Everything below lands in 0.1.0, the first release cut from the public
+Everything in this section lands in 0.1.0, the first release cut from the public
 repository.
 
 ### Added
