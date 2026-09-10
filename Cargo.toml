@@ -6,6 +6,7 @@ rust-version = "1.70"
 description = "Discover AI coding agent configuration surfaces: MCP servers, hooks, and instruction files."
 license = "Apache-2.0"
 readme = "README.md"
+repository = "https://github.com/sysogen/clew"
 keywords = ["cli", "mcp", "agents", "audit", "security"]
 categories = ["command-line-utilities", "development-tools"]
 exclude = ["/.github", "/target"]
