@@ -1,0 +1,21 @@
+[package]
+name = "clew-cli"
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.70"
+description = "Discover AI coding agent configuration surfaces: MCP servers, hooks, and instruction files."
+license = "Apache-2.0"
+readme = "README.md"
+keywords = ["cli", "mcp", "agents", "audit", "security"]
+categories = ["command-line-utilities", "development-tools"]
+exclude = ["/.github", "/target"]
+
+[[bin]]
+name = "clew"
+path = "src/main.rs"
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1
+panic = "abort"
