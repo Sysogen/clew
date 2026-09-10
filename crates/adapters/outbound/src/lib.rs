@@ -101,6 +101,26 @@ fn map_contents_error(error: &io::Error) -> FileContentsError {
     }
 }
 
+/// Turn a failed open into the error the caller should see.
+///
+/// Two cases need a second look at the path. A no-follow open of a symbolic
+/// link fails with a platform errno that std does not expose as a stable
+/// `ErrorKind`. On Windows, opening a directory fails with an access error
+/// unless the handle is requested with backup semantics, which this adapter
+/// has no reason to ask for.
+///
+/// This runs only after the open has already failed, and decides what to call
+/// the failure. Nothing is read on the strength of it, so the second look
+/// cannot be raced into granting access.
+fn classify_open_error(path: &Path, error: &io::Error) -> FileContentsError {
+    match fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_symlink() || meta.is_dir() => {
+            FileContentsError::NotARegularFile
+        }
+        _ => map_contents_error(error),
+    }
+}
+
 /// Open for reading, refusing a symbolic link in the open itself.
 ///
 /// The refusal must be atomic with the open. Calling `symlink_metadata` first
@@ -141,15 +161,8 @@ impl FileContents for StdFileContents {
         // A check followed by an open has a window in which the path can be
         // replaced by a symbolic link, and the open would follow it out of the
         // scan root. Refusing the link in the open itself has no such window.
-        let file = open_no_follow(&absolute).map_err(|error| {
-            // Classification only, after the fact, so no race matters here: a
-            // no-follow open of a link fails with a platform-specific errno
-            // that std does not yet expose as a stable ErrorKind.
-            match fs::symlink_metadata(&absolute) {
-                Ok(meta) if meta.file_type().is_symlink() => FileContentsError::NotARegularFile,
-                _ => map_contents_error(&error),
-            }
-        })?;
+        let file =
+            open_no_follow(&absolute).map_err(|error| classify_open_error(&absolute, &error))?;
 
         // Read back from the open descriptor, not from the path, so this
         // describes the file actually being read.
