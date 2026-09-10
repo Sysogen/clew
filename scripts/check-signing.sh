@@ -57,13 +57,8 @@ check_config() {
     fi
 }
 
-# %G? states. N and B fail, as does anything unlisted: an unrecognised code
-# means git knows something this script does not, and a signing gate should not
-# guess in the commit's favour.
-#
-#   G good   U valid, key not in allowed_signers   E signed, format not
-#   checkable here (a forge PGP merge read on an SSH-signing machine)
-#   X/Y/R good, key expired or revoked
+# Only N (unsigned) and B (bad) are real failures. An unlisted status fails too:
+# a signing gate should not guess in the commit's favour.
 verify_range() {
     local range="$1" bad=0 line status sha subject
     while IFS= read -r line; do

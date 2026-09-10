@@ -33,20 +33,15 @@ pub enum FileContentsError {
     Unreadable(String),
 }
 
-/// Reads a file as text. Separate from
-/// [`FileTree`](crate::ports::file_tree::FileTree) so a caller that only
-/// enumerates paths cannot also read them.
+/// Reads a file as text.
 pub trait FileContents {
-    /// Read `path` as UTF-8, refusing anything larger than `max_bytes`.
+    /// Read `path` as UTF-8, refusing a symlink or anything over `max_bytes`.
     ///
-    /// Implementations must bound the allocation by construction, at most
-    /// `max_bytes` plus one, and must refuse a symlink rather than follow it
-    /// out of the scan root.
+    /// Implementations must bound the allocation, not measure after reading.
     ///
     /// # Errors
     ///
     /// Absent, unreadable, not a regular file, over the limit, or not UTF-8.
-    /// One failure does not invalidate a scan; callers record and continue.
     fn read(&self, path: &RepoPath, max_bytes: u64) -> Result<String, FileContentsError>;
 }
 
