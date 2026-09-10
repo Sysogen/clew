@@ -59,9 +59,13 @@ check_config() {
 
 # Verification states git reports for %G?.
 #
-# The gate exists to stop an UNSIGNED commit, so only N (no signature) and B
-# (bad signature) fail. The rest carry a signature this machine cannot fully
-# validate, which is a different thing and common in normal use:
+# The gate exists to stop an UNSIGNED commit, so N (no signature) and B (bad
+# signature) fail, as does any status not listed below: an unrecognised code
+# means git is telling us something this script does not understand, and
+# guessing in favour of the commit is the wrong default for a signing gate.
+#
+# The rest carry a signature this machine cannot fully validate, which is a
+# different thing and common in normal use:
 #
 #   G  good
 #   U  valid, but the key is not in the allowed signers file

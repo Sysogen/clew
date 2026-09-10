@@ -101,6 +101,34 @@ fn map_contents_error(error: &io::Error) -> FileContentsError {
     }
 }
 
+/// Open for reading, refusing a symbolic link in the open itself.
+///
+/// The refusal must be atomic with the open. Calling `symlink_metadata` first
+/// and `File::open` second leaves a window in which the path can be swapped for
+/// a link pointing outside the scan root.
+fn open_no_follow(path: &Path) -> io::Result<fs::File> {
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.custom_flags(libc::O_NOFOLLOW);
+    }
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        // FILE_FLAG_OPEN_REPARSE_POINT: open the reparse point itself rather
+        // than its target, so a link cannot redirect the read. Windows exposes
+        // no equivalent of O_NOFOLLOW; this is the documented substitute.
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+
+    options.open(path)
+}
+
 impl FileContents for StdFileContents {
     fn read(&self, path: &RepoPath, max_bytes: u64) -> Result<String, FileContentsError> {
         let absolute = if path.as_str().is_empty() {
@@ -109,9 +137,23 @@ impl FileContents for StdFileContents {
             self.root.join(path.as_str())
         };
 
-        // symlink_metadata rather than metadata: a link must be refused, not
-        // resolved, because it can point outside the scan root.
-        let meta = fs::symlink_metadata(&absolute).map_err(|e| map_contents_error(&e))?;
+        // Opened with a no-follow flag rather than checked and then opened.
+        // A check followed by an open has a window in which the path can be
+        // replaced by a symbolic link, and the open would follow it out of the
+        // scan root. Refusing the link in the open itself has no such window.
+        let file = open_no_follow(&absolute).map_err(|error| {
+            // Classification only, after the fact, so no race matters here: a
+            // no-follow open of a link fails with a platform-specific errno
+            // that std does not yet expose as a stable ErrorKind.
+            match fs::symlink_metadata(&absolute) {
+                Ok(meta) if meta.file_type().is_symlink() => FileContentsError::NotARegularFile,
+                _ => map_contents_error(&error),
+            }
+        })?;
+
+        // Read back from the open descriptor, not from the path, so this
+        // describes the file actually being read.
+        let meta = file.metadata().map_err(|e| map_contents_error(&e))?;
         if !meta.file_type().is_file() {
             return Err(FileContentsError::NotARegularFile);
         }
@@ -125,7 +167,6 @@ impl FileContents for StdFileContents {
         // afterwards: both refuse the same inputs, and the difference is
         // memory and time rather than behaviour. It holds by the shape of the
         // code, so do not replace `take` with a read-then-measure.
-        let file = fs::File::open(&absolute).map_err(|e| map_contents_error(&e))?;
         let mut bytes = Vec::new();
         file.take(max_bytes.saturating_add(1))
             .read_to_end(&mut bytes)
@@ -145,8 +186,9 @@ mod contents_tests {
 
     use super::*;
 
-    /// A scratch directory keyed by process and line, so concurrent test
-    /// binaries and parallel tests inside one binary never share a path.
+    /// A scratch directory keyed by process id and the caller's `tag`, so
+    /// concurrent test binaries and parallel tests inside one binary never
+    /// share a path. Every caller must pass a tag unique within this module.
     fn scratch(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("clew-contents-{}-{tag}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
