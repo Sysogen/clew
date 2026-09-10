@@ -128,11 +128,7 @@ docs: correct the install command in the readme
 
 ### Checking before you push
 
-```sh
-git config core.hooksPath .githooks
-```
-
-That rejects a bad message at commit time. Run it over a range by hand with:
+Optional, and worth running if you want the feedback early:
 
 ```sh
 ./scripts/check-commit-message.sh --range origin/main..HEAD
@@ -141,6 +137,34 @@ That rejects a bad message at commit time. Run it over a range by hand with:
 Merge commits and reverts are exempt. Tense is documented but not linted,
 because no regex distinguishes "embed" from "embedded" without rejecting
 legitimate words.
+
+**You do not need to install the git hooks.** They exist for maintainers and
+include a commit-signing gate that would refuse your commits unless you have SSH
+signing configured. If you want them anyway:
+
+```sh
+git config core.hooksPath .githooks
+```
+
+### How your pull request gets merged
+
+Pull requests are **squash merged**, so the whole branch lands on `main` as one
+commit whose subject is the pull request title. Three things follow:
+
+- **Your individual commit messages do not have to follow the convention.** CI
+  reports on them so you can see the house style, but that check cannot block
+  the merge. Commit however helps you work.
+- **The pull request title does need to follow it**, because it becomes the
+  subject of the commit that lands. If CI flags it, a maintainer can fix it by
+  editing the title; you are not asked to rewrite history.
+- **Your commits do not need to be signed.** GitHub signs the squash commit it
+  creates, so `main` stays fully signed regardless.
+
+What genuinely has to pass is `cargo fmt`, `cargo clippy`, and the tests, on
+Linux, macOS, and Windows. Those are correctness, not style.
+
+A maintainer can waive the title check for one pull request with the
+`override: commit-convention` label.
 
 ## Reporting a bug
 

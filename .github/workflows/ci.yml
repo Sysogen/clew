@@ -5,6 +5,9 @@ name: CI
   push:
     branches: [main]
   pull_request:
+    # edited and labeled so retitling a pull request, or applying the
+    # override label, re-runs the checks rather than leaving a stale red X.
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
 
 permissions:
   contents: read
@@ -64,29 +67,46 @@ jobs:
   commits:
     name: Commit messages
     runs-on: ubuntu-latest
+    # A maintainer can switch this off for one pull request by applying the
+    # label. Nothing here is a correctness gate, so a human decision beats it.
+    if: "!contains(github.event.pull_request.labels.*.name, 'override: commit-convention')"
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
         with:
           fetch-depth: 0
 
-      - name: Angular convention
+      - name: Pull request title
+        # Pull requests are squash merged, so the title becomes the subject of
+        # the single commit that lands on main. That is the message worth
+        # gating, and a maintainer can fix it by editing the title.
+        if: github.event_name == 'pull_request'
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: ./scripts/check-commit-message.sh --subject "$TITLE"
+
+      - name: Contributor commits (advisory)
+        # Individual commits never reach main through a squash merge, so this
+        # reports without blocking. A contributor should not have to rewrite
+        # history to get a fix reviewed.
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
         env:
           PR_BASE: ${{ github.event.pull_request.base.sha }}
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: ./scripts/check-commit-message.sh --range "$PR_BASE..$PR_HEAD"
+
+      - name: Commits pushed to main
+        # These are the maintainer's own and are held to the full standard.
+        if: github.event_name == 'push'
+        env:
           PUSH_BEFORE: ${{ github.event.before }}
           PUSH_AFTER: ${{ github.event.after }}
         run: |
           set -euo pipefail
           empty=0000000000000000000000000000000000000000
-          if [ -n "$PR_BASE" ]; then
-            # Every commit the pull request adds.
-            range="$PR_BASE..$PR_HEAD"
-          elif [ -n "$PUSH_BEFORE" ] && [ "$PUSH_BEFORE" != "$empty" ]; then
-            # Every commit this push added, not just the tip.
+          if [ -n "$PUSH_BEFORE" ] && [ "$PUSH_BEFORE" != "$empty" ]; then
             range="$PUSH_BEFORE..$PUSH_AFTER"
           else
-            # First push of a branch: check its whole history.
             range="HEAD"
           fi
-          echo "Checking $range"
           ./scripts/check-commit-message.sh --range "$range"

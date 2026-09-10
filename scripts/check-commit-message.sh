@@ -8,6 +8,7 @@
 #   check-commit-message.sh <file>            one message, from a file
 #   check-commit-message.sh --range A..B      every commit in a range
 #   check-commit-message.sh -                 one message, from stdin
+#   check-commit-message.sh --subject "TEXT"  header rules only, no body rules
 #
 # perl is the regex engine because it is present on every macOS and Linux
 # developer machine and supports the character classes these patterns need.
@@ -34,6 +35,44 @@ suggest() {
 }
 
 # Validate one message. Returns 1 if invalid, printing reasons to stderr.
+check_subject() {
+    local header="$1" label="${2:-(subject)}"
+    problems=()
+    advice=()
+
+    if printf '%s' "$header" | perl -ne 'exit(/^(revert: |Revert ")/? 0 : 1)'; then
+        return 0
+    fi
+
+    if printf '%s' "$header" | perl -ne "exit(/^($TYPES)(\\([a-z0-9][a-z0-9._-]*\\))?: /? 0 : 1)"; then
+        if [ "${#header}" -gt "$SUBJECT_MAX" ]; then
+            note "subject is ${#header} characters, the maximum is $SUBJECT_MAX"
+        elif [ "${#header}" -gt "$SUBJECT_TARGET" ]; then
+            suggest "subject is ${#header} characters; aim for $SUBJECT_TARGET"
+        fi
+        local summary
+        summary="$(printf '%s' "$header" | perl -pe "s/^($TYPES)(\\([^)]*\\))?: //")"
+        [ -n "$summary" ] || note "summary is empty"
+        if printf '%s' "$summary" | perl -ne 'exit(/^[A-Z]/? 0 : 1)'; then
+            note "summary must not start with a capital letter"
+        fi
+        if printf '%s' "$summary" | perl -ne 'exit(/\.$/? 0 : 1)'; then
+            note "summary must not end with a full stop"
+        fi
+    else
+        note "must be '<type>(<optional scope>): <summary>'"
+        note "allowed types: ${TYPES//|/, }"
+    fi
+
+    if [ "${#problems[@]}" -eq 0 ]; then
+        [ "${#advice[@]}" -gt 0 ] && printf '  note: %s\n' "${advice[@]}" >&2
+        return 0
+    fi
+    printf '%s\n' "$label" >&2
+    printf '  %s\n' "${problems[@]}" >&2
+    return 1
+}
+
 check_message() {
     local message="$1" label="$2"
     local header
@@ -139,6 +178,9 @@ main() {
                 failures=$((failures + 1))
             fi
         done <<<"$shas"
+        ;;
+    --subject)
+        check_subject "${2:?--subject needs the text}" "pull request title" || failures=1
         ;;
     -)
         check_message "$(cat)" "(stdin)" || failures=1
