@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Sysogen Lda
+#
+# Reject a commit message that does not follow the Angular convention.
+# Enable with: git config core.hooksPath .githooks
+
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+exec "$repo_root/scripts/check-commit-message.sh" "$1"

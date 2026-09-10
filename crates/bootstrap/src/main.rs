@@ -2,9 +2,6 @@
 // Copyright (c) 2026 Sysogen Lda
 
 //! Composition root.
-//!
-//! The one place a concrete adapter meets a use case, and the only place that
-//! reads the environment or writes to a stream.
 
 use std::env;
 use std::path::Path;

@@ -38,3 +38,33 @@ jobs:
 
       - name: Package
         run: cargo package --allow-dirty
+
+  commits:
+    name: Commit messages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Angular convention
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_AFTER: ${{ github.event.after }}
+        run: |
+          set -euo pipefail
+          empty=0000000000000000000000000000000000000000
+          if [ -n "$PR_BASE" ]; then
+            # Every commit the pull request adds.
+            range="$PR_BASE..$PR_HEAD"
+          elif [ -n "$PUSH_BEFORE" ] && [ "$PUSH_BEFORE" != "$empty" ]; then
+            # Every commit this push added, not just the tip.
+            range="$PUSH_BEFORE..$PUSH_AFTER"
+          else
+            # First push of a branch: check its whole history.
+            range="HEAD"
+          fi
+          echo "Checking $range"
+          ./scripts/check-commit-message.sh --range "$range"

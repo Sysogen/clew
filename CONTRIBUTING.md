@@ -47,6 +47,85 @@ that fail if you bypass it.
 value. A change that breaks either is a security defect, not a feature. See
 [SECURITY.md](SECURITY.md).
 
+## Commit messages
+
+This repository follows the [Angular commit message
+guidelines](https://github.com/angular/angular/blob/main/contributing-docs/commit-message-guidelines.md).
+CI rejects a branch containing a message that does not.
+
+```
+<type>(<optional scope>): <summary>
+                                        <- blank line
+<body>
+                                        <- blank line
+<footer>
+```
+
+### Type
+
+One of eight. There is no `chore`; pick the one that describes the change.
+
+| Type | For |
+| --- | --- |
+| `build` | The build system, packaging, or dependencies |
+| `ci` | CI configuration and scripts |
+| `docs` | Documentation only |
+| `feat` | A new feature |
+| `fix` | A bug fix |
+| `perf` | A change that improves performance |
+| `refactor` | A change that neither fixes a bug nor adds a feature |
+| `test` | Adding or correcting tests |
+
+Scope is optional and lower case. Use the crate it touches without the `clew-`
+prefix: `domain`, `application`, `adapter-cli`, `adapter-fs`, `cli`.
+
+### Summary
+
+Imperative present tense, "add" rather than "added" or "adds". No capital first
+letter, no full stop at the end. The whole header is at most 100 characters.
+
+### Body
+
+**Mandatory on every type except `docs`**, and at least 20 characters. Explain
+the motivation and what changed in behaviour, not the mechanics the diff already
+shows. Imperative present tense here too.
+
+### Footer
+
+Optional. A breaking change starts with `BREAKING CHANGE: `, a removal with
+`DEPRECATED: `, and issues are closed with `Fixes #12` or `Closes #12`.
+
+### Examples
+
+```
+fix(domain): match a surface on segment boundaries
+
+A bare settings.json was classified as Claude Code configuration because
+matching used the file name. Compare the full path suffix instead.
+
+Fixes #14
+```
+
+```
+docs: correct the install command in the readme
+```
+
+### Checking before you push
+
+```sh
+git config core.hooksPath .githooks
+```
+
+That rejects a bad message at commit time. Run it over a range by hand with:
+
+```sh
+./scripts/check-commit-message.sh --range origin/main..HEAD
+```
+
+Merge commits and reverts are exempt. Tense is documented but not linted,
+because no regex distinguishes "embed" from "embedded" without rejecting
+legitimate words.
+
 ## Reporting a bug
 
 Open an issue with the surface you expected, what `clew` reported, and the
