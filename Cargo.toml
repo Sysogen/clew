@@ -9,7 +9,7 @@ readme = "README.md"
 repository = "https://github.com/sysogen/clew"
 keywords = ["cli", "mcp", "agents", "audit", "security"]
 categories = ["command-line-utilities", "development-tools"]
-exclude = ["/.github", "/target"]
+exclude = ["/.github", "/target", "/.idea", "/.vscode"]
 
 [[bin]]
 name = "clew"
