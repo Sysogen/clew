@@ -70,18 +70,21 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
                     continue;
                 }
             };
-            for tool in REGISTRY {
-                match tool.hooks(&path, &text) {
-                    Ok(hooks) => {
-                        for hook in hooks {
-                            report.hooks.push(RegisteredHook {
-                                source: path.clone(),
-                                hook,
-                            });
-                        }
+            // One tool owns a path, so ask that one. Asking all of them would
+            // duplicate any failure once a second tool exists.
+            let Some(tool) = REGISTRY.iter().find(|t| t.classify(&path).is_some()) else {
+                continue;
+            };
+            match tool.hooks(&path, &text) {
+                Ok(hooks) => {
+                    for hook in hooks {
+                        report.hooks.push(RegisteredHook {
+                            source: path.clone(),
+                            hook,
+                        });
                     }
-                    Err(error) => report.unparsed.push((path.clone(), error.to_string())),
                 }
+                Err(error) => report.unparsed.push((path, error.to_string())),
             }
         }
     }
@@ -171,8 +174,9 @@ mod tests {
         }
     }
 
-    /// In-memory file contents. Absent paths read as empty, so a test that
-    /// only cares about traversal need not populate them.
+    /// In-memory file contents. An absent path reads as an empty JSON object,
+    /// not an empty string, so a traversal-only test does not silently produce
+    /// a parse failure for a settings surface it never populated.
     #[derive(Default)]
     struct FakeContents {
         files: BTreeMap<String, String>,
@@ -197,7 +201,11 @@ mod tests {
             if self.denied.contains(&key) {
                 return Err(FileContentsError::PermissionDenied);
             }
-            Ok(self.files.get(&key).cloned().unwrap_or_default())
+            Ok(self
+                .files
+                .get(&key)
+                .cloned()
+                .unwrap_or_else(|| "{}".to_owned()))
         }
     }
 
@@ -233,6 +241,7 @@ mod tests {
         assert_eq!(report.surfaces.len(), 1);
         assert_eq!(report.surfaces[0].path.as_str(), ".claude/settings.json");
         assert_eq!(report.surfaces[0].kind, SurfaceKind::ClaudeCode);
+        assert!(report.is_complete(), "{report:?}");
     }
 
     #[test]

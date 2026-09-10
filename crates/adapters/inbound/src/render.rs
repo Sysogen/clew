@@ -47,15 +47,8 @@ pub fn report(report: &DiscoveryReport, root: &str) -> String {
         );
     }
 
-    if !report.unparsed.is_empty() {
-        let _ = writeln!(
-            out,
-            "\n{} file(s) could not be read or understood:",
-            report.unparsed.len()
-        );
-        for (path, reason) in &report.unparsed {
-            let _ = writeln!(out, "  {}  ({reason})", path.as_str());
-        }
+    if !report.is_complete() {
+        let _ = writeln!(out, "\nThis scan is incomplete.");
     }
 
     if !report.unreadable.is_empty() {
@@ -66,11 +59,22 @@ pub fn report(report: &DiscoveryReport, root: &str) -> String {
         };
         let _ = writeln!(
             out,
-            "\n{} director{plural} could not be read; this scan is incomplete:",
+            "  {} director{plural} could not be read:",
             report.unreadable.len()
         );
         for (path, error) in &report.unreadable {
-            let _ = writeln!(out, "  {}  ({error})", path.as_str());
+            let _ = writeln!(out, "    {}  ({error})", path.as_str());
+        }
+    }
+
+    if !report.unparsed.is_empty() {
+        let _ = writeln!(
+            out,
+            "  {} file(s) could not be read or understood:",
+            report.unparsed.len()
+        );
+        for (path, reason) in &report.unparsed {
+            let _ = writeln!(out, "    {}  ({reason})", path.as_str());
         }
     }
 
@@ -134,7 +138,7 @@ mod tests {
 
         let out = report(&found, ".");
 
-        assert!(out.contains("this scan is incomplete"));
+        assert!(out.contains("This scan is incomplete."));
         assert!(out.contains("secret"));
         assert!(out.contains("permission denied"));
     }
@@ -215,6 +219,10 @@ mod tests {
 
         let out = report(&found, ".");
 
+        assert!(
+            out.contains("This scan is incomplete."),
+            "an unparsed file must mark the scan incomplete: {out}"
+        );
         assert!(out.contains("could not be read or understood"));
         assert!(out.contains("not valid JSON"));
     }
