@@ -40,11 +40,26 @@ if [ -z "$global_email" ]; then
     exit 0
 fi
 
+# A repository may legitimately need its own address. Recorded in .git/config
+# it is visible to anyone who looks, so it is deliberate and allowed. A value
+# that matches neither the local file nor the global one can only have come
+# from a `git -c user.email=...` override, which leaves no trace at all.
+local_email="$(git config --local --get user.email || true)"
+local_name="$(git config --local --get user.name || true)"
+
+if [ -n "$local_email" ] && [ "$effective_email" = "$local_email" ] &&
+    { [ -z "$local_name" ] || [ "$effective_name" = "$local_name" ]; }; then
+    exit 0
+fi
+
 if [ "$effective_email" != "$global_email" ]; then
-    die "this commit would be authored as <$effective_email>, not <$global_email>." \
-        "A repository-local setting or a 'git -c user.email=...' override is in effect." \
-        "If that is deliberate, commit once with GIT_ALLOW_IDENTITY=1, or record it" \
-        "in .git/config so it is at least visible." \
+    die "this commit would be authored as <$effective_email>." \
+        "That matches neither .git/config (<${local_email:-unset}>) nor the" \
+        "global identity (<$global_email>), so it came from a command-line" \
+        "override, which leaves no trace in the repository." \
+        "For a repository that needs its own address, record it:" \
+        "  git config --local user.email <address>" \
+        "For one deliberate commit, set GIT_ALLOW_IDENTITY=1." \
         "To fix history already written under the wrong address:" \
         "  git filter-branch -f --env-filter 'export GIT_AUTHOR_EMAIL=... GIT_COMMITTER_EMAIL=...' main" \
         "  git rebase -f --root --gpg-sign   # filter-branch drops signatures"
