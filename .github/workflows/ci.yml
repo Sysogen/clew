@@ -104,9 +104,14 @@ jobs:
         run: |
           set -euo pipefail
           empty=0000000000000000000000000000000000000000
-          if [ -n "$PUSH_BEFORE" ] && [ "$PUSH_BEFORE" != "$empty" ]; then
+          # A force push leaves github.event.before pointing at a commit that
+          # no longer exists, so test reachability rather than assuming it.
+          # Unreachable means the history was rewritten: check all of it.
+          if [ -n "$PUSH_BEFORE" ] && [ "$PUSH_BEFORE" != "$empty" ] &&
+            git cat-file -e "$PUSH_BEFORE^{commit}" 2>/dev/null; then
             range="$PUSH_BEFORE..$PUSH_AFTER"
           else
             range="HEAD"
           fi
+          echo "Checking $range"
           ./scripts/check-commit-message.sh --range "$range"
