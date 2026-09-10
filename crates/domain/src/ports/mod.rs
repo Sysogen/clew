@@ -7,4 +7,5 @@
 //! input or output operation and nothing else. It never carries a serialisation
 //! format, and it never maps another crate's errors.
 
+pub mod file_contents;
 pub mod file_tree;
