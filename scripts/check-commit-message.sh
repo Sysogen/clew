@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Sysogen Lda
 #
-# Validate commit messages against the Angular commit message guidelines.
+# Validate commit messages against the Angular commit message guidelines
+# combined with the 50/72 subject and body rule. See SKILL.md.
 #
 #   check-commit-message.sh <file>            one message, from a file
 #   check-commit-message.sh --range A..B      every commit in a range
@@ -14,13 +15,22 @@
 set -euo pipefail
 
 readonly TYPES='build|ci|docs|feat|fix|perf|refactor|test'
-readonly MAX_HEADER=100
+readonly SUBJECT_TARGET=50
+readonly SUBJECT_MAX=72
+readonly BODY_WRAP=72
 readonly MIN_BODY=20
 
 problems=()
+advice=()
 
 note() {
     problems+=("$1")
+}
+
+# Style targets that are not hard failures: exceeded, they are worth saying,
+# but blocking on them would train people to bypass the hook.
+suggest() {
+    advice+=("$1")
 }
 
 # Validate one message. Returns 1 if invalid, printing reasons to stderr.
@@ -28,6 +38,7 @@ check_message() {
     local message="$1" label="$2"
     local header
     problems=()
+    advice=()
 
     header="$(printf '%s\n' "$message" | head -n 1)"
 
@@ -42,8 +53,10 @@ check_message() {
     fi
 
     if printf '%s' "$header" | perl -ne "exit(/^($TYPES)(\\([a-z0-9][a-z0-9._-]*\\))?: /? 0 : 1)"; then
-        if [ "${#header}" -gt "$MAX_HEADER" ]; then
-            note "header is ${#header} characters, limit is $MAX_HEADER"
+        if [ "${#header}" -gt "$SUBJECT_MAX" ]; then
+            note "subject is ${#header} characters, the maximum is $SUBJECT_MAX"
+        elif [ "${#header}" -gt "$SUBJECT_TARGET" ]; then
+            suggest "subject is ${#header} characters; aim for $SUBJECT_TARGET so git log --oneline does not truncate it"
         fi
 
         local summary type second_line body trimmed
@@ -72,17 +85,35 @@ check_message() {
         if [ "$type" != "docs" ] && [ "${#trimmed}" -lt "$MIN_BODY" ]; then
             note "a '$type' commit needs a body of at least $MIN_BODY characters explaining the motivation"
         fi
+
+        # Wrap advisory. A line with no space is a URL or a path and cannot
+        # be wrapped; an indented line is a code block and must not be.
+        local long
+        long="$(printf '%s\n' "$body" |
+            perl -ne "print if length(\$_) - 1 > $BODY_WRAP && /\\S\\s\\S/ && !/^\\s/" |
+            wc -l | tr -d ' ')"
+        if [ "$long" -gt 0 ]; then
+            suggest "$long body line(s) exceed $BODY_WRAP columns"
+        fi
     else
         note "header must be '<type>(<optional scope>): <summary>'"
         note "allowed types: ${TYPES//|/, }"
     fi
 
     if [ "${#problems[@]}" -eq 0 ]; then
+        if [ "${#advice[@]}" -gt 0 ]; then
+            printf '%s\n' "$label" >&2
+            printf '  note: %s\n' "${advice[@]}" >&2
+            printf '\n' >&2
+        fi
         return 0
     fi
 
     printf '%s\n' "$label" >&2
     printf '  %s\n' "${problems[@]}" >&2
+    if [ "${#advice[@]}" -gt 0 ]; then
+        printf '  note: %s\n' "${advice[@]}" >&2
+    fi
     printf '\n' >&2
     return 1
 }

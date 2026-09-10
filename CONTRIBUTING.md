@@ -97,13 +97,14 @@ prefix: `domain`, `application`, `adapter-cli`, `adapter-fs`, `cli`.
 ### Summary
 
 Imperative present tense, "add" rather than "added" or "adds". No capital first
-letter, no full stop at the end. The whole header is at most 100 characters.
+letter, no full stop at the end. Aim for 50 characters and never exceed 72, so
+`git log --oneline` and review interfaces do not truncate it.
 
 ### Body
 
-**Mandatory on every type except `docs`**, and at least 20 characters. Explain
-the motivation and what changed in behaviour, not the mechanics the diff already
-shows. Imperative present tense here too.
+**Mandatory on every type except `docs`**, and at least 20 characters. Wrap at
+72 columns. Explain the motivation and what changed in behaviour, not the
+mechanics the diff already shows. Imperative present tense here too.
 
 ### Footer
 
