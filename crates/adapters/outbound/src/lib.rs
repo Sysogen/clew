@@ -9,9 +9,11 @@
 
 use std::fs;
 use std::io;
+use std::io::Read as _;
 use std::path::{Path, PathBuf};
 
 use clew_domain::RepoPath;
+use clew_domain::ports::file_contents::{FileContents, FileContentsError};
 use clew_domain::ports::file_tree::{DirEntry, EntryKind, FileTree, FileTreeError};
 
 /// A [`FileTree`] backed by the real filesystem, rooted at a directory.
@@ -75,5 +77,189 @@ impl FileTree for StdFileTree {
             });
         }
         Ok(entries)
+    }
+}
+
+/// A [`FileContents`] backed by the real filesystem, rooted at a directory.
+pub struct StdFileContents {
+    root: PathBuf,
+}
+
+impl StdFileContents {
+    /// Root the adapter at `root`.
+    #[must_use]
+    pub fn new(root: impl Into<PathBuf>) -> Self {
+        Self { root: root.into() }
+    }
+}
+
+fn map_contents_error(error: &io::Error) -> FileContentsError {
+    match error.kind() {
+        io::ErrorKind::NotFound => FileContentsError::NotFound,
+        io::ErrorKind::PermissionDenied => FileContentsError::PermissionDenied,
+        _ => FileContentsError::Unreadable(error.to_string()),
+    }
+}
+
+/// Name a failed open. A no-follow open of a symlink, and any open of a
+/// directory on Windows, both fail with errors `ErrorKind` does not separate.
+fn classify_open_error(path: &Path, error: &io::Error) -> FileContentsError {
+    match fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_symlink() || meta.is_dir() => {
+            FileContentsError::NotARegularFile
+        }
+        _ => map_contents_error(error),
+    }
+}
+
+/// Open for reading, refusing a symlink in the open itself. Checking first and
+/// opening second can be raced.
+fn open_no_follow(path: &Path) -> io::Result<fs::File> {
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.custom_flags(libc::O_NOFOLLOW);
+    }
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        // Windows has no O_NOFOLLOW; this opens the reparse point itself.
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+
+    options.open(path)
+}
+
+impl FileContents for StdFileContents {
+    fn read(&self, path: &RepoPath, max_bytes: u64) -> Result<String, FileContentsError> {
+        let absolute = if path.as_str().is_empty() {
+            self.root.clone()
+        } else {
+            self.root.join(path.as_str())
+        };
+
+        let file =
+            open_no_follow(&absolute).map_err(|error| classify_open_error(&absolute, &error))?;
+
+        // From the descriptor, so it describes what is actually open.
+        let meta = file.metadata().map_err(|e| map_contents_error(&e))?;
+        if !meta.file_type().is_file() {
+            return Err(FileContentsError::NotARegularFile);
+        }
+
+        // take() bounds the allocation. Do not swap for read-then-measure: no
+        // test separates them, and that one loads the whole file first.
+        let mut bytes = Vec::new();
+        file.take(max_bytes.saturating_add(1))
+            .read_to_end(&mut bytes)
+            .map_err(|e| map_contents_error(&e))?;
+
+        if bytes.len() as u64 > max_bytes {
+            return Err(FileContentsError::TooLarge { limit: max_bytes });
+        }
+
+        String::from_utf8(bytes).map_err(|_| FileContentsError::NotUtf8)
+    }
+}
+
+#[cfg(test)]
+mod contents_tests {
+    use std::fs;
+
+    use super::*;
+
+    /// Scratch directory, unique per process and `tag`. Tags must not repeat.
+    fn scratch(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("clew-contents-{}-{tag}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("create scratch dir");
+        dir
+    }
+
+    fn path(name: &str) -> RepoPath {
+        RepoPath::root().join(name)
+    }
+
+    #[test]
+    fn reads_a_small_utf8_file() {
+        let dir = scratch("read");
+        fs::write(dir.join("a.json"), r#"{"mcpServers":{}}"#).expect("write");
+
+        let read = StdFileContents::new(&dir).read(&path("a.json"), 1024);
+
+        assert_eq!(read.as_deref(), Ok(r#"{"mcpServers":{}}"#));
+    }
+
+    #[test]
+    fn refuses_a_file_over_the_limit_without_reading_it() {
+        let dir = scratch("toolarge");
+        fs::write(dir.join("big"), vec![b'x'; 4096]).expect("write");
+
+        let read = StdFileContents::new(&dir).read(&path("big"), 1024);
+
+        assert_eq!(read, Err(FileContentsError::TooLarge { limit: 1024 }));
+    }
+
+    #[test]
+    fn a_file_exactly_at_the_limit_is_allowed() {
+        let dir = scratch("exact");
+        fs::write(dir.join("exact"), vec![b'x'; 1024]).expect("write");
+
+        let read = StdFileContents::new(&dir).read(&path("exact"), 1024);
+
+        assert_eq!(read.map(|s| s.len()), Ok(1024));
+    }
+
+    #[test]
+    fn refuses_bytes_that_are_not_utf8() {
+        let dir = scratch("utf8");
+        fs::write(dir.join("bin"), [0xff, 0xfe, 0x00]).expect("write");
+
+        let read = StdFileContents::new(&dir).read(&path("bin"), 1024);
+
+        assert_eq!(read, Err(FileContentsError::NotUtf8));
+    }
+
+    #[test]
+    fn reports_a_missing_file() {
+        let dir = scratch("missing");
+
+        let read = StdFileContents::new(&dir).read(&path("nope"), 1024);
+
+        assert_eq!(read, Err(FileContentsError::NotFound));
+    }
+
+    #[test]
+    fn refuses_a_directory() {
+        let dir = scratch("isdir");
+        fs::create_dir(dir.join("sub")).expect("mkdir");
+
+        let read = StdFileContents::new(&dir).read(&path("sub"), 1024);
+
+        assert_eq!(read, Err(FileContentsError::NotARegularFile));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn never_follows_a_symlink_out_of_the_root() {
+        let dir = scratch("symlink");
+        let outside = dir.join("outside.txt");
+        fs::write(&outside, "secret").expect("write");
+        let inside = dir.join("root");
+        fs::create_dir(&inside).expect("mkdir");
+        std::os::unix::fs::symlink(&outside, inside.join("link")).expect("symlink");
+
+        let read = StdFileContents::new(&inside).read(&path("link"), 1024);
+
+        assert_eq!(
+            read,
+            Err(FileContentsError::NotARegularFile),
+            "a symlink must be refused, not resolved"
+        );
     }
 }

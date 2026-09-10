@@ -57,9 +57,8 @@ check_config() {
     fi
 }
 
-# Verification states git reports for %G?. G is good; U is a valid signature
-# from a key that is not in the allowed signers file, which is expected for
-# other people's commits. Everything else is a failure.
+# Only N (unsigned) and B (bad) are real failures. An unlisted status fails too:
+# a signing gate should not guess in the commit's favour.
 verify_range() {
     local range="$1" bad=0 line status sha subject
     while IFS= read -r line; do
@@ -70,9 +69,14 @@ verify_range() {
         subject="${line#* * }"
         case "$status" in
         G) ;;
-        U) printf '  note: %s %s (signed by a key not in allowed_signers)\n' "$sha" "$subject" >&2 ;;
+        U) printf '  note: %s %s (key not in allowed_signers)\n' "$sha" "$subject" >&2 ;;
+        E) printf '  note: %s %s (signed, but not checkable with gpg.format=%s)\n' \
+            "$sha" "$subject" "$(git config --get gpg.format || echo openpgp)" >&2 ;;
+        X | Y | R) printf '  WARN (%s) %s %s (signing key expired or revoked)\n' \
+            "$status" "$sha" "$subject" >&2 ;;
         N) printf '  UNSIGNED  %s %s\n' "$sha" "$subject" >&2; bad=$((bad + 1)) ;;
-        *) printf '  BAD (%s)  %s %s\n' "$status" "$sha" "$subject" >&2; bad=$((bad + 1)) ;;
+        B) printf '  BAD SIGNATURE  %s %s\n' "$sha" "$subject" >&2; bad=$((bad + 1)) ;;
+        *) printf '  UNKNOWN (%s)  %s %s\n' "$status" "$sha" "$subject" >&2; bad=$((bad + 1)) ;;
         esac
     done < <(git log --no-merges --format='%G? %h %s' "$range")
 

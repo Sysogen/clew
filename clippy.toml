@@ -1,0 +1,5 @@
+# Panicking is how a test reports failure. The workspace denies these so they
+# cannot reach production code.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true

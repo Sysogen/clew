@@ -10,5 +10,9 @@ repository.workspace = true
 [dependencies]
 clew-domain.workspace = true
 
+# For O_NOFOLLOW only; std has no portable equivalent.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [lints]
 workspace = true
