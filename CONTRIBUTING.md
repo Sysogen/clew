@@ -138,13 +138,15 @@ Merge commits and reverts are exempt. Tense is documented but not linted,
 because no regex distinguishes "embed" from "embedded" without rejecting
 legitimate words.
 
-**You do not need to install the git hooks.** They exist for maintainers and
-include a commit-signing gate that would refuse your commits unless you have SSH
-signing configured. If you want them anyway:
+Installing the hooks is optional and safe:
 
 ```sh
 git config core.hooksPath .githooks
 ```
+
+That checks your commit messages as you write them. The signing and identity
+gates in the same directory stay switched off unless a repository opts in with
+`hooks.maintainer`, so they will not refuse your commits.
 
 ### How your pull request gets merged
 

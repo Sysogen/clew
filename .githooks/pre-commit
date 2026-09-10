@@ -1,10 +1,21 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
 #
-# Refuse to create a commit that is unsigned or authored under the wrong
-# identity. Runs before the commit object exists, so both fail with an
-# explanation rather than leaving a bad commit to discover later.
+# Maintainer-only gates: refuse a commit that is unsigned or authored under an
+# identity that came from nowhere visible.
+#
+# These are OFF unless the repository opts in:
+#
+#   git config --local hooks.maintainer true
+#
+# The opt-in exists because a signing gate on a machine with no signing key
+# refuses every commit. A contributor who installs the repository's hooks to be
+# helpful would be locked out of contributing at all, which is the opposite of
+# what a hook is for. The maintainer's own machines set the flag; nobody else's
+# has to know it exists.
 set -euo pipefail
+
+[ "$(git config --bool --get hooks.maintainer 2>/dev/null || echo false)" = "true" ] || exit 0
 
 root="$(git rev-parse --show-toplevel)"
 
