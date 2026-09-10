@@ -13,6 +13,7 @@ pub mod ports;
 pub mod repo_path;
 pub mod scan_policy;
 pub mod surface;
+pub mod tools;
 
 pub use catalog::classify;
 pub use repo_path::RepoPath;

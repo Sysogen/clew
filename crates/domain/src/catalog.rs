@@ -5,14 +5,13 @@
 
 use crate::repo_path::RepoPath;
 use crate::surface::SurfaceKind;
+use crate::tools::REGISTRY;
 
-/// Recognised surfaces, as the path suffix that identifies each.
+/// Surfaces not yet owned by a tool module in [`crate::tools`].
 ///
-/// Order matters only for readability; suffixes are mutually exclusive.
-const SUFFIXES: &[(&str, SurfaceKind)] = &[
-    (".mcp.json", SurfaceKind::McpServers),
-    (".claude/settings.json", SurfaceKind::ClaudeCode),
-    (".claude/settings.local.json", SurfaceKind::ClaudeCode),
+/// Each entry moves out of this list as its tool gains a module. When the list
+/// is empty this constant and the fallback below go with it.
+const UNMIGRATED: &[(&str, SurfaceKind)] = &[
     (".codex/config.toml", SurfaceKind::Codex),
     (".cursor/mcp.json", SurfaceKind::Cursor),
     (".cursorrules", SurfaceKind::Cursor),
@@ -22,7 +21,6 @@ const SUFFIXES: &[(&str, SurfaceKind)] = &[
     (".aider.conf.yml", SurfaceKind::Aider),
     (".github/copilot-instructions.md", SurfaceKind::Copilot),
     (".devcontainer/devcontainer.json", SurfaceKind::DevContainer),
-    ("CLAUDE.md", SurfaceKind::InstructionFile),
     ("AGENTS.md", SurfaceKind::InstructionFile),
 ];
 
@@ -33,10 +31,15 @@ const SUFFIXES: &[(&str, SurfaceKind)] = &[
 /// configuration.
 #[must_use]
 pub fn classify(path: &RepoPath) -> Option<SurfaceKind> {
-    SUFFIXES
+    REGISTRY
         .iter()
-        .find(|(suffix, _)| path.ends_with_segments(suffix))
-        .map(|(_, kind)| *kind)
+        .find_map(|tool| tool.classify(path))
+        .or_else(|| {
+            UNMIGRATED
+                .iter()
+                .find(|(suffix, _)| path.ends_with_segments(suffix))
+                .map(|(_, kind)| *kind)
+        })
 }
 
 #[cfg(test)]
