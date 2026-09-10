@@ -1,19 +1,37 @@
-[package]
-name = "clew-cli"
-version = "0.0.0"
+[workspace]
+resolver = "2"
+members = [
+    "crates/domain",
+    "crates/application",
+    "crates/adapters/inbound",
+    "crates/adapters/outbound",
+    "crates/bootstrap",
+]
+
+[workspace.package]
+version = "0.1.0"
 edition = "2021"
 rust-version = "1.70"
-description = "Discover AI coding agent configuration surfaces: MCP servers, hooks, and instruction files."
 license = "Apache-2.0"
-readme = "README.md"
 repository = "https://github.com/sysogen/clew"
-keywords = ["cli", "mcp", "agents", "audit", "security"]
-categories = ["command-line-utilities", "development-tools"]
-exclude = ["/.github", "/target", "/.idea", "/.vscode"]
 
-[[bin]]
-name = "clew"
-path = "src/main.rs"
+[workspace.dependencies]
+clew-domain = { version = "0.1.0", path = "crates/domain" }
+clew-application = { version = "0.1.0", path = "crates/application" }
+clew-adapter-cli = { version = "0.1.0", path = "crates/adapters/inbound" }
+clew-adapter-fs = { version = "0.1.0", path = "crates/adapters/outbound" }
+thiserror = "2"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
 
 [profile.release]
 strip = true

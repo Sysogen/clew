@@ -10,15 +10,36 @@ cargo test --all
 
 CI runs exactly these on Linux, macOS, and Windows.
 
+## Architecture
+
+Ports and adapters. The dependency direction is one-way and the compiler
+enforces it, because each layer is its own crate.
+
+| Crate | Layer | May depend on |
+| --- | --- | --- |
+| `clew-domain` | Domain: types, rules, ports | nothing but `thiserror` |
+| `clew-application` | Use cases | domain |
+| `clew-adapter-cli` | Inbound: parse and render | application, domain |
+| `clew-adapter-fs` | Outbound: `FileTree` over `std::fs` | domain |
+| `clew-cli` | Composition root, the binary | all of the above |
+
+Two rules follow from this and are checked in review:
+
+- `std::fs`, `std::net`, and `std::process` appear only in an outbound adapter.
+  The domain and application layers must compile without them.
+- Every outside capability is a trait in `clew_domain::ports`, one per file with
+  its own error type. This is why the traversal is tested against an in-memory
+  tree rather than a temporary directory.
+
 ## Adding a surface
 
-A surface is a file that configures an AI coding agent. To add one, extend
-`SURFACES` in `src/main.rs` with the path suffix and a short label, then add a
-test.
+Extend `SUFFIXES` in `crates/domain/src/catalog.rs` with the path suffix and its
+`SurfaceKind`, then add a test in the same file.
 
-Match on the full path suffix, never the bare filename. `.claude/settings.json`
-must match; a `settings.json` sitting anywhere else must not. There is a test
-for this and it will fail if you get it wrong.
+Match on the full path suffix at a segment boundary, never the bare file name.
+`.claude/settings.json` must match; a `settings.json` sitting anywhere else must
+not. `RepoPath::ends_with_segments` exists for exactly this, and there are tests
+that fail if you bypass it.
 
 ## Two rules that are not style preferences
 

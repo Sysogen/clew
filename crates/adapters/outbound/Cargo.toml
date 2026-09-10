@@ -1,0 +1,14 @@
+[package]
+name = "clew-adapter-fs"
+description = "Outbound filesystem adapter for clew, implementing the FileTree port."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+clew-domain.workspace = true
+
+[lints]
+workspace = true

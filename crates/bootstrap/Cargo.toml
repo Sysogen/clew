@@ -1,0 +1,24 @@
+[package]
+name = "clew-cli"
+description = "Discover AI coding agent configuration surfaces: MCP servers, hooks, and instruction files."
+readme = "../../README.md"
+keywords = ["cli", "mcp", "agents", "audit", "security"]
+categories = ["command-line-utilities", "development-tools"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+clew-adapter-cli.workspace = true
+clew-adapter-fs.workspace = true
+clew-application.workspace = true
+clew-domain.workspace = true
+
+[[bin]]
+name = "clew"
+path = "src/main.rs"
+
+[lints]
+workspace = true
