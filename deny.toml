@@ -1,0 +1,15 @@
+[advisories]
+yanked = "deny"
+
+[licenses]
+allow = ["Apache-2.0", "MIT", "Unicode-3.0"]
+
+[bans]
+multiple-versions = "warn"
+# rustls only. openssl is a C dependency with a worse history.
+deny = [{ name = "openssl" }, { name = "openssl-sys" }]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

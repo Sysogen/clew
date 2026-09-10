@@ -9,6 +9,7 @@
 //! in [`ports`], implemented by an adapter.
 
 pub mod catalog;
+pub mod hook;
 pub mod ports;
 pub mod repo_path;
 pub mod scan_policy;
@@ -16,6 +17,7 @@ pub mod surface;
 pub mod tools;
 
 pub use catalog::classify;
+pub use hook::Hook;
 pub use repo_path::RepoPath;
 pub use scan_policy::ScanPolicy;
 pub use surface::{Surface, SurfaceKind};

@@ -20,6 +20,7 @@ clew-domain = { version = "0.1.0", path = "crates/domain" }
 clew-application = { version = "0.1.0", path = "crates/application" }
 clew-adapter-cli = { version = "0.1.0", path = "crates/adapters/inbound" }
 clew-adapter-fs = { version = "0.1.0", path = "crates/adapters/outbound" }
+serde_json = "1"
 thiserror = "2"
 
 [workspace.lints.rust]

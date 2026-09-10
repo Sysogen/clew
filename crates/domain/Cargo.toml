@@ -8,6 +8,8 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+# A parser, not a runtime: no IO, no async, nothing the domain must not have.
+serde_json.workspace = true
 thiserror.workspace = true
 
 [lints]
