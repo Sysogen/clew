@@ -10,9 +10,7 @@ repository.workspace = true
 [dependencies]
 clew-domain.workspace = true
 
-# Solely for O_NOFOLLOW, so a symbolic link is refused in the open itself
-# rather than by a check the open can race. std exposes no portable
-# equivalent, and libc is the canonical source for the constant.
+# For O_NOFOLLOW only; std has no portable equivalent.
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 

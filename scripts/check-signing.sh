@@ -57,27 +57,13 @@ check_config() {
     fi
 }
 
-# Verification states git reports for %G?.
+# %G? states. N and B fail, as does anything unlisted: an unrecognised code
+# means git knows something this script does not, and a signing gate should not
+# guess in the commit's favour.
 #
-# The gate exists to stop an UNSIGNED commit, so N (no signature) and B (bad
-# signature) fail, as does any status not listed below: an unrecognised code
-# means git is telling us something this script does not understand, and
-# guessing in favour of the commit is the wrong default for a signing gate.
-#
-# The rest carry a signature this machine cannot fully validate, which is a
-# different thing and common in normal use:
-#
-#   G  good
-#   U  valid, but the key is not in the allowed signers file
-#   E  a signature is present that git cannot check here. Usually a format
-#      mismatch: a merge signed by the forge with PGP, read on a machine
-#      configured for SSH signing. Blocking on this would refuse every push
-#      after a web merge.
-#   X  good, key expired since       Y  good, key expired at signing
-#   R  good, key revoked
-#
-# X, Y, and R are reported loudly because they are real problems, but they are
-# not what this gate is for and a maintainer needs to be able to push a fix.
+#   G good   U valid, key not in allowed_signers   E signed, format not
+#   checkable here (a forge PGP merge read on an SSH-signing machine)
+#   X/Y/R good, key expired or revoked
 verify_range() {
     local range="$1" bad=0 line status sha subject
     while IFS= read -r line; do

@@ -1,7 +1,5 @@
-# unwrap, expect, and panic are how a test reports failure. The workspace
-# manifest denies them so they cannot reach a production path; these three
-# exemptions keep that deny meaningful instead of pushing test authors to
-# contort assertions or to blanket-allow the lint per module.
+# Panicking is how a test reports failure. The workspace denies these so they
+# cannot reach production code.
 allow-unwrap-in-tests = true
 allow-expect-in-tests = true
 allow-panic-in-tests = true

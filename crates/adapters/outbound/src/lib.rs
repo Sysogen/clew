@@ -101,17 +101,8 @@ fn map_contents_error(error: &io::Error) -> FileContentsError {
     }
 }
 
-/// Turn a failed open into the error the caller should see.
-///
-/// Two cases need a second look at the path. A no-follow open of a symbolic
-/// link fails with a platform errno that std does not expose as a stable
-/// `ErrorKind`. On Windows, opening a directory fails with an access error
-/// unless the handle is requested with backup semantics, which this adapter
-/// has no reason to ask for.
-///
-/// This runs only after the open has already failed, and decides what to call
-/// the failure. Nothing is read on the strength of it, so the second look
-/// cannot be raced into granting access.
+/// Name a failed open. A no-follow open of a symlink, and any open of a
+/// directory on Windows, both fail with errors `ErrorKind` does not separate.
 fn classify_open_error(path: &Path, error: &io::Error) -> FileContentsError {
     match fs::symlink_metadata(path) {
         Ok(meta) if meta.file_type().is_symlink() || meta.is_dir() => {
@@ -121,11 +112,8 @@ fn classify_open_error(path: &Path, error: &io::Error) -> FileContentsError {
     }
 }
 
-/// Open for reading, refusing a symbolic link in the open itself.
-///
-/// The refusal must be atomic with the open. Calling `symlink_metadata` first
-/// and `File::open` second leaves a window in which the path can be swapped for
-/// a link pointing outside the scan root.
+/// Open for reading, refusing a symlink in the open itself. Checking first and
+/// opening second can be raced.
 fn open_no_follow(path: &Path) -> io::Result<fs::File> {
     let mut options = fs::OpenOptions::new();
     options.read(true);
@@ -139,9 +127,7 @@ fn open_no_follow(path: &Path) -> io::Result<fs::File> {
     #[cfg(windows)]
     {
         use std::os::windows::fs::OpenOptionsExt as _;
-        // FILE_FLAG_OPEN_REPARSE_POINT: open the reparse point itself rather
-        // than its target, so a link cannot redirect the read. Windows exposes
-        // no equivalent of O_NOFOLLOW; this is the documented substitute.
+        // Windows has no O_NOFOLLOW; this opens the reparse point itself.
         const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
         options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
     }
@@ -157,29 +143,17 @@ impl FileContents for StdFileContents {
             self.root.join(path.as_str())
         };
 
-        // Opened with a no-follow flag rather than checked and then opened.
-        // A check followed by an open has a window in which the path can be
-        // replaced by a symbolic link, and the open would follow it out of the
-        // scan root. Refusing the link in the open itself has no such window.
         let file =
             open_no_follow(&absolute).map_err(|error| classify_open_error(&absolute, &error))?;
 
-        // Read back from the open descriptor, not from the path, so this
-        // describes the file actually being read.
+        // From the descriptor, so it describes what is actually open.
         let meta = file.metadata().map_err(|e| map_contents_error(&e))?;
         if !meta.file_type().is_file() {
             return Err(FileContentsError::NotARegularFile);
         }
 
-        // Bounded by construction rather than by a size check. Reading through
-        // `take` cannot allocate more than the limit plus the one byte that
-        // proves the limit was passed, so there is no window in which a large
-        // file is loaded and no gap between checking the size and reading it.
-        //
-        // No test discriminates this from reading the file and measuring
-        // afterwards: both refuse the same inputs, and the difference is
-        // memory and time rather than behaviour. It holds by the shape of the
-        // code, so do not replace `take` with a read-then-measure.
+        // take() bounds the allocation. Do not swap for read-then-measure: no
+        // test separates them, and that one loads the whole file first.
         let mut bytes = Vec::new();
         file.take(max_bytes.saturating_add(1))
             .read_to_end(&mut bytes)
@@ -199,9 +173,7 @@ mod contents_tests {
 
     use super::*;
 
-    /// A scratch directory keyed by process id and the caller's `tag`, so
-    /// concurrent test binaries and parallel tests inside one binary never
-    /// share a path. Every caller must pass a tag unique within this module.
+    /// Scratch directory, unique per process and `tag`. Tags must not repeat.
     fn scratch(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("clew-contents-{}-{tag}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);

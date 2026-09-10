@@ -19,7 +19,7 @@ pub enum FileContentsError {
     /// The path is a directory, or a symbolic link that was not followed.
     #[error("not a regular file")]
     NotARegularFile,
-    /// The file is larger than the caller allowed.
+    /// Larger than the caller allowed.
     #[error("larger than the {limit} byte limit")]
     TooLarge {
         /// The limit the caller supplied.
@@ -33,32 +33,20 @@ pub enum FileContentsError {
     Unreadable(String),
 }
 
-/// Reads a file as text.
-///
-/// Separate from [`crate::ports::file_tree::FileTree`] because listing a
-/// directory and reading a file are different capabilities with different
-/// failure modes, and a caller that only needs to enumerate paths should not
-/// be handed the ability to read their contents.
+/// Reads a file as text. Separate from
+/// [`FileTree`](crate::ports::file_tree::FileTree) so a caller that only
+/// enumerates paths cannot also read them.
 pub trait FileContents {
-    /// Read `path` as UTF-8 text, refusing anything larger than `max_bytes`.
+    /// Read `path` as UTF-8, refusing anything larger than `max_bytes`.
     ///
-    /// The limit is a parameter rather than a property of the implementation
-    /// because it is a scan policy decision, and policy belongs to the caller.
-    /// An implementation must be bounded by construction: it may allocate at
-    /// most `max_bytes` plus the one byte that proves the limit was exceeded,
-    /// so a hostile file cannot exhaust memory. Reading first and measuring
-    /// afterwards does not satisfy this.
-    ///
-    /// A symbolic link is never followed: it reports
-    /// [`FileContentsError::NotARegularFile`] rather than reading whatever it
-    /// points at, which may be outside the scan root.
+    /// Implementations must bound the allocation by construction, at most
+    /// `max_bytes` plus one, and must refuse a symlink rather than follow it
+    /// out of the scan root.
     ///
     /// # Errors
     ///
-    /// Returns an error when the file is absent, unreadable, not a regular
-    /// file, over the limit, or not valid UTF-8. A caller scanning a tree is
-    /// expected to record the failure and continue: one unreadable file does
-    /// not invalidate the rest of a scan.
+    /// Absent, unreadable, not a regular file, over the limit, or not UTF-8.
+    /// One failure does not invalidate a scan; callers record and continue.
     fn read(&self, path: &RepoPath, max_bytes: u64) -> Result<String, FileContentsError>;
 }
 
