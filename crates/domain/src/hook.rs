@@ -11,4 +11,7 @@ pub struct Hook {
     pub event: String,
     /// The command line, verbatim. Never executed.
     pub command: String,
+    /// The declared type, when the entry states one. Recorded rather than
+    /// filtered on: a type clew does not recognise may still execute.
+    pub kind: Option<String>,
 }

@@ -58,6 +58,10 @@ impl CodingTool for ClaudeCode {
                         Some(Hook {
                             event: event.clone(),
                             command: hook.get("command")?.as_str()?.to_owned(),
+                            kind: hook
+                                .get("type")
+                                .and_then(serde_json::Value::as_str)
+                                .map(ToOwned::to_owned),
                         })
                     })
             })
@@ -131,6 +135,7 @@ mod tests {
             vec![Hook {
                 event: "PostToolUse".to_owned(),
                 command: ".claude/hooks/embed.sh".to_owned(),
+                kind: Some("command".to_owned()),
             }]
         );
     }
@@ -188,6 +193,27 @@ mod tests {
                 .iter()
                 .any(|h| h.event == "PreToolUse" && h.command == "d")
         );
+    }
+
+    #[test]
+    fn the_declared_type_is_recorded_not_filtered_on() {
+        let found = hooks_of(
+            r#"{"hooks":{"PostToolUse":[{"hooks":[
+                 {"type":"command","command":"a"},
+                 {"command":"b"},
+                 {"type":"somethingNew","command":"c"}]}]}}"#,
+        );
+
+        assert_eq!(found.len(), 3, "an unrecognised type may still execute");
+        let kind = |cmd: &str| {
+            found
+                .iter()
+                .find(|h| h.command == cmd)
+                .and_then(|h| h.kind.clone())
+        };
+        assert_eq!(kind("a"), Some("command".to_owned()));
+        assert_eq!(kind("b"), None);
+        assert_eq!(kind("c"), Some("somethingNew".to_owned()));
     }
 
     #[test]
