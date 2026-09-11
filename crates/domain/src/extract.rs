@@ -10,6 +10,8 @@ use thiserror::Error;
 
 use crate::hook::Hook;
 use crate::mcp_server::{McpServer, Transport};
+use yaml_rust2::{Yaml, YamlLoader};
+
 use crate::permission::Permission;
 
 /// Why a file could not be understood.
@@ -21,11 +23,14 @@ pub enum ParseError {
     /// The file is not valid TOML.
     #[error("not valid TOML")]
     NotToml,
+    /// The file opens a frontmatter block that is not closed or not YAML.
+    #[error("frontmatter is not closed or not valid YAML")]
+    NotFrontmatter,
 }
 
 /// How a file is written.
 ///
-/// Both parse into the same value type, so an extractor never knows which it
+/// All parse into the same value type, so an extractor never knows which it
 /// came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Format {
@@ -34,6 +39,8 @@ pub enum Format {
     Json,
     /// Codex configuration.
     Toml,
+    /// A Markdown file whose declarations live in a leading YAML block.
+    Markdown,
 }
 
 impl Format {
@@ -43,6 +50,7 @@ impl Format {
         Some(match name {
             "json" => Self::Json,
             "toml" => Self::Toml,
+            "markdown" => Self::Markdown,
             _ => return None,
         })
     }
@@ -51,7 +59,68 @@ impl Format {
         match self {
             Self::Json => serde_json::from_str(contents).map_err(|_| ParseError::NotJson),
             Self::Toml => toml::from_str(contents).map_err(|_| ParseError::NotToml),
+            Self::Markdown => frontmatter(contents),
         }
+    }
+}
+
+/// The YAML block a Markdown file opens with.
+///
+/// A file with no block declares nothing, which is the common case and not an
+/// error. A block that opens and never closes, or that is not YAML, is an
+/// error: what the file declares is then unknown rather than absent, and a
+/// scanner that reports those alike hides the difference.
+fn frontmatter(contents: &str) -> Result<serde_json::Value, ParseError> {
+    let empty = || Ok(serde_json::Value::Object(serde_json::Map::new()));
+
+    // The fence only counts on the first line, matching how the tools read it.
+    // Taking the line rather than a prefix keeps a file that is just the fence
+    // an unclosed block rather than an absent one.
+    let (first, rest) = contents.split_once('\n').unwrap_or((contents, ""));
+    if first.trim_end_matches('\r') != "---" {
+        return empty();
+    }
+
+    let mut block = String::new();
+    let mut closed = false;
+    for line in rest.split_inclusive('\n') {
+        if line.trim_end_matches(['\n', '\r']) == "---" {
+            closed = true;
+            break;
+        }
+        block.push_str(line);
+    }
+    if !closed {
+        return Err(ParseError::NotFrontmatter);
+    }
+
+    let docs = YamlLoader::load_from_str(&block).map_err(|_| ParseError::NotFrontmatter)?;
+    docs.first().map_or_else(empty, |doc| Ok(to_value(doc)))
+}
+
+/// A parsed YAML node as the value type every extractor reads.
+///
+/// A key that is not a scalar, and an alias, have no JSON equivalent; they are
+/// dropped rather than guessed at, since neither can name a tool or an event.
+fn to_value(node: &Yaml) -> serde_json::Value {
+    use serde_json::Value;
+    match node {
+        Yaml::String(s) => Value::String(s.clone()),
+        Yaml::Boolean(b) => Value::Bool(*b),
+        Yaml::Integer(i) => Value::Number((*i).into()),
+        Yaml::Real(r) => r
+            .parse::<f64>()
+            .ok()
+            .and_then(serde_json::Number::from_f64)
+            .map_or_else(|| Value::String(r.clone()), Value::Number),
+        Yaml::Array(items) => Value::Array(items.iter().map(to_value).collect()),
+        Yaml::Hash(pairs) => Value::Object(
+            pairs
+                .iter()
+                .filter_map(|(k, v)| Some((k.as_str()?.to_owned(), to_value(v))))
+                .collect(),
+        ),
+        Yaml::Null | Yaml::Alias(_) | Yaml::BadValue => Value::Null,
     }
 }
 
@@ -110,7 +179,7 @@ pub fn run(wanted: &[Extraction], format: Format, contents: &str) -> Result<Find
     for what in wanted {
         match what {
             Extraction::Hooks => found.hooks = hooks(&root),
-            Extraction::Permissions => found.permissions = permissions(&root),
+            Extraction::Permissions => found.permissions = permissions(&root, format),
             Extraction::McpServers => found.servers = mcp_servers(&root),
         }
     }
@@ -149,22 +218,70 @@ fn hooks(root: &serde_json::Value) -> Vec<Hook> {
 }
 
 /// Operations performed without asking.
-fn permissions(root: &serde_json::Value) -> Vec<Permission> {
-    let Some(allow) = root
-        .get("permissions")
-        .and_then(|p| p.get("allow"))
-        .and_then(serde_json::Value::as_array)
-    else {
-        return Vec::new();
+///
+/// Settings nest the list under `permissions`; frontmatter names it at the
+/// top. A tool reads only its own spelling, so reading both everywhere would
+/// report grants the tool does not honour.
+fn permissions(root: &serde_json::Value, format: Format) -> Vec<Permission> {
+    let entries = match format {
+        Format::Json | Format::Toml => root
+            .get("permissions")
+            .and_then(|p| p.get("allow"))
+            .map(listed_grants),
+        Format::Markdown => root.get("allowed-tools").map(grants),
     };
 
-    let mut found: Vec<Permission> = allow
-        .iter()
-        .filter_map(serde_json::Value::as_str)
-        .filter_map(Permission::parse)
+    let mut found: Vec<Permission> = entries
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|entry| Permission::parse(&entry))
         .collect();
     found.sort();
     found
+}
+
+/// The entries of a grant list. Settings document a list here, so anything
+/// else is malformed and grants nothing.
+fn listed_grants(value: &serde_json::Value) -> Vec<String> {
+    value
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .map(ToOwned::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// As `listed_grants`, and also the single line frontmatter may use instead.
+fn grants(value: &serde_json::Value) -> Vec<String> {
+    match value {
+        serde_json::Value::String(line) => split_grants(line),
+        other => listed_grants(other),
+    }
+}
+
+/// Split on commas outside parentheses, so a scope listing several arguments
+/// stays one grant rather than becoming several broken ones.
+fn split_grants(line: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0;
+    for (at, c) in line.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                out.push(line[start..at].to_owned());
+                start = at + 1;
+            }
+            _ => {}
+        }
+    }
+    out.push(line[start..].to_owned());
+    out
 }
 
 /// MCP servers declared.
@@ -552,6 +669,171 @@ env = { DATABASE_URL = "postgres://u:hunter2@h/d", PGPORT = "5432" }
         assert!(perms_of(r#"{"permissions":"nope"}"#).is_empty());
         assert!(perms_of(r#"{"permissions":{"allow":"nope"}}"#).is_empty());
         assert!(perms_of(r#"{"permissions":{"allow":[42,null]}}"#).is_empty());
+    }
+
+    fn frontmatter_perms(md: &str) -> Vec<Permission> {
+        run(&[Extraction::Permissions], Format::Markdown, md)
+            .expect("valid frontmatter")
+            .permissions
+    }
+
+    /// The shape a real skill file uses, kept verbatim so a change to the
+    /// format shows up here rather than as a silent zero.
+    #[test]
+    fn reads_grants_from_a_skill_file() {
+        let found = frontmatter_perms(
+            "---\nname: deploy\ndescription: Ship it.\nallowed-tools: Bash(cargo test:*), Read\n---\n\n# Deploy\n",
+        );
+
+        assert_eq!(found.len(), 2, "{found:?}");
+        assert!(
+            found
+                .iter()
+                .any(|p| p.tool == "Bash" && p.scope.as_deref() == Some("cargo test:*"))
+        );
+        assert!(found.iter().any(|p| p.tool == "Read" && p.is_unscoped()));
+    }
+
+    #[test]
+    fn grants_may_be_written_as_a_list() {
+        let found = frontmatter_perms("---\nallowed-tools:\n  - Bash(ls)\n  - Read\n---\n");
+
+        assert_eq!(found.len(), 2, "{found:?}");
+        assert!(found.iter().any(|p| p.tool == "Read"));
+    }
+
+    #[test]
+    fn a_comma_inside_a_scope_keeps_the_grant_whole() {
+        let found =
+            frontmatter_perms("---\nallowed-tools: Bash(git add:*, git commit:*), Read\n---\n");
+
+        assert_eq!(found.len(), 2, "a scope may list arguments: {found:?}");
+        assert_eq!(
+            found
+                .iter()
+                .find(|p| p.tool == "Bash")
+                .and_then(|p| p.scope.clone()),
+            Some("git add:*, git commit:*".to_owned())
+        );
+    }
+
+    #[test]
+    fn the_fence_only_counts_on_the_first_line() {
+        let found = frontmatter_perms("A heading first.\n\n---\nallowed-tools: Bash(rm)\n---\n");
+
+        assert!(
+            found.is_empty(),
+            "the tools ignore a late fence, so clew must not read it: {found:?}"
+        );
+    }
+
+    #[test]
+    fn the_body_is_never_parsed() {
+        let found = frontmatter_perms("---\nname: x\n---\n\nallowed-tools: Bash(rm -rf /)\n");
+
+        assert!(found.is_empty(), "prose is not a declaration: {found:?}");
+    }
+
+    #[test]
+    fn a_file_without_frontmatter_declares_nothing() {
+        assert!(frontmatter_perms("# Just a document\n").is_empty());
+        assert!(frontmatter_perms("").is_empty());
+    }
+
+    #[test]
+    fn disallowed_tools_is_not_a_grant() {
+        let found =
+            frontmatter_perms("---\nallowed-tools: Read\ndisallowed-tools: Bash(rm)\n---\n");
+
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].tool, "Read");
+    }
+
+    /// An unclosed fence is not an empty declaration. Reporting it as one would
+    /// hide every grant in the file behind a formatting mistake.
+    /// Each tool reads one spelling. Reporting the other would invent a grant
+    /// that nothing honours, which is the mirror of missing a real one.
+    #[test]
+    fn settings_do_not_grant_through_the_frontmatter_key() {
+        let found = perms_of(r#"{"allowed-tools":"Bash(rm -rf /)"}"#);
+
+        assert!(
+            found.is_empty(),
+            "settings do not read allowed-tools: {found:?}"
+        );
+    }
+
+    #[test]
+    fn frontmatter_does_not_grant_through_the_settings_key() {
+        let found = frontmatter_perms("---\npermissions:\n  allow:\n    - Bash(rm -rf /)\n---\n");
+
+        assert!(
+            found.is_empty(),
+            "a skill does not read permissions.allow: {found:?}"
+        );
+    }
+
+    /// The one error covers two failures, so its text must name both.
+    #[test]
+    fn the_frontmatter_error_names_both_failures() {
+        let said = ParseError::NotFrontmatter.to_string();
+        assert!(said.contains("not closed"), "{said}");
+        assert!(said.contains("YAML"), "{said}");
+    }
+
+    /// A file that is only a fence has opened a block and never closed it.
+    #[test]
+    fn a_bare_fence_is_unclosed() {
+        for contents in ["---", "---\n", "---\r\n"] {
+            assert_eq!(
+                run(&[Extraction::Permissions], Format::Markdown, contents),
+                Err(ParseError::NotFrontmatter),
+                "{contents:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unclosed_fence_is_an_error() {
+        assert_eq!(
+            run(
+                &[Extraction::Permissions],
+                Format::Markdown,
+                "---\nallowed-tools: Bash(rm)\n"
+            ),
+            Err(ParseError::NotFrontmatter)
+        );
+    }
+
+    #[test]
+    fn malformed_frontmatter_is_an_error() {
+        assert_eq!(
+            run(
+                &[Extraction::Permissions],
+                Format::Markdown,
+                "---\nallowed-tools: [unclosed\n---\n"
+            ),
+            Err(ParseError::NotFrontmatter)
+        );
+    }
+
+    #[test]
+    fn an_empty_block_declares_nothing() {
+        assert!(frontmatter_perms("---\n---\n").is_empty());
+    }
+
+    #[test]
+    fn frontmatter_carries_mcp_servers_when_one_is_declared() {
+        let found = run(
+            &[Extraction::McpServers],
+            Format::Markdown,
+            "---\nmcpServers:\n  pg:\n    command: npx\n    args: [\"-y\", \"server-postgres\"]\n---\n",
+        )
+        .expect("valid frontmatter")
+        .servers;
+
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].invocation(), "npx -y server-postgres");
     }
 
     #[test]

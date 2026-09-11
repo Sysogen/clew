@@ -330,12 +330,16 @@ mod tests {
         let parsed = [
             (".claude/settings.json", all),
             (".claude/settings.local.json", all),
+            (".claude/skills/a/SKILL.md", &[Extraction::Permissions][..]),
             (".mcp.json", servers),
             (".cursor/mcp.json", servers),
             ("cline_mcp_settings.json", servers),
             (".codex/config.toml", servers),
         ];
-        let toml_rows = [".codex/config.toml"];
+        let formats = [
+            (".codex/config.toml", Format::Toml),
+            (".claude/skills/a/SKILL.md", Format::Markdown),
+        ];
 
         for (path, kind) in expected {
             let matched = shipped()
@@ -352,11 +356,10 @@ mod tests {
                 "{path} declares the wrong extractions"
             );
 
-            let expected_format = if toml_rows.contains(&path) {
-                Format::Toml
-            } else {
-                Format::Json
-            };
+            let expected_format = formats
+                .iter()
+                .find(|(q, _)| *q == path)
+                .map_or(Format::Json, |(_, f)| *f);
             assert_eq!(matched.format, expected_format, "{path}");
         }
     }
@@ -485,10 +488,11 @@ mod tests {
             "a hook script may be a binary and must never be opened"
         );
 
-        let skill = shipped()
-            .lookup(&p(".claude/skills/a/SKILL.md"))
-            .expect("match");
-        assert!(skill.extract.is_empty());
+        let instruction = shipped().lookup(&p("CLAUDE.md")).expect("match");
+        assert!(
+            instruction.extract.is_empty(),
+            "an instruction file declares prose, not access"
+        );
 
         let settings = shipped()
             .lookup(&p(".claude/settings.json"))
