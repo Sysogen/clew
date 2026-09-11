@@ -488,6 +488,26 @@ mod tests {
         assert!(report.is_complete());
     }
 
+    /// Most Markdown carries no frontmatter. That is a complete answer, not a
+    /// failed read, so the scan stays clean rather than reporting a gap.
+    #[test]
+    fn a_skill_without_frontmatter_scans_clean() {
+        let contents = FakeContents::default().file(
+            ".claude/skills/prose/SKILL.md",
+            "# Prose\n\nUse short sentences.\n",
+        );
+
+        let report = DiscoverSurfaces::new(&skill_tree(), &contents, &ScanPolicy::default()).run();
+
+        assert_eq!(report.surfaces.len(), 1, "the file is still inventoried");
+        assert!(report.permissions.is_empty(), "{report:?}");
+        assert!(
+            report.unparsed.is_empty(),
+            "no frontmatter is not a failure"
+        );
+        assert!(report.is_complete());
+    }
+
     /// A skill is read now that it can declare grants, so a read that fails is
     /// a gap in the scan and must be said rather than counted as nothing.
     #[test]

@@ -25,10 +25,6 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = { version = "0.9", default-features = false, features = ["parse", "serde"] }
 thiserror = "2"
-# The serde-integrated YAML crates are all unmaintained: serde_yaml was
-# deprecated in 2024 and its forks have not been released since. Default
-# features off drops encoding_rs, whose BSD-3-Clause term is outside the
-# licence allowlist and which clew cannot use anyway, having only ever a str.
 yaml-rust2 = { version = "0.13", default-features = false }
 
 [workspace.lints.rust]
