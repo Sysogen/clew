@@ -53,6 +53,8 @@ source = "https://code.claude.com/docs/en/hooks"
 glob = "**/.claude/skills/**/SKILL.md"
 tool = "claude-code"
 kind = "skill"
+format = "markdown"
+extract = ["permissions"]
 last_verified = "2026-09-11"
 source = "https://code.claude.com/docs/en/skills"
 

@@ -10,8 +10,12 @@ repository.
 
 ### Added
 
-- Read TOML, so Codex `config.toml` reports the MCP servers it declares. Both
-  formats parse into the same value, so every extractor works on either.
+- Read Markdown frontmatter, so a skill reports the tools it is allowed to use.
+  The opening fence must be the first line, as the tools themselves require, and
+  a fence that never closes is an error rather than an empty result.
+
+- Read TOML, so Codex `config.toml` reports the MCP servers it declares. Every
+  format parses into the same value, so every extractor works on any of them.
 
 - Release automation: a version bump on `main` tags itself, then publishes the
   workspace to crates.io and attaches binaries for five targets.

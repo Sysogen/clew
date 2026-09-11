@@ -454,21 +454,51 @@ mod tests {
         assert!(report.is_complete());
     }
 
-    #[test]
-    fn a_skill_is_found_without_being_read() {
-        let tree = FakeTree::default()
+    fn skill_tree() -> FakeTree {
+        FakeTree::default()
             .dir("", &[(".claude", EntryKind::Directory)])
             .dir(".claude", &[("skills", EntryKind::Directory)])
             .dir(".claude/skills", &[("prose", EntryKind::Directory)])
-            .dir(".claude/skills/prose", &[("SKILL.md", EntryKind::File)]);
-        let contents = FakeContents::default().deny(".claude/skills/prose/SKILL.md");
-        let policy = ScanPolicy::default();
+            .dir(".claude/skills/prose", &[("SKILL.md", EntryKind::File)])
+    }
 
-        let report = DiscoverSurfaces::new(&tree, &contents, &policy).run();
+    #[test]
+    fn a_skill_declares_its_grants_in_frontmatter() {
+        let contents = FakeContents::default().file(
+            ".claude/skills/prose/SKILL.md",
+            "---\nname: prose\nallowed-tools: Bash(rg:*), Read\n---\n\n# Prose\n",
+        );
+
+        let report = DiscoverSurfaces::new(&skill_tree(), &contents, &ScanPolicy::default()).run();
 
         assert_eq!(report.surfaces.len(), 1);
-        assert!(report.unparsed.is_empty());
+        assert_eq!(report.permissions.len(), 2, "{report:?}");
+        assert!(
+            report
+                .permissions
+                .iter()
+                .all(|g| g.source.as_str() == ".claude/skills/prose/SKILL.md")
+        );
+        assert!(
+            report
+                .permissions
+                .iter()
+                .any(|g| g.permission.tool == "Bash")
+        );
         assert!(report.is_complete());
+    }
+
+    /// A skill is read now that it can declare grants, so a read that fails is
+    /// a gap in the scan and must be said rather than counted as nothing.
+    #[test]
+    fn a_skill_that_cannot_be_read_is_reported() {
+        let contents = FakeContents::default().deny(".claude/skills/prose/SKILL.md");
+
+        let report = DiscoverSurfaces::new(&skill_tree(), &contents, &ScanPolicy::default()).run();
+
+        assert_eq!(report.surfaces.len(), 1);
+        assert_eq!(report.unparsed.len(), 1, "{report:?}");
+        assert!(!report.is_complete());
     }
 
     #[test]
