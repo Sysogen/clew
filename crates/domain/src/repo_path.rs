@@ -53,6 +53,15 @@ impl RepoPath {
         }
     }
 
+    /// Whether `needle` appears anywhere in this path, on segment boundaries.
+    #[must_use]
+    pub fn contains_segments(&self, needle: &str) -> bool {
+        self.0 == needle
+            || self.0.starts_with(&format!("{needle}/"))
+            || self.0.ends_with(&format!("/{needle}"))
+            || self.0.contains(&format!("/{needle}/"))
+    }
+
     /// Whether this path ends with `suffix` on a segment boundary.
     ///
     /// This is the distinction that makes classification correct: a bare
@@ -100,6 +109,36 @@ mod tests {
 
         let decoy = RepoPath::root().join("notclaude").join("settings.json");
         assert!(!decoy.ends_with_segments("claude/settings.json"));
+    }
+
+    #[test]
+    fn contains_matches_only_on_segment_boundaries() {
+        let p = RepoPath::root()
+            .join(".claude")
+            .join("skills")
+            .join("git")
+            .join("hooks")
+            .join("pre-push");
+
+        assert!(p.contains_segments(".claude"));
+        assert!(p.contains_segments("hooks"));
+        assert!(p.contains_segments(".claude/skills"));
+        assert!(p.contains_segments("pre-push"));
+
+        assert!(
+            !p.contains_segments("claude"),
+            "a partial segment must not match"
+        );
+        assert!(!p.contains_segments("hook"));
+        assert!(
+            !p.contains_segments("skills/hooks"),
+            "segments must be adjacent"
+        );
+    }
+
+    #[test]
+    fn contains_matches_a_whole_single_segment_path() {
+        assert!(RepoPath::root().join("hooks").contains_segments("hooks"));
     }
 
     #[test]

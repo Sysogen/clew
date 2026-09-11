@@ -29,6 +29,13 @@ pub trait CodingTool: Sync {
     /// Classify a repository-relative path, if this tool owns it.
     fn classify(&self, path: &RepoPath) -> Option<SurfaceKind>;
 
+    /// Whether this tool parses `path`, so a caller knows not to read a file
+    /// nothing will look at. A hook script is a surface, not a configuration.
+    fn reads(&self, path: &RepoPath) -> bool {
+        let _ = path;
+        false
+    }
+
     /// Hooks registered by `contents`, the text of `path`.
     ///
     /// A shape this tool does not recognise yields no hooks rather than an

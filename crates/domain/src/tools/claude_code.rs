@@ -28,10 +28,29 @@ impl CodingTool for ClaudeCode {
     }
 
     fn classify(&self, path: &RepoPath) -> Option<SurfaceKind> {
-        SURFACES
+        if let Some(kind) = SURFACES
             .iter()
             .find(|(suffix, _)| path.ends_with_segments(suffix))
             .map(|(_, kind)| *kind)
+        {
+            return Some(kind);
+        }
+
+        if !path.contains_segments(".claude") {
+            return None;
+        }
+        // Hooks sit in .claude/hooks and in .claude/skills/<name>/hooks.
+        if path.contains_segments("hooks") {
+            return Some(SurfaceKind::HookScript);
+        }
+        if path.contains_segments("skills") && path.ends_with_segments("SKILL.md") {
+            return Some(SurfaceKind::Skill);
+        }
+        None
+    }
+
+    fn reads(&self, path: &RepoPath) -> bool {
+        SETTINGS.iter().any(|s| path.ends_with_segments(s))
     }
 
     fn hooks(&self, path: &RepoPath, contents: &str) -> Result<Vec<Hook>, ParseError> {
@@ -273,5 +292,55 @@ mod tests {
                 .len(),
             1
         );
+    }
+
+    #[test]
+    fn a_script_in_a_hooks_directory_is_a_hook_script() {
+        assert_eq!(
+            ClaudeCode.classify(&p(".claude/hooks/embed.sh")),
+            Some(SurfaceKind::HookScript)
+        );
+        assert_eq!(
+            ClaudeCode.classify(&p(".claude/skills/git-workflow/hooks/pre-push")),
+            Some(SurfaceKind::HookScript),
+            "a skill may bundle its own hooks"
+        );
+    }
+
+    #[test]
+    fn a_skill_definition_is_a_skill() {
+        assert_eq!(
+            ClaudeCode.classify(&p(".claude/skills/prose-style/SKILL.md")),
+            Some(SurfaceKind::Skill)
+        );
+    }
+
+    #[test]
+    fn a_hooks_directory_outside_claude_is_not_a_surface() {
+        assert_eq!(ClaudeCode.classify(&p("hooks/pre-push")), None);
+        assert_eq!(ClaudeCode.classify(&p(".git/hooks/pre-commit")), None);
+        assert_eq!(ClaudeCode.classify(&p("src/hooks/use_thing.ts")), None);
+    }
+
+    #[test]
+    fn other_files_in_a_skill_are_not_surfaces() {
+        assert_eq!(
+            ClaudeCode.classify(&p(".claude/skills/prose-style/banned-patterns.regex")),
+            None
+        );
+        assert_eq!(ClaudeCode.classify(&p(".claude/skills/x/README.md")), None);
+    }
+
+    #[test]
+    fn only_settings_are_read() {
+        assert!(ClaudeCode.reads(&p(".claude/settings.json")));
+        assert!(ClaudeCode.reads(&p(".claude/settings.local.json")));
+
+        assert!(
+            !ClaudeCode.reads(&p(".claude/hooks/embed.sh")),
+            "may be a binary"
+        );
+        assert!(!ClaudeCode.reads(&p(".claude/skills/x/SKILL.md")));
+        assert!(!ClaudeCode.reads(&p("CLAUDE.md")));
     }
 }

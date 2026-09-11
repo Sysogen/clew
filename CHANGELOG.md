@@ -10,6 +10,11 @@ repository.
 
 ### Added
 
+- Recognise hook scripts and skill definitions: anything in a `hooks`
+  directory under `.claude`, including the `.claude/skills/<name>/hooks`
+  layout, and `.claude/skills/<name>/SKILL.md`.
+- Report the hooks a Claude Code settings file registers, under the file that
+  registers them.
 - Report directories that could not be read, and exit non-zero when a scan was
   incomplete. Previously an unreadable directory was skipped in silence, so a
   permission-denied scan printed a clean result.

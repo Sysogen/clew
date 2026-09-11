@@ -63,17 +63,21 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
     fn collect_hooks(&self, report: &mut DiscoveryReport) {
         let paths: Vec<RepoPath> = report.surfaces.iter().map(|s| s.path.clone()).collect();
         for path in paths {
+            // One tool owns a path, so ask that one. Asking all of them would
+            // duplicate any failure once a second tool exists.
+            let Some(tool) = REGISTRY.iter().find(|t| t.classify(&path).is_some()) else {
+                continue;
+            };
+            if !tool.reads(&path) {
+                continue;
+            }
+
             let text = match self.contents.read(&path, self.policy.max_file_bytes()) {
                 Ok(text) => text,
                 Err(error) => {
                     report.unparsed.push((path, error.to_string()));
                     continue;
                 }
-            };
-            // One tool owns a path, so ask that one. Asking all of them would
-            // duplicate any failure once a second tool exists.
-            let Some(tool) = REGISTRY.iter().find(|t| t.classify(&path).is_some()) else {
-                continue;
             };
             match tool.hooks(&path, &text) {
                 Ok(hooks) => {
