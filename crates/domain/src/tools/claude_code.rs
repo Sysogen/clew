@@ -75,7 +75,7 @@ impl CodingTool for ClaudeCode {
         let mut found: Vec<Permission> = allow
             .iter()
             .filter_map(serde_json::Value::as_str)
-            .map(Permission::parse)
+            .filter_map(Permission::parse)
             .collect();
         found.sort();
         Ok(found)
@@ -413,6 +413,16 @@ mod tests {
                 .iter()
                 .any(|x| x.tool == "mcp__figma__generate" && x.is_unscoped())
         );
+    }
+
+    #[test]
+    fn entries_that_grant_nothing_are_not_counted() {
+        let found = perms_of(
+            r#"{"permissions":{"allow":["Bash(ls)","","   ","Bash(","Bash)",")Bash(","(ls)"]}}"#,
+        );
+
+        assert_eq!(found.len(), 1, "only one entry is a real grant: {found:?}");
+        assert_eq!(found[0].tool, "Bash");
     }
 
     #[test]

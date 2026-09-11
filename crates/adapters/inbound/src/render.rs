@@ -263,7 +263,7 @@ mod tests {
         let path = surface(".claude/settings.json", SurfaceKind::ClaudeCode).path;
         let granted = |entry: &str| GrantedPermission {
             source: path.clone(),
-            permission: Permission::parse(entry),
+            permission: Permission::parse(entry).expect("valid entry"),
         };
         let found = DiscoveryReport {
             surfaces: vec![surface(".claude/settings.json", SurfaceKind::ClaudeCode)],

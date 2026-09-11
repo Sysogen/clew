@@ -14,23 +14,32 @@ pub struct Permission {
 
 impl Permission {
     /// Parse one entry, such as `Bash(cargo test:*)` or a bare tool name.
+    ///
+    /// Returns `None` for an entry that grants nothing: empty, or with
+    /// parentheses that do not open before they close. Such an entry is a
+    /// configuration defect, not an access grant, so counting it would
+    /// overstate what the file actually permits.
     #[must_use]
-    pub fn parse(entry: &str) -> Self {
-        // Last ')' rather than first, so a scope containing parentheses survives.
-        let bounds = entry
-            .find('(')
-            .zip(entry.rfind(')'))
-            .filter(|(open, close)| open < close);
+    pub fn parse(entry: &str) -> Option<Self> {
+        let entry = entry.trim();
+        if entry.is_empty() {
+            return None;
+        }
 
-        match bounds {
-            Some((open, close)) => Self {
-                tool: entry[..open].trim().to_owned(),
-                scope: Some(entry[open + 1..close].to_owned()),
-            },
-            None => Self {
-                tool: entry.trim().to_owned(),
+        // Last ')' rather than first, so a scope containing parentheses survives.
+        match (entry.find('('), entry.rfind(')')) {
+            (Some(open), Some(close)) if open < close => {
+                let tool = entry[..open].trim();
+                (!tool.is_empty()).then(|| Self {
+                    tool: tool.to_owned(),
+                    scope: Some(entry[open + 1..close].to_owned()),
+                })
+            }
+            (None, None) => Some(Self {
+                tool: entry.to_owned(),
                 scope: None,
-            },
+            }),
+            _ => None,
         }
     }
 
@@ -47,9 +56,13 @@ impl Permission {
 mod tests {
     use super::*;
 
+    fn parsed(entry: &str) -> Permission {
+        Permission::parse(entry).expect("valid entry")
+    }
+
     #[test]
     fn splits_a_tool_from_its_scope() {
-        let p = Permission::parse("Bash(cargo test:*)");
+        let p = parsed("Bash(cargo test:*)");
         assert_eq!(p.tool, "Bash");
         assert_eq!(p.scope.as_deref(), Some("cargo test:*"));
         assert!(!p.is_unscoped());
@@ -57,13 +70,13 @@ mod tests {
 
     #[test]
     fn a_scope_may_contain_parentheses() {
-        let p = Permission::parse("Bash(echo (hi))");
+        let p = parsed("Bash(echo (hi))");
         assert_eq!(p.scope.as_deref(), Some("echo (hi)"));
     }
 
     #[test]
     fn a_bare_tool_name_is_unscoped() {
-        let p = Permission::parse("mcp__plugin_figma__generate_diagram");
+        let p = parsed("mcp__plugin_figma__generate_diagram");
         assert_eq!(p.tool, "mcp__plugin_figma__generate_diagram");
         assert_eq!(p.scope, None);
         assert!(p.is_unscoped(), "no argument restriction is the whole tool");
@@ -71,13 +84,18 @@ mod tests {
 
     #[test]
     fn a_wildcard_or_empty_scope_is_unscoped() {
-        assert!(Permission::parse("Bash(*)").is_unscoped());
-        assert!(Permission::parse("Bash()").is_unscoped());
+        assert!(parsed("Bash(*)").is_unscoped());
+        assert!(parsed("Bash()").is_unscoped());
     }
 
     #[test]
-    fn unbalanced_parentheses_are_not_a_scope() {
-        assert_eq!(Permission::parse("Bash)cargo(").scope, None);
-        assert_eq!(Permission::parse("Bash(").scope, None);
+    fn an_entry_that_grants_nothing_is_rejected() {
+        for entry in ["", "   ", "Bash(", "Bash)", ")Bash(", "(ls)", "()"] {
+            assert_eq!(
+                Permission::parse(entry),
+                None,
+                "{entry:?} grants nothing and must not be counted"
+            );
+        }
     }
 }
