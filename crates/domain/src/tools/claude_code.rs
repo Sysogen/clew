@@ -28,15 +28,24 @@ const MCP_SOURCES: &[&str] = &[
     ".claude/settings.local.json",
 ];
 
+/// A field's value when it is a string with something in it. A blank url or
+/// command reaches nothing.
+fn non_blank(value: Option<&serde_json::Value>) -> Option<&str> {
+    value
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+}
+
 /// One server declaration. `None` when it names neither a command nor a url,
 /// because such an entry reaches nothing.
 fn parse_server(name: &str, config: &serde_json::Value) -> Option<McpServer> {
-    let transport = if let Some(url) = config.get("url").and_then(serde_json::Value::as_str) {
+    let transport = if let Some(url) = non_blank(config.get("url")) {
         Transport::Remote {
             url: url.to_owned(),
         }
     } else {
-        let command = config.get("command")?.as_str()?;
+        let command = non_blank(config.get("command"))?;
         Transport::Local {
             command: command.to_owned(),
             args: config
@@ -611,6 +620,10 @@ mod tests {
         assert!(servers_of(".mcp.json", r#"{"mcpServers":{"a":{"args":["x"]}}}"#).is_empty());
         assert!(servers_of(".mcp.json", r#"{"mcpServers":{"a":{"command":42}}}"#).is_empty());
         assert!(servers_of(".mcp.json", r#"{"mcpServers":{"a":"nope"}}"#).is_empty());
+        assert!(servers_of(".mcp.json", r#"{"mcpServers":{"a":{"url":""}}}"#).is_empty());
+        assert!(servers_of(".mcp.json", r#"{"mcpServers":{"a":{"url":"  "}}}"#).is_empty());
+        assert!(servers_of(".mcp.json", r#"{"mcpServers":{"a":{"command":""}}}"#).is_empty());
+        assert!(servers_of(".mcp.json", r#"{"mcpServers":{"a":{"command":" "}}}"#).is_empty());
     }
 
     #[test]

@@ -119,9 +119,9 @@ pub fn report(report: &DiscoveryReport, root: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use clew_application::{GrantedPermission, RegisteredHook};
+    use clew_application::{DeclaredServer, GrantedPermission, RegisteredHook};
     use clew_domain::ports::file_tree::FileTreeError;
-    use clew_domain::{Hook, Permission};
+    use clew_domain::{Hook, McpServer, Permission, Transport};
     use clew_domain::{RepoPath, Surface, SurfaceKind};
 
     use super::*;
@@ -308,5 +308,65 @@ mod tests {
             !out.contains("cargo test"),
             "scoped grants are counted, not listed: {out}"
         );
+    }
+
+    #[test]
+    fn a_server_is_printed_under_its_declaring_file_with_its_env_names() {
+        let path = surface(".mcp.json", SurfaceKind::McpServers).path;
+        let found = DiscoveryReport {
+            surfaces: vec![surface(".mcp.json", SurfaceKind::McpServers)],
+            hooks: vec![],
+            permissions: vec![],
+            servers: vec![DeclaredServer {
+                source: path,
+                server: McpServer {
+                    name: "postgres".to_owned(),
+                    transport: Transport::Local {
+                        command: "npx".to_owned(),
+                        args: vec!["-y".to_owned(), "server-postgres".to_owned()],
+                    },
+                    env: vec!["DATABASE_URL".to_owned()],
+                },
+            }],
+            unreadable: vec![],
+            unparsed: vec![],
+        };
+
+        let out = report(&found, ".");
+
+        let lines: Vec<&str> = out.lines().collect();
+        assert!(lines[0].contains(".mcp.json"));
+        assert!(
+            lines[1].contains("postgres") && lines[1].contains("npx -y server-postgres"),
+            "the server must sit under its source: {out}"
+        );
+        assert!(lines[2].contains("reads DATABASE_URL"), "{out}");
+    }
+
+    #[test]
+    fn a_server_with_no_env_prints_no_reads_line() {
+        let path = surface(".mcp.json", SurfaceKind::McpServers).path;
+        let found = DiscoveryReport {
+            surfaces: vec![surface(".mcp.json", SurfaceKind::McpServers)],
+            hooks: vec![],
+            permissions: vec![],
+            servers: vec![DeclaredServer {
+                source: path,
+                server: McpServer {
+                    name: "atlassian".to_owned(),
+                    transport: Transport::Remote {
+                        url: "https://mcp.example.invalid/sse".to_owned(),
+                    },
+                    env: vec![],
+                },
+            }],
+            unreadable: vec![],
+            unparsed: vec![],
+        };
+
+        let out = report(&found, ".");
+
+        assert!(out.contains("https://mcp.example.invalid/sse"));
+        assert!(!out.contains("reads"), "{out}");
     }
 }
