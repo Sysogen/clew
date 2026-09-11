@@ -197,32 +197,38 @@ A maintainer can waive the title check for one pull request with the
 
 ## Releasing
 
-Maintainers only, and it is one decision: bump the version.
+Maintainers only.
 
-1. Open a pull request raising `version` in the root `Cargo.toml` and moving
-   `CHANGELOG.md`'s `Unreleased` section under the new number.
+1. Open a pull request that raises `version` in the root `Cargo.toml`, raises
+   the five `clew-*` entries under `[workspace.dependencies]` to match, and
+   moves `CHANGELOG.md`'s `Unreleased` section under the new number.
 2. Merge it.
 
-From there `Tag` notices the version changed, creates `v<version>`, and starts
-`Release`, which re-runs every gate, publishes the workspace to crates.io, builds
-binaries for five targets, and creates the GitHub release with checksums.
+The internal dependency pins are not optional. Miss them and the published
+crates ask for the previous release of each other, so the five are not a
+coherent set. `./scripts/check-versions.sh` runs in CI and fails the pull
+request if they drift.
 
-A merge that does not change the version produces no tag, so a documentation
-change does not release.
+From there `Tag` sees the version changed, creates `v<version>`, and starts
+`Release`. A push that does not change the version produces no tag, so a
+documentation change does not release.
 
-### Before the first release
+`Release` refuses to publish unless CI already succeeded on that commit, the
+tag matches the manifest version, and the tag is an ancestor of `main`. It
+builds every binary before publishing, because a crates.io version can be
+yanked but never replaced and a failed target must not leave crates published
+without artifacts.
 
-`Release` needs a `CARGO_REGISTRY_TOKEN` secret in the `crates-io` environment.
-Scope it to `publish-update` for the five `clew-*` crates.
+### The first release is manual
 
-### If something goes wrong
+`Tag` only fires on a version change, so the current version never gets a tag
+on its own. Push it by hand, or use `Release`'s `Run workflow` button and give
+it the tag. The same applies to retrying a failed release.
 
-`Release` refuses to run when the tag does not match the version in the manifest,
-or when the tag is not an ancestor of `main`. Both are there because **a
-crates.io publish cannot be undone**: a version can be yanked, never replaced.
+### Before any release
 
-To release a tag by hand, or to retry a failed run, use the `Release` workflow's
-`Run workflow` button and give it the tag.
+`Release` needs a `CARGO_REGISTRY_TOKEN` secret in the `crates-io` environment,
+scoped to `publish-update` for the five `clew-*` crates.
 
 ## Reporting a bug
 

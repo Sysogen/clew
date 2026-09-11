@@ -47,6 +47,10 @@ jobs:
       - name: Package
         run: cargo package --allow-dirty
 
+      - name: Internal version pins
+        if: matrix.os == 'ubuntu-latest'
+        run: ./scripts/check-versions.sh
+
   msrv:
     name: MSRV
     runs-on: ubuntu-latest
