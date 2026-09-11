@@ -34,10 +34,7 @@ jobs:
         id: check
         run: |
           set -euo pipefail
-          version="$(cargo metadata --format-version 1 --no-deps \
-            | python3 -c 'import json,sys
-pkgs = json.load(sys.stdin)["packages"]
-print(next(p["version"] for p in pkgs if p["name"] == "clew-cli"))')"
+          version="$(./scripts/version.sh)"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           if [ "$TAG" != "v$version" ]; then
             echo "tag $TAG does not match version $version in Cargo.toml" >&2
@@ -54,9 +51,6 @@ print(next(p["version"] for p in pkgs if p["name"] == "clew-cli"))')"
       - name: Internal version pins
         run: ./scripts/check-versions.sh
 
-      # CI already ran the full matrix, MSRV, commit messages and the supply
-      # chain on this commit. Re-running a subset here would prove less than
-      # asking whether that passed.
       - name: CI passed on this commit
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -78,9 +72,6 @@ print(next(p["version"] for p in pkgs if p["name"] == "clew-cli"))')"
 
   publish:
     name: crates.io
-    # Binaries first: publishing cannot be undone, so a target that fails to
-    # build must stop the release rather than leave crates published without
-    # artifacts and a retry that hits "already published".
     needs: [verify, binaries]
     runs-on: ubuntu-latest
     environment: crates-io
@@ -89,8 +80,6 @@ print(next(p["version"] for p in pkgs if p["name"] == "clew-cli"))')"
         with:
           ref: ${{ env.TAG }}
 
-      # cargo orders the workspace itself and waits for the index between
-      # crates, so this is one command rather than five with sleeps.
       - name: Dry run
         run: cargo publish --workspace --dry-run
 
@@ -122,8 +111,6 @@ print(next(p["version"] for p in pkgs if p["name"] == "clew-cli"))')"
         with:
           ref: ${{ env.TAG }}
 
-      # macOS runners are ARM, so the Intel target is a cross build and the
-      # toolchain does not ship it by default.
       - name: Toolchain
         shell: bash
         run: rustup target add ${{ matrix.target }}

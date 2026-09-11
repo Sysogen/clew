@@ -1,12 +1,6 @@
 ---
 name: Tag
 
-# Tags only when a push changes the version in Cargo.toml. Checking merely
-# that the tag is absent would release on any push while the current version is
-# untagged, including the first one, which is the opposite of the contract.
-#
-# The first release is therefore manual: push v0.1.0 by hand, or dispatch
-# Release with the tag.
 "on":
   push:
     branches: [main]
@@ -30,14 +24,7 @@ jobs:
           BEFORE: ${{ github.event.before }}
         run: |
           set -euo pipefail
-          read_version() {
-            python3 -c "
-import re, sys
-m = re.search(r'^version = \"([^\"]+)\"', sys.stdin.read(), re.M)
-print(m.group(1) if m else '')"
-          }
-
-          now="$(read_version < Cargo.toml)"
+          now="$(./scripts/version.sh)"
           echo "version=$now" >> "$GITHUB_OUTPUT"
 
           empty=0000000000000000000000000000000000000000
@@ -48,7 +35,7 @@ print(m.group(1) if m else '')"
             exit 0
           fi
 
-          was="$(git show "$BEFORE:Cargo.toml" | read_version)"
+          was="$(./scripts/version.sh "$BEFORE")"
           echo "$was -> $now"
           if [ "$was" = "$now" ]; then
             echo "the version did not change; not tagging"
@@ -77,8 +64,6 @@ print(m.group(1) if m else '')"
           git push origin "$tag"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
-      # A tag pushed with GITHUB_TOKEN does not trigger another workflow, so
-      # the release is started explicitly.
       - name: Start the release
         if: steps.version.outputs.changed == 'true'
         env:
