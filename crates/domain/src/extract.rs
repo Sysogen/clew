@@ -169,19 +169,17 @@ fn permissions(root: &serde_json::Value) -> Vec<Permission> {
 
 /// MCP servers declared.
 fn mcp_servers(root: &serde_json::Value) -> Vec<McpServer> {
-    // Claude Code and Cursor write mcpServers; Codex writes mcp_servers.
-    let Some(declared) = ["mcpServers", "mcp_servers"]
+    // Claude Code and Cursor write mcpServers; Codex writes mcp_servers. A file
+    // carrying both is odd, but reading only the first would hide servers, so
+    // both tables are read and identical entries collapsed.
+    let mut found: Vec<McpServer> = ["mcpServers", "mcp_servers"]
         .iter()
-        .find_map(|key| root.get(key)?.as_object())
-    else {
-        return Vec::new();
-    };
-
-    let mut found: Vec<McpServer> = declared
-        .iter()
+        .filter_map(|key| root.get(key)?.as_object())
+        .flatten()
         .filter_map(|(name, config)| server(name, config))
         .collect();
     found.sort();
+    found.dedup();
     found
 }
 
@@ -409,6 +407,57 @@ DATABASE_URL = "postgres://u:hunter2@h/d"
         assert_eq!(camel.len(), 1, "Claude Code and Cursor spelling");
         assert_eq!(snake.len(), 1, "Codex spelling");
         assert_eq!(camel, snake);
+    }
+
+    #[test]
+    fn both_tables_are_read_when_a_file_carries_both() {
+        let found = servers_of(
+            r#"{"mcpServers":{"a":{"command":"x"}},
+                "mcp_servers":{"b":{"command":"y"}}}"#,
+        );
+
+        assert_eq!(found.len(), 2, "neither table may be dropped: {found:?}");
+        assert!(found.iter().any(|s| s.name == "a"));
+        assert!(found.iter().any(|s| s.name == "b"));
+    }
+
+    #[test]
+    fn an_entry_declared_identically_in_both_tables_appears_once() {
+        let found = servers_of(
+            r#"{"mcpServers":{"a":{"command":"x"}},
+                "mcp_servers":{"a":{"command":"x"}}}"#,
+        );
+
+        assert_eq!(found.len(), 1, "{found:?}");
+    }
+
+    #[test]
+    fn a_name_declared_differently_in_both_tables_keeps_both() {
+        let found = servers_of(
+            r#"{"mcpServers":{"a":{"command":"x"}},
+                "mcp_servers":{"a":{"command":"y"}}}"#,
+        );
+
+        assert_eq!(found.len(), 2, "a conflict must be visible, not resolved");
+    }
+
+    #[test]
+    fn toml_reads_an_inline_env_table() {
+        let found = run(
+            &[Extraction::McpServers],
+            Format::Toml,
+            r#"
+[mcp_servers.pg]
+command = "npx"
+env = { DATABASE_URL = "postgres://u:hunter2@h/d", PGPORT = "5432" }
+"#,
+        )
+        .expect("valid toml")
+        .servers;
+
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].env, vec!["DATABASE_URL", "PGPORT"]);
+        assert!(!format!("{found:?}").contains("hunter2"));
     }
 
     #[test]

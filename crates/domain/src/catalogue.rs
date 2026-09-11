@@ -321,13 +321,19 @@ mod tests {
             "every catalogue row needs a case here"
         );
 
+        let all = &[
+            Extraction::Hooks,
+            Extraction::Permissions,
+            Extraction::McpServers,
+        ][..];
+        let servers = &[Extraction::McpServers][..];
         let parsed = [
-            (".claude/settings.json", 3),
-            (".claude/settings.local.json", 3),
-            (".mcp.json", 1),
-            (".cursor/mcp.json", 1),
-            ("cline_mcp_settings.json", 1),
-            (".codex/config.toml", 1),
+            (".claude/settings.json", all),
+            (".claude/settings.local.json", all),
+            (".mcp.json", servers),
+            (".cursor/mcp.json", servers),
+            ("cline_mcp_settings.json", servers),
+            (".codex/config.toml", servers),
         ];
         let toml_rows = [".codex/config.toml"];
 
@@ -340,12 +346,10 @@ mod tests {
             let want = parsed
                 .iter()
                 .find(|(q, _)| *q == path)
-                .map_or(0, |(_, n)| *n);
+                .map_or(&[][..], |(_, e)| *e);
             assert_eq!(
-                matched.extract.len(),
-                want,
-                "{path} declares the wrong extractions: {:?}",
-                matched.extract
+                matched.extract, want,
+                "{path} declares the wrong extractions"
             );
 
             let expected_format = if toml_rows.contains(&path) {
@@ -429,6 +433,26 @@ mod tests {
         .expect_err("an unknown kind must not load");
         assert!(
             matches!(error, CatalogueError::UnknownKind { .. }),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn an_unknown_format_is_rejected_at_load() {
+        let error = Catalogue::load(
+            r#"version = 1
+               [[surface]]
+               glob = "x"
+               tool = "x"
+               kind = "skill"
+               format = "yaml"
+               last_verified = "2026-09-11"
+               source = "https://example.invalid"
+            "#,
+        )
+        .expect_err("a format clew cannot parse must not load");
+        assert!(
+            matches!(error, CatalogueError::UnknownFormat { .. }),
             "{error:?}"
         );
     }
