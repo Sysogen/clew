@@ -78,7 +78,7 @@ pub struct Matched<'a> {
 pub struct SurfaceRule {
     /// Matched against the repository-relative path.
     pub glob: String,
-    /// The tool that owns it. Extraction is dispatched on this.
+    /// The tool that owns it, for reporting. What to read is `extract`.
     pub tool: String,
     /// What it is.
     pub kind: String,
@@ -267,7 +267,7 @@ mod tests {
     /// onto one kind reported `.aider.conf.yml` as "Claude Code", and no test
     /// noticed, so this pins every row.
     #[test]
-    fn each_surface_keeps_its_own_kind() {
+    fn each_surface_keeps_its_own_kind_and_extractions() {
         let expected = [
             (".claude/settings.json", SurfaceKind::ClaudeCode),
             (".claude/settings.local.json", SurfaceKind::ClaudeCode),
@@ -293,11 +293,30 @@ mod tests {
             "every catalogue row needs a case here"
         );
 
+        let parsed = [
+            (".claude/settings.json", 3),
+            (".claude/settings.local.json", 3),
+            (".mcp.json", 1),
+            (".cursor/mcp.json", 1),
+            ("cline_mcp_settings.json", 1),
+        ];
+
         for (path, kind) in expected {
             let matched = shipped()
                 .lookup(&p(path))
                 .unwrap_or_else(|| panic!("{path} matched no row"));
             assert_eq!(matched.kind, kind, "{path}");
+
+            let want = parsed
+                .iter()
+                .find(|(q, _)| *q == path)
+                .map_or(0, |(_, n)| *n);
+            assert_eq!(
+                matched.extract.len(),
+                want,
+                "{path} declares the wrong extractions: {:?}",
+                matched.extract
+            );
         }
     }
 

@@ -36,9 +36,15 @@ repository.
 - Surface patterns move from Rust into `crates/domain/catalogue.toml`, one row
   each, carrying the tool, the kind, the date it was last checked and the
   documentation it was checked against.
-- **Breaking**: `clew_domain::classify` is removed. Use
-  `clew_domain::catalogue().lookup(path)`, which returns the matching row
-  alongside the kind. No published crate depends on it.
+- The library crates change shape ahead of their first publication. Only
+  `clew-cli` 0.0.0 has been released and it carried no library API, so nothing
+  downstream can break:
+  - `clew_domain::classify` is removed. `clew_domain::catalogue().lookup` now
+    returns a `Matched` carrying the row, the kind and the extractions, rather
+    than a tuple.
+  - `clew_domain::tools` is removed with it. `CodingTool`, `ClaudeCode` and
+    `REGISTRY` have no replacement: a tool is a catalogue row now.
+  - `ParseError` moves from `clew_domain::tools` to `clew_domain::extract`.
 
 - Restructure into five crates along ports and adapters: `clew-domain`,
   `clew-application`, `clew-adapter-cli`, `clew-adapter-fs`, and `clew-cli` as

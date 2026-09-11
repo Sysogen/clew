@@ -538,6 +538,27 @@ mod tests {
         assert!(report.is_complete());
     }
 
+    /// The Cursor row declares `mcp-servers`. Without an end-to-end case the
+    /// row could lose that and every other test would still pass.
+    #[test]
+    fn a_cursor_mcp_file_reaches_the_report() {
+        let tree = FakeTree::default()
+            .dir("", &[(".cursor", EntryKind::Directory)])
+            .dir(".cursor", &[("mcp.json", EntryKind::File)]);
+        let contents = FakeContents::default().file(
+            ".cursor/mcp.json",
+            r#"{"mcpServers":{"pg":{"command":"npx","env":{"DATABASE_URL":"x"}}}}"#,
+        );
+        let policy = ScanPolicy::default();
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &policy).run();
+
+        assert_eq!(report.servers.len(), 1, "{report:?}");
+        assert_eq!(report.servers[0].source.as_str(), ".cursor/mcp.json");
+        assert_eq!(report.servers[0].server.env, vec!["DATABASE_URL"]);
+        assert!(report.is_complete());
+    }
+
     #[test]
     fn a_malformed_file_is_still_reported_once_with_three_parsers() {
         let tree = FakeTree::default().dir("", &[(".mcp.json", EntryKind::File)]);
