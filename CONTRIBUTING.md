@@ -32,7 +32,7 @@ enforces it, because each layer is its own crate.
 
 | Crate | Layer | May depend on |
 | --- | --- | --- |
-| `clew-domain` | Domain: types, rules, ports | nothing but `thiserror` |
+| `clew-domain` | Domain: types, rules, ports, the catalogue | parsers and matchers only: no IO, no async, no runtime |
 | `clew-application` | Use cases | domain |
 | `clew-adapter-cli` | Inbound: parse and render | application, domain |
 | `clew-adapter-fs` | Outbound: `FileTree` over `std::fs` | domain |
@@ -48,13 +48,27 @@ Two rules follow from this and are checked in review:
 
 ## Adding a surface
 
-Extend `SUFFIXES` in `crates/domain/src/catalog.rs` with the path suffix and its
-`SurfaceKind`, then add a test in the same file.
+Add a row to `crates/domain/catalogue.toml`. No Rust required.
 
-Match on the full path suffix at a segment boundary, never the bare file name.
-`.claude/settings.json` must match; a `settings.json` sitting anywhere else must
-not. `RepoPath::ends_with_segments` exists for exactly this, and there are tests
-that fail if you bypass it.
+```toml
+[[surface]]
+glob          = "**/.cursor/rules/*.mdc"
+tool          = "cursor"
+kind          = "cursor"
+last_verified = "2026-09-11"
+source        = "https://docs.cursor.com/context/rules"
+```
+
+`source` must be the tool's own documentation, not a blog post, and
+`last_verified` is the day you checked it. Loading rejects a row missing either,
+so an unciteable pattern cannot ship.
+
+The first matching row wins, so put a specific pattern above a general one.
+
+Globs match on segment boundaries. `**/.claude/settings.json` matches at any
+depth; a `settings.json` sitting anywhere else does not. A `hooks` directory must
+sit below `.claude`, which is why the glob is `**/.claude/**/hooks/**` rather
+than `**/hooks/**`.
 
 ## Two rules that are not style preferences
 

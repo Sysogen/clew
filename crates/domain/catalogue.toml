@@ -17,14 +17,14 @@ version = 1
 [[surface]]
 glob = "**/.claude/settings.json"
 tool = "claude-code"
-kind = "settings"
+kind = "claude-code"
 last_verified = "2026-09-11"
 source = "https://code.claude.com/docs/en/settings"
 
 [[surface]]
 glob = "**/.claude/settings.local.json"
 tool = "claude-code"
-kind = "settings"
+kind = "claude-code"
 last_verified = "2026-09-11"
 source = "https://code.claude.com/docs/en/settings"
 
@@ -61,7 +61,7 @@ source = "https://code.claude.com/docs/en/memory"
 [[surface]]
 glob = "**/.codex/config.toml"
 tool = "codex"
-kind = "settings"
+kind = "codex"
 last_verified = "2026-09-11"
 source = "https://github.com/openai/codex/blob/main/docs/config.md"
 
@@ -77,14 +77,14 @@ source = "https://agents.md"
 [[surface]]
 glob = "**/.cursor/mcp.json"
 tool = "cursor"
-kind = "mcp-servers"
+kind = "cursor"
 last_verified = "2026-09-11"
 source = "https://docs.cursor.com/context/model-context-protocol"
 
 [[surface]]
 glob = "**/.cursorrules"
 tool = "cursor"
-kind = "instruction"
+kind = "cursor"
 last_verified = "2026-09-11"
 source = "https://docs.cursor.com/context/rules"
 
@@ -93,14 +93,14 @@ source = "https://docs.cursor.com/context/rules"
 [[surface]]
 glob = "**/.vscode/mcp.json"
 tool = "vscode"
-kind = "mcp-servers"
+kind = "vscode"
 last_verified = "2026-09-11"
 source = "https://code.visualstudio.com/docs/copilot/chat/mcp-servers"
 
 [[surface]]
 glob = "**/.github/copilot-instructions.md"
 tool = "copilot"
-kind = "instruction"
+kind = "copilot"
 last_verified = "2026-09-11"
 source = "https://docs.github.com/copilot/customizing-copilot"
 
@@ -109,27 +109,27 @@ source = "https://docs.github.com/copilot/customizing-copilot"
 [[surface]]
 glob = "**/.continue/config.json"
 tool = "continue"
-kind = "settings"
+kind = "continue"
 last_verified = "2026-09-11"
 source = "https://docs.continue.dev/reference"
 
 [[surface]]
 glob = "**/cline_mcp_settings.json"
 tool = "cline"
-kind = "mcp-servers"
+kind = "cline"
 last_verified = "2026-09-11"
 source = "https://docs.cline.bot/mcp/configuring-mcp-servers"
 
 [[surface]]
 glob = "**/.aider.conf.yml"
 tool = "aider"
-kind = "settings"
+kind = "aider"
 last_verified = "2026-09-11"
 source = "https://aider.chat/docs/config/aider_conf.html"
 
 [[surface]]
 glob = "**/.devcontainer/devcontainer.json"
 tool = "devcontainer"
-kind = "settings"
+kind = "devcontainer"
 last_verified = "2026-09-11"
 source = "https://containers.dev/implementors/json_reference/"

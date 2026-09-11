@@ -42,7 +42,15 @@ impl SurfaceKind {
     pub fn from_catalogue(name: &str) -> Option<Self> {
         Some(match name {
             "mcp-servers" => Self::McpServers,
-            "settings" => Self::ClaudeCode,
+            "claude-code" => Self::ClaudeCode,
+            "codex" => Self::Codex,
+            "cursor" => Self::Cursor,
+            "vscode" => Self::VsCode,
+            "continue" => Self::Continue,
+            "cline" => Self::Cline,
+            "aider" => Self::Aider,
+            "copilot" => Self::Copilot,
+            "devcontainer" => Self::DevContainer,
             "instruction" => Self::InstructionFile,
             "hook-script" => Self::HookScript,
             "skill" => Self::Skill,

@@ -35,6 +35,14 @@ pub enum CatalogueError {
         /// Why it was rejected.
         reason: String,
     },
+    /// A row carries a date that is not a real calendar day.
+    #[error("row {row} has an invalid last_verified {date:?}")]
+    BadDate {
+        /// Which row, counting from zero.
+        row: usize,
+        /// The date as written.
+        date: String,
+    },
     /// A row names a kind the domain does not have.
     #[error("row {row} has an unknown kind {kind:?}")]
     UnknownKind {
@@ -97,6 +105,13 @@ impl Catalogue {
             })?;
             builder.add(glob);
 
+            if !is_iso_date(&rule.last_verified) {
+                return Err(CatalogueError::BadDate {
+                    row,
+                    date: rule.last_verified.clone(),
+                });
+            }
+
             kinds.push(SurfaceKind::from_catalogue(&rule.kind).ok_or_else(|| {
                 CatalogueError::UnknownKind {
                     row,
@@ -129,6 +144,28 @@ impl Catalogue {
     pub fn rules(&self) -> &[SurfaceRule] {
         &self.rules
     }
+}
+
+/// Whether `value` is a calendar day written `YYYY-MM-DD`.
+fn is_iso_date(value: &str) -> bool {
+    let parts: Vec<&str> = value.split('-').collect();
+    let [y, m, d] = parts[..] else { return false };
+    if (y.len(), m.len(), d.len()) != (4, 2, 2) {
+        return false;
+    }
+    let (Ok(year), Ok(month), Ok(day)) = (y.parse::<u16>(), m.parse::<u8>(), d.parse::<u8>())
+    else {
+        return false;
+    };
+    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let last = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if leap => 29,
+        2 => 28,
+        _ => return false,
+    };
+    (1..=last).contains(&day)
 }
 
 /// The catalogue shipped with this build.
@@ -175,10 +212,48 @@ mod tests {
                 rule.glob
             );
             assert!(
-                rule.last_verified.len() == 10 && rule.last_verified.starts_with("202"),
-                "{} has no verification date",
+                is_iso_date(&rule.last_verified),
+                "{} has no valid verification date",
                 rule.glob
             );
+        }
+    }
+
+    /// Each tool keeps its own label. A refactor that collapsed several tools
+    /// onto one kind reported `.aider.conf.yml` as "Claude Code", and no test
+    /// noticed, so this pins every row.
+    #[test]
+    fn each_surface_keeps_its_own_kind() {
+        let expected = [
+            (".claude/settings.json", SurfaceKind::ClaudeCode),
+            (".claude/settings.local.json", SurfaceKind::ClaudeCode),
+            (".mcp.json", SurfaceKind::McpServers),
+            (".claude/hooks/x.sh", SurfaceKind::HookScript),
+            (".claude/skills/a/SKILL.md", SurfaceKind::Skill),
+            ("CLAUDE.md", SurfaceKind::InstructionFile),
+            ("AGENTS.md", SurfaceKind::InstructionFile),
+            (".codex/config.toml", SurfaceKind::Codex),
+            (".cursor/mcp.json", SurfaceKind::Cursor),
+            (".cursorrules", SurfaceKind::Cursor),
+            (".vscode/mcp.json", SurfaceKind::VsCode),
+            (".github/copilot-instructions.md", SurfaceKind::Copilot),
+            (".continue/config.json", SurfaceKind::Continue),
+            ("cline_mcp_settings.json", SurfaceKind::Cline),
+            (".aider.conf.yml", SurfaceKind::Aider),
+            (".devcontainer/devcontainer.json", SurfaceKind::DevContainer),
+        ];
+
+        assert_eq!(
+            expected.len(),
+            shipped().rules().len(),
+            "every catalogue row needs a case here"
+        );
+
+        for (path, kind) in expected {
+            let (_, found) = shipped()
+                .lookup(&p(path))
+                .unwrap_or_else(|| panic!("{path} matched no row"));
+            assert_eq!(found, kind, "{path}");
         }
     }
 
@@ -253,6 +328,44 @@ mod tests {
             matches!(error, CatalogueError::UnknownKind { .. }),
             "{error:?}"
         );
+    }
+
+    #[test]
+    fn a_malformed_date_is_rejected_at_load() {
+        for bad in [
+            "2026-99-99",
+            "2026-09-XX",
+            "2026-02-30",
+            "2026-9-1",
+            "",
+            "2026-13-01",
+        ] {
+            let toml = format!(
+                r#"version = 1
+                   [[surface]]
+                   glob = "x"
+                   tool = "x"
+                   kind = "skill"
+                   last_verified = "{bad}"
+                   source = "https://example.invalid"
+                "#
+            );
+            let error = Catalogue::load(&toml).expect_err("not a calendar day");
+            assert!(
+                matches!(error, CatalogueError::BadDate { .. }),
+                "{bad}: {error:?}"
+            );
+        }
+
+        let leap = r#"version = 1
+                      [[surface]]
+                      glob = "x"
+                      tool = "x"
+                      kind = "skill"
+                      last_verified = "2024-02-29"
+                      source = "https://example.invalid"
+                   "#;
+        assert!(Catalogue::load(leap).is_ok(), "a real leap day must load");
     }
 
     #[test]
