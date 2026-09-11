@@ -6,7 +6,7 @@
 use clew_domain::ports::file_contents::FileContents;
 use clew_domain::ports::file_tree::{FileTree, FileTreeError};
 use clew_domain::tools::REGISTRY;
-use clew_domain::{Hook, McpServer, Permission, RepoPath, ScanPolicy, Surface, classify};
+use clew_domain::{Hook, McpServer, Permission, RepoPath, ScanPolicy, Surface, catalogue};
 
 /// An MCP server, and the file that declared it.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -85,9 +85,11 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
     fn collect_hooks(&self, report: &mut DiscoveryReport) {
         let paths: Vec<RepoPath> = report.surfaces.iter().map(|s| s.path.clone()).collect();
         for path in paths {
-            // One tool owns a path, so ask that one. Asking all of them would
-            // duplicate any failure once a second tool exists.
-            let Some(tool) = REGISTRY.iter().find(|t| t.classify(&path).is_some()) else {
+            // The catalogue names the owning tool; find its implementation.
+            let Some((rule, _)) = catalogue().lookup(&path) else {
+                continue;
+            };
+            let Some(tool) = REGISTRY.iter().find(|t| t.name() == rule.tool) else {
                 continue;
             };
             if !tool.reads(&path) {
@@ -165,7 +167,7 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
                     queue.push(entry.path);
                     continue;
                 }
-                if let Some(kind) = classify(&entry.path) {
+                if let Some((_, kind)) = catalogue().lookup(&entry.path) {
                     report.surfaces.push(Surface {
                         path: entry.path,
                         kind,

@@ -8,15 +8,6 @@ use crate::hook::Hook;
 use crate::mcp_server::{McpServer, Transport};
 use crate::permission::Permission;
 use crate::repo_path::RepoPath;
-use crate::surface::SurfaceKind;
-
-/// The surfaces Claude Code reads, as the path suffix that identifies each.
-const SURFACES: &[(&str, SurfaceKind)] = &[
-    (".claude/settings.json", SurfaceKind::ClaudeCode),
-    (".claude/settings.local.json", SurfaceKind::ClaudeCode),
-    (".mcp.json", SurfaceKind::McpServers),
-    ("CLAUDE.md", SurfaceKind::InstructionFile),
-];
 
 /// The files that can register hooks and permissions.
 const SETTINGS: &[&str] = &[".claude/settings.json", ".claude/settings.local.json"];
@@ -76,41 +67,12 @@ fn parse_server(name: &str, config: &serde_json::Value) -> Option<McpServer> {
     })
 }
 
-/// Whether `segment` appears below a `.claude` directory, rather than merely
-/// somewhere in the path. `hooks/.claude/x` is not a hook.
-fn under_claude(path: &RepoPath, segment: &str) -> bool {
-    let segments: Vec<&str> = path.segments().collect();
-    segments
-        .iter()
-        .position(|s| *s == ".claude")
-        .is_some_and(|claude| segments[claude + 1..].contains(&segment))
-}
-
 /// Claude Code: `.claude/`, the project MCP file, and `CLAUDE.md`.
 pub struct ClaudeCode;
 
 impl CodingTool for ClaudeCode {
     fn name(&self) -> &'static str {
         "claude-code"
-    }
-
-    fn classify(&self, path: &RepoPath) -> Option<SurfaceKind> {
-        if let Some(kind) = SURFACES
-            .iter()
-            .find(|(suffix, _)| path.ends_with_segments(suffix))
-            .map(|(_, kind)| *kind)
-        {
-            return Some(kind);
-        }
-
-        // Hooks sit in .claude/hooks and in .claude/skills/<name>/hooks.
-        if under_claude(path, "hooks") {
-            return Some(SurfaceKind::HookScript);
-        }
-        if under_claude(path, "skills") && path.ends_with_segments("SKILL.md") {
-            return Some(SurfaceKind::Skill);
-        }
-        None
     }
 
     fn permissions(&self, path: &RepoPath, contents: &str) -> Result<Vec<Permission>, ParseError> {
@@ -210,43 +172,6 @@ mod tests {
     fn p(s: &str) -> RepoPath {
         s.split('/')
             .fold(RepoPath::root(), |acc, seg| acc.join(seg))
-    }
-
-    #[test]
-    fn owns_its_settings_files_at_any_depth() {
-        assert_eq!(
-            ClaudeCode.classify(&p(".claude/settings.json")),
-            Some(SurfaceKind::ClaudeCode)
-        );
-        assert_eq!(
-            ClaudeCode.classify(&p("packages/api/.claude/settings.local.json")),
-            Some(SurfaceKind::ClaudeCode)
-        );
-    }
-
-    #[test]
-    fn owns_the_project_mcp_file_and_the_instruction_file() {
-        assert_eq!(
-            ClaudeCode.classify(&p(".mcp.json")),
-            Some(SurfaceKind::McpServers)
-        );
-        assert_eq!(
-            ClaudeCode.classify(&p("CLAUDE.md")),
-            Some(SurfaceKind::InstructionFile)
-        );
-    }
-
-    #[test]
-    fn a_bare_file_name_does_not_match_a_directory_scoped_surface() {
-        assert_eq!(ClaudeCode.classify(&p("settings.json")), None);
-        assert_eq!(ClaudeCode.classify(&p("config/settings.json")), None);
-    }
-
-    #[test]
-    fn does_not_claim_another_tool_s_files() {
-        assert_eq!(ClaudeCode.classify(&p(".codex/config.toml")), None);
-        assert_eq!(ClaudeCode.classify(&p("AGENTS.md")), None);
-        assert_eq!(ClaudeCode.classify(&p(".cursor/mcp.json")), None);
     }
 
     fn hooks_of(json: &str) -> Vec<Hook> {
@@ -405,58 +330,6 @@ mod tests {
                 .len(),
             1
         );
-    }
-
-    #[test]
-    fn a_script_in_a_hooks_directory_is_a_hook_script() {
-        assert_eq!(
-            ClaudeCode.classify(&p(".claude/hooks/embed.sh")),
-            Some(SurfaceKind::HookScript)
-        );
-        assert_eq!(
-            ClaudeCode.classify(&p(".claude/skills/git-workflow/hooks/pre-push")),
-            Some(SurfaceKind::HookScript),
-            "a skill may bundle its own hooks"
-        );
-    }
-
-    #[test]
-    fn a_skill_definition_is_a_skill() {
-        assert_eq!(
-            ClaudeCode.classify(&p(".claude/skills/prose-style/SKILL.md")),
-            Some(SurfaceKind::Skill)
-        );
-    }
-
-    #[test]
-    fn a_hooks_directory_outside_claude_is_not_a_surface() {
-        assert_eq!(ClaudeCode.classify(&p("hooks/pre-push")), None);
-        assert_eq!(ClaudeCode.classify(&p(".git/hooks/pre-commit")), None);
-        assert_eq!(ClaudeCode.classify(&p("src/hooks/use_thing.ts")), None);
-    }
-
-    #[test]
-    fn a_hooks_directory_above_claude_is_not_a_surface() {
-        assert_eq!(
-            ClaudeCode.classify(&p("hooks/.claude/readme")),
-            None,
-            "hooks is an ancestor here, not a child of .claude"
-        );
-        assert_eq!(
-            ClaudeCode.classify(&p("hooks/.claude/skills/a/SKILL.md")),
-            Some(SurfaceKind::Skill),
-            "the skill is real; the hooks ancestor must not relabel it"
-        );
-        assert_eq!(ClaudeCode.classify(&p("skills/.claude/a/SKILL.md")), None);
-    }
-
-    #[test]
-    fn other_files_in_a_skill_are_not_surfaces() {
-        assert_eq!(
-            ClaudeCode.classify(&p(".claude/skills/prose-style/banned-patterns.regex")),
-            None
-        );
-        assert_eq!(ClaudeCode.classify(&p(".claude/skills/x/README.md")), None);
     }
 
     #[test]

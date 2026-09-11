@@ -8,7 +8,7 @@
 //! async runtime. Every capability it needs from the outside world is a trait
 //! in [`ports`], implemented by an adapter.
 
-pub mod catalog;
+pub mod catalogue;
 pub mod hook;
 pub mod mcp_server;
 pub mod permission;
@@ -18,7 +18,7 @@ pub mod scan_policy;
 pub mod surface;
 pub mod tools;
 
-pub use catalog::classify;
+pub use catalogue::{Catalogue, shipped as catalogue};
 pub use hook::Hook;
 pub use mcp_server::{McpServer, Transport};
 pub use permission::Permission;
