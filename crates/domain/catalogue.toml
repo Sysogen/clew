@@ -93,6 +93,16 @@ extract = ["mcp-servers"]
 last_verified = "2026-09-11"
 source = "https://docs.cursor.com/context/model-context-protocol"
 
+# Only .mdc counts: Cursor ignores a plain .md placed here. The frontmatter
+# declares when the rule enters context, not what it may do, so there is
+# nothing here that the current extractions read.
+[[surface]]
+glob = "**/.cursor/rules/**/*.mdc"
+tool = "cursor"
+kind = "cursor"
+last_verified = "2026-09-11"
+source = "https://cursor.com/docs/rules"
+
 [[surface]]
 glob = "**/.cursorrules"
 tool = "cursor"

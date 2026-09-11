@@ -52,11 +52,11 @@ Add a row to `crates/domain/catalogue.toml`. No Rust required.
 
 ```toml
 [[surface]]
-glob          = "**/.cursor/rules/*.mdc"
+glob          = "**/.cursor/rules/**/*.mdc"
 tool          = "cursor"
 kind          = "cursor"
 last_verified = "2026-09-11"
-source        = "https://docs.cursor.com/context/rules"
+source        = "https://cursor.com/docs/rules"
 ```
 
 Add `extract` when the file should be read:
@@ -92,10 +92,14 @@ naming an unknown kind, or naming an unknown extraction.
 
 The first matching row wins, so put a specific pattern above a general one.
 
-Globs match on segment boundaries. `**/.claude/settings.json` matches at any
+A literal segment matches exactly. `**/.claude/settings.json` matches at any
 depth; a `settings.json` sitting anywhere else does not. A `hooks` directory must
 sit below `.claude`, which is why the glob is `**/.claude/**/hooks/**` rather
 than `**/hooks/**`.
+
+Wildcards are looser than they look. Globs compile with globset's defaults, so a
+`*` crosses `/` and is not confined to one segment. No current row depends on
+that. Write `**` where you mean any depth, so the row says what it means.
 
 ## Two rules that are not style preferences
 

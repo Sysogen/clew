@@ -306,6 +306,7 @@ mod tests {
             ("AGENTS.md", SurfaceKind::InstructionFile),
             (".codex/config.toml", SurfaceKind::Codex),
             (".cursor/mcp.json", SurfaceKind::Cursor),
+            (".cursor/rules/react.mdc", SurfaceKind::Cursor),
             (".cursorrules", SurfaceKind::Cursor),
             (".vscode/mcp.json", SurfaceKind::VsCode),
             (".github/copilot-instructions.md", SurfaceKind::Copilot),
@@ -477,6 +478,30 @@ mod tests {
         assert!(
             matches!(error, CatalogueError::UnknownExtraction { .. }),
             "{error:?}"
+        );
+    }
+
+    /// Cursor organises rules in folders, and ignores a plain `.md` placed
+    /// among them. Matching one would report a file the tool never reads.
+    #[test]
+    fn cursor_rules_match_at_any_depth_and_only_as_mdc() {
+        for path in [
+            ".cursor/rules/react.mdc",
+            ".cursor/rules/frontend/components.mdc",
+            "packages/web/.cursor/rules/a/b/deep.mdc",
+        ] {
+            assert_eq!(
+                shipped().lookup(&p(path)).map(|m| m.kind),
+                Some(SurfaceKind::Cursor),
+                "{path}"
+            );
+        }
+
+        assert!(
+            shipped()
+                .lookup(&p(".cursor/rules/api-guidelines.md"))
+                .is_none(),
+            "Cursor ignores a plain .md here, so clew must not claim it"
         );
     }
 
