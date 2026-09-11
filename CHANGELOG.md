@@ -10,6 +10,9 @@ repository.
 
 ### Added
 
+- Report the MCP servers a configuration declares, with how each is reached
+  and the names of the environment variables it is given. Names only: a value
+  there is routinely a credential.
 - Report the operations a Claude Code settings file pre-approves, summarised
   per file, naming any grant that covers a whole tool rather than one use.
 - Recognise hook scripts and skill definitions: anything in a `hooks`

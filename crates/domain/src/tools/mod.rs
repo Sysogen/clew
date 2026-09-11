@@ -9,6 +9,7 @@ pub use claude_code::ClaudeCode;
 use thiserror::Error;
 
 use crate::hook::Hook;
+use crate::mcp_server::McpServer;
 use crate::permission::Permission;
 use crate::repo_path::RepoPath;
 use crate::surface::SurfaceKind;
@@ -58,6 +59,16 @@ pub trait CodingTool: Sync {
     ///
     /// Only when the file cannot be parsed at all.
     fn permissions(&self, path: &RepoPath, contents: &str) -> Result<Vec<Permission>, ParseError> {
+        let _ = (path, contents);
+        Ok(Vec::new())
+    }
+
+    /// MCP servers `contents` declares.
+    ///
+    /// # Errors
+    ///
+    /// Only when the file cannot be parsed at all.
+    fn mcp_servers(&self, path: &RepoPath, contents: &str) -> Result<Vec<McpServer>, ParseError> {
         let _ = (path, contents);
         Ok(Vec::new())
     }

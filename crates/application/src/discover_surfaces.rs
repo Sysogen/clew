@@ -6,7 +6,16 @@
 use clew_domain::ports::file_contents::FileContents;
 use clew_domain::ports::file_tree::{FileTree, FileTreeError};
 use clew_domain::tools::REGISTRY;
-use clew_domain::{Hook, Permission, RepoPath, ScanPolicy, Surface, classify};
+use clew_domain::{Hook, McpServer, Permission, RepoPath, ScanPolicy, Surface, classify};
+
+/// An MCP server, and the file that declared it.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct DeclaredServer {
+    /// The configuration file it was read from.
+    pub source: RepoPath,
+    /// The server itself.
+    pub server: McpServer,
+}
 
 /// A pre-approved operation, and the file that granted it.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -39,6 +48,8 @@ pub struct DiscoveryReport {
     pub hooks: Vec<RegisteredHook>,
     /// Operations the surfaces pre-approve, in path order.
     pub permissions: Vec<GrantedPermission>,
+    /// MCP servers the surfaces declare, in path order.
+    pub servers: Vec<DeclaredServer>,
     /// Directories that could not be listed, with the reason.
     pub unreadable: Vec<(RepoPath, FileTreeError)>,
     /// Surfaces that could not be read or understood, with the reason.
@@ -114,6 +125,21 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
                         });
                     }
                 }
+                Err(error) => {
+                    report.unparsed.push((path, error.to_string()));
+                    continue;
+                }
+            }
+
+            match tool.mcp_servers(&path, &text) {
+                Ok(servers) => {
+                    for server in servers {
+                        report.servers.push(DeclaredServer {
+                            source: path.clone(),
+                            server,
+                        });
+                    }
+                }
                 Err(error) => report.unparsed.push((path, error.to_string())),
             }
         }
@@ -152,6 +178,7 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
         self.collect_hooks(&mut report);
         report.hooks.sort();
         report.permissions.sort();
+        report.servers.sort();
         report.unreadable.sort_by(|a, b| a.0.cmp(&b.0));
         report.unparsed.sort_by(|a, b| a.0.cmp(&b.0));
         report
@@ -501,5 +528,37 @@ mod tests {
             1,
             "hooks and permissions both fail on the same file: {report:?}"
         );
+    }
+
+    #[test]
+    fn servers_are_attributed_and_carry_no_secret() {
+        let tree = FakeTree::default().dir("", &[(".mcp.json", EntryKind::File)]);
+        let contents = FakeContents::default().file(
+            ".mcp.json",
+            r#"{"mcpServers":{"pg":{"command":"npx","env":{"DATABASE_URL":"postgres://u:hunter2@h/d"}}}}"#,
+        );
+        let policy = ScanPolicy::default();
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &policy).run();
+
+        assert_eq!(report.servers.len(), 1, "{report:?}");
+        assert_eq!(report.servers[0].source.as_str(), ".mcp.json");
+        assert_eq!(report.servers[0].server.env, vec!["DATABASE_URL"]);
+        assert!(
+            !format!("{report:?}").contains("hunter2"),
+            "a credential must never reach the report"
+        );
+        assert!(report.is_complete());
+    }
+
+    #[test]
+    fn a_malformed_file_is_still_reported_once_with_three_parsers() {
+        let tree = FakeTree::default().dir("", &[(".mcp.json", EntryKind::File)]);
+        let contents = FakeContents::default().file(".mcp.json", "{not json");
+        let policy = ScanPolicy::default();
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &policy).run();
+
+        assert_eq!(report.unparsed.len(), 1, "{report:?}");
     }
 }

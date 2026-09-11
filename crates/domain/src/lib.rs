@@ -10,6 +10,7 @@
 
 pub mod catalog;
 pub mod hook;
+pub mod mcp_server;
 pub mod permission;
 pub mod ports;
 pub mod repo_path;
@@ -19,6 +20,7 @@ pub mod tools;
 
 pub use catalog::classify;
 pub use hook::Hook;
+pub use mcp_server::{McpServer, Transport};
 pub use permission::Permission;
 pub use repo_path::RepoPath;
 pub use scan_policy::ScanPolicy;
