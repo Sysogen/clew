@@ -33,18 +33,26 @@ def main() -> int:
         if not isinstance(parsed, dict):
             problems.append(f"{path}: is not a mapping")
             continue
+
+        if "name" not in parsed:
+            problems.append(f"{path}: has no name")
         # `on` is read as the boolean True unless quoted, which is why every
         # workflow here writes it as "on".
-        for key in ("name", "jobs"):
-            if key not in parsed:
-                problems.append(f"{path}: has no {key}")
         if "on" not in parsed and True not in parsed:
             problems.append(f"{path}: has no triggers")
-        if isinstance(parsed.get("jobs"), dict) and not parsed["jobs"]:
-            problems.append(f"{path}: declares no jobs")
 
-        print(f"  {path.name}: {parsed.get('name')!r}, "
-              f"jobs {list(parsed.get('jobs', {}))}")
+        # GitHub requires a mapping of job ids. `jobs: []` and `jobs:` are both
+        # rejected there, so reject them here rather than reporting on a shape
+        # that cannot run.
+        jobs = parsed.get("jobs")
+        if not isinstance(jobs, dict) or not jobs:
+            problems.append(
+                f"{path}: jobs must be a non-empty mapping, found "
+                f"{type(jobs).__name__}"
+            )
+            continue
+
+        print(f"  {path.name}: {parsed.get('name')!r}, jobs {list(jobs)}")
 
     for problem in problems:
         print(f"  {problem}", file=sys.stderr)

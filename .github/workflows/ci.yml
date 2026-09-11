@@ -71,7 +71,11 @@ jobs:
       - name: Parse
         run: |
           set -euo pipefail
-          python3 -m pip install --quiet pyyaml
+          # The runner image ships PyYAML. Install only if that stops being
+          # true, and pin when doing so: a version on PyPI is immutable, while
+          # `pyyaml` alone is whatever was published this morning.
+          python3 -c "import yaml" 2>/dev/null \
+            || python3 -m pip install --quiet "pyyaml==6.0.3"
           python3 scripts/check-workflows.py
 
   commits:
