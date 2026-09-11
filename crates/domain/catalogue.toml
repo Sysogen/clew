@@ -90,8 +90,8 @@ glob = "**/.cursor/mcp.json"
 tool = "cursor"
 kind = "cursor"
 extract = ["mcp-servers"]
-last_verified = "2026-09-11"
-source = "https://docs.cursor.com/context/model-context-protocol"
+last_verified = "2026-09-12"
+source = "https://cursor.com/docs/mcp"
 
 # Only .mdc counts: Cursor ignores a plain .md placed here. The frontmatter
 # declares when the rule enters context, not what it may do, so there is
@@ -103,12 +103,14 @@ kind = "cursor"
 last_verified = "2026-09-11"
 source = "https://cursor.com/docs/rules"
 
+# Legacy, and Cursor says it will be deprecated, but it is still read until
+# the file is deleted, so a repository that never migrated still has one.
 [[surface]]
 glob = "**/.cursorrules"
 tool = "cursor"
 kind = "cursor"
-last_verified = "2026-09-11"
-source = "https://docs.cursor.com/context/rules"
+last_verified = "2026-09-12"
+source = "https://cursor.com/help/customization/rules"
 
 # --- VS Code and Copilot ----------------------------------------------------
 
@@ -116,16 +118,16 @@ source = "https://docs.cursor.com/context/rules"
 glob = "**/.vscode/mcp.json"
 tool = "vscode"
 kind = "vscode"
-last_verified = "2026-09-11"
-source = "https://code.visualstudio.com/docs/copilot/chat/mcp-servers"
+last_verified = "2026-09-12"
+source = "https://code.visualstudio.com/docs/agent-customization/mcp-servers"
 # extract: the server key here is not `mcpServers`; shape unverified
 
 [[surface]]
 glob = "**/.github/copilot-instructions.md"
 tool = "copilot"
 kind = "copilot"
-last_verified = "2026-09-11"
-source = "https://docs.github.com/copilot/customizing-copilot"
+last_verified = "2026-09-12"
+source = "https://docs.github.com/en/copilot/how-tos/copilot-on-github/customize-copilot/add-custom-instructions/add-repository-instructions"
 
 # --- Others -----------------------------------------------------------------
 
@@ -142,8 +144,8 @@ glob = "**/cline_mcp_settings.json"
 tool = "cline"
 kind = "cline"
 extract = ["mcp-servers"]
-last_verified = "2026-09-11"
-source = "https://docs.cline.bot/mcp/configuring-mcp-servers"
+last_verified = "2026-09-12"
+source = "https://docs.cline.bot/getting-started/config"
 
 [[surface]]
 glob = "**/.aider.conf.yml"
