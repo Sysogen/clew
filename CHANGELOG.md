@@ -10,6 +10,8 @@ repository.
 
 ### Added
 
+- Report the operations a Claude Code settings file pre-approves, summarised
+  per file, naming any grant that covers a whole tool rather than one use.
 - Recognise hook scripts and skill definitions: anything in a `hooks`
   directory under `.claude`, including the `.claude/skills/<name>/hooks`
   layout, and `.claude/skills/<name>/SKILL.md`.

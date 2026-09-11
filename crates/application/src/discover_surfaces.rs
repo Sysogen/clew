@@ -6,7 +6,16 @@
 use clew_domain::ports::file_contents::FileContents;
 use clew_domain::ports::file_tree::{FileTree, FileTreeError};
 use clew_domain::tools::REGISTRY;
-use clew_domain::{Hook, RepoPath, ScanPolicy, Surface, classify};
+use clew_domain::{Hook, Permission, RepoPath, ScanPolicy, Surface, classify};
+
+/// A pre-approved operation, and the file that granted it.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct GrantedPermission {
+    /// The configuration file it was read from.
+    pub source: RepoPath,
+    /// The permission itself.
+    pub permission: Permission,
+}
 
 /// A hook, and the file that registered it.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -28,6 +37,8 @@ pub struct DiscoveryReport {
     pub surfaces: Vec<Surface>,
     /// Hooks the surfaces register, in path order.
     pub hooks: Vec<RegisteredHook>,
+    /// Operations the surfaces pre-approve, in path order.
+    pub permissions: Vec<GrantedPermission>,
     /// Directories that could not be listed, with the reason.
     pub unreadable: Vec<(RepoPath, FileTreeError)>,
     /// Surfaces that could not be read or understood, with the reason.
@@ -88,6 +99,21 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
                         });
                     }
                 }
+                Err(error) => {
+                    report.unparsed.push((path, error.to_string()));
+                    continue;
+                }
+            }
+
+            match tool.permissions(&path, &text) {
+                Ok(permissions) => {
+                    for permission in permissions {
+                        report.permissions.push(GrantedPermission {
+                            source: path.clone(),
+                            permission,
+                        });
+                    }
+                }
                 Err(error) => report.unparsed.push((path, error.to_string())),
             }
         }
@@ -125,6 +151,7 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
         report.surfaces.sort();
         self.collect_hooks(&mut report);
         report.hooks.sort();
+        report.permissions.sort();
         report.unreadable.sort_by(|a, b| a.0.cmp(&b.0));
         report.unparsed.sort_by(|a, b| a.0.cmp(&b.0));
         report
@@ -428,5 +455,51 @@ mod tests {
         assert_eq!(report.surfaces.len(), 1);
         assert!(report.unparsed.is_empty());
         assert!(report.is_complete());
+    }
+
+    #[test]
+    fn permissions_are_attributed_to_their_file() {
+        let tree = FakeTree::default()
+            .dir("", &[(".claude", EntryKind::Directory)])
+            .dir(".claude", &[("settings.json", EntryKind::File)]);
+        let contents = FakeContents::default().file(
+            ".claude/settings.json",
+            r#"{"permissions":{"allow":["Bash(ls)","WebSearch"]}}"#,
+        );
+        let policy = ScanPolicy::default();
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &policy).run();
+
+        assert_eq!(report.permissions.len(), 2, "{report:?}");
+        assert!(
+            report
+                .permissions
+                .iter()
+                .all(|g| g.source.as_str() == ".claude/settings.json")
+        );
+        assert!(
+            report
+                .permissions
+                .iter()
+                .any(|g| g.permission.is_unscoped())
+        );
+        assert!(report.is_complete());
+    }
+
+    #[test]
+    fn a_malformed_file_is_reported_once_not_once_per_parser() {
+        let tree = FakeTree::default()
+            .dir("", &[(".claude", EntryKind::Directory)])
+            .dir(".claude", &[("settings.json", EntryKind::File)]);
+        let contents = FakeContents::default().file(".claude/settings.json", "{not json");
+        let policy = ScanPolicy::default();
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &policy).run();
+
+        assert_eq!(
+            report.unparsed.len(),
+            1,
+            "hooks and permissions both fail on the same file: {report:?}"
+        );
     }
 }

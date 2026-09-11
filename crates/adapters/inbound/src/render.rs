@@ -38,6 +38,30 @@ pub fn report(report: &DiscoveryReport, root: &str) -> String {
                     registered.hook.event, registered.hook.command
                 );
             }
+
+            // Summarised, not listed: a settings file routinely pre-approves
+            // dozens, and an unscoped grant is the one worth reading.
+            let granted: Vec<_> = report
+                .permissions
+                .iter()
+                .filter(|g| g.source == surface.path)
+                .collect();
+            if !granted.is_empty() {
+                let unscoped: Vec<&str> = granted
+                    .iter()
+                    .filter(|g| g.permission.is_unscoped())
+                    .map(|g| g.permission.tool.as_str())
+                    .collect();
+                let _ = writeln!(
+                    out,
+                    "  pre-approves {} operation(s), {} unscoped",
+                    granted.len(),
+                    unscoped.len()
+                );
+                for tool in unscoped {
+                    let _ = writeln!(out, "    any use of {tool}");
+                }
+            }
         }
         let _ = writeln!(
             out,
@@ -83,9 +107,9 @@ pub fn report(report: &DiscoveryReport, root: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use clew_application::RegisteredHook;
-    use clew_domain::Hook;
+    use clew_application::{GrantedPermission, RegisteredHook};
     use clew_domain::ports::file_tree::FileTreeError;
+    use clew_domain::{Hook, Permission};
     use clew_domain::{RepoPath, Surface, SurfaceKind};
 
     use super::*;
@@ -111,6 +135,7 @@ mod tests {
                 surface(".claude/settings.json", SurfaceKind::ClaudeCode),
             ],
             hooks: vec![],
+            permissions: vec![],
             unreadable: vec![],
             unparsed: vec![],
         };
@@ -129,6 +154,7 @@ mod tests {
         let found = DiscoveryReport {
             surfaces: vec![surface("CLAUDE.md", SurfaceKind::InstructionFile)],
             hooks: vec![],
+            permissions: vec![],
             unreadable: vec![(
                 RepoPath::root().join("secret"),
                 FileTreeError::PermissionDenied,
@@ -148,6 +174,7 @@ mod tests {
         let found = DiscoveryReport {
             surfaces: vec![surface("CLAUDE.md", SurfaceKind::InstructionFile)],
             hooks: vec![],
+            permissions: vec![],
             unreadable: vec![],
             unparsed: vec![],
         };
@@ -160,6 +187,7 @@ mod tests {
         let one = DiscoveryReport {
             surfaces: vec![],
             hooks: vec![],
+            permissions: vec![],
             unreadable: vec![(RepoPath::root().join("a"), FileTreeError::NotFound)],
             unparsed: vec![],
         };
@@ -168,6 +196,7 @@ mod tests {
         let two = DiscoveryReport {
             surfaces: vec![],
             hooks: vec![],
+            permissions: vec![],
             unreadable: vec![
                 (RepoPath::root().join("a"), FileTreeError::NotFound),
                 (RepoPath::root().join("b"), FileTreeError::NotFound),
@@ -190,6 +219,7 @@ mod tests {
                     kind: Some("command".to_owned()),
                 },
             }],
+            permissions: vec![],
             unreadable: vec![],
             unparsed: vec![],
         };
@@ -210,6 +240,7 @@ mod tests {
         let found = DiscoveryReport {
             surfaces: vec![surface(".claude/settings.json", SurfaceKind::ClaudeCode)],
             hooks: vec![],
+            permissions: vec![],
             unreadable: vec![],
             unparsed: vec![(
                 RepoPath::root().join(".claude").join("settings.json"),
@@ -225,5 +256,37 @@ mod tests {
         );
         assert!(out.contains("could not be read or understood"));
         assert!(out.contains("not valid JSON"));
+    }
+
+    #[test]
+    fn permissions_are_summarised_and_unscoped_grants_named() {
+        let path = surface(".claude/settings.json", SurfaceKind::ClaudeCode).path;
+        let granted = |entry: &str| GrantedPermission {
+            source: path.clone(),
+            permission: Permission::parse(entry).expect("valid entry"),
+        };
+        let found = DiscoveryReport {
+            surfaces: vec![surface(".claude/settings.json", SurfaceKind::ClaudeCode)],
+            hooks: vec![],
+            permissions: vec![
+                granted("Bash(cargo test:*)"),
+                granted("Bash(cargo build:*)"),
+                granted("WebSearch"),
+            ],
+            unreadable: vec![],
+            unparsed: vec![],
+        };
+
+        let out = report(&found, ".");
+
+        assert!(
+            out.contains("pre-approves 3 operation(s), 1 unscoped"),
+            "{out}"
+        );
+        assert!(out.contains("any use of WebSearch"));
+        assert!(
+            !out.contains("cargo test"),
+            "scoped grants are counted, not listed: {out}"
+        );
     }
 }

@@ -9,6 +9,7 @@ pub use claude_code::ClaudeCode;
 use thiserror::Error;
 
 use crate::hook::Hook;
+use crate::permission::Permission;
 use crate::repo_path::RepoPath;
 use crate::surface::SurfaceKind;
 
@@ -46,6 +47,17 @@ pub trait CodingTool: Sync {
     ///
     /// Only when the file cannot be parsed at all.
     fn hooks(&self, path: &RepoPath, contents: &str) -> Result<Vec<Hook>, ParseError> {
+        let _ = (path, contents);
+        Ok(Vec::new())
+    }
+
+    /// Operations `contents` pre-approves, so the agent performs them without
+    /// asking.
+    ///
+    /// # Errors
+    ///
+    /// Only when the file cannot be parsed at all.
+    fn permissions(&self, path: &RepoPath, contents: &str) -> Result<Vec<Permission>, ParseError> {
         let _ = (path, contents);
         Ok(Vec::new())
     }
