@@ -35,6 +35,12 @@ repository.
   permission-denied scan printed a clean result.
 - `--version` and `--help`, and a `path` subcommand naming what the tool does.
 
+### Fixed
+
+- Five catalogue citations pointed at pages that had moved or gone. Every
+  source now resolves and names the file its row claims, and `.cursorrules`
+  cites the page saying it is legacy, which is why the row stays.
+
 ### Changed
 
 - Catalogue rows declare what to extract. A row without `extract` is inventory:
