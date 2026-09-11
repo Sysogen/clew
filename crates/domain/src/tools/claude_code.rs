@@ -19,6 +19,16 @@ const SURFACES: &[(&str, SurfaceKind)] = &[
 /// The files that can register hooks.
 const SETTINGS: &[&str] = &[".claude/settings.json", ".claude/settings.local.json"];
 
+/// Whether `segment` appears below a `.claude` directory, rather than merely
+/// somewhere in the path. `hooks/.claude/x` is not a hook.
+fn under_claude(path: &RepoPath, segment: &str) -> bool {
+    let segments: Vec<&str> = path.segments().collect();
+    segments
+        .iter()
+        .position(|s| *s == ".claude")
+        .is_some_and(|claude| segments[claude + 1..].contains(&segment))
+}
+
 /// Claude Code: `.claude/`, the project MCP file, and `CLAUDE.md`.
 pub struct ClaudeCode;
 
@@ -36,14 +46,11 @@ impl CodingTool for ClaudeCode {
             return Some(kind);
         }
 
-        if !path.contains_segments(".claude") {
-            return None;
-        }
         // Hooks sit in .claude/hooks and in .claude/skills/<name>/hooks.
-        if path.contains_segments("hooks") {
+        if under_claude(path, "hooks") {
             return Some(SurfaceKind::HookScript);
         }
-        if path.contains_segments("skills") && path.ends_with_segments("SKILL.md") {
+        if under_claude(path, "skills") && path.ends_with_segments("SKILL.md") {
             return Some(SurfaceKind::Skill);
         }
         None
@@ -320,6 +327,21 @@ mod tests {
         assert_eq!(ClaudeCode.classify(&p("hooks/pre-push")), None);
         assert_eq!(ClaudeCode.classify(&p(".git/hooks/pre-commit")), None);
         assert_eq!(ClaudeCode.classify(&p("src/hooks/use_thing.ts")), None);
+    }
+
+    #[test]
+    fn a_hooks_directory_above_claude_is_not_a_surface() {
+        assert_eq!(
+            ClaudeCode.classify(&p("hooks/.claude/readme")),
+            None,
+            "hooks is an ancestor here, not a child of .claude"
+        );
+        assert_eq!(
+            ClaudeCode.classify(&p("hooks/.claude/skills/a/SKILL.md")),
+            Some(SurfaceKind::Skill),
+            "the skill is real; the hooks ancestor must not relabel it"
+        );
+        assert_eq!(ClaudeCode.classify(&p("skills/.claude/a/SKILL.md")), None);
     }
 
     #[test]

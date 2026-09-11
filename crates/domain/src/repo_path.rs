@@ -53,6 +53,11 @@ impl RepoPath {
         }
     }
 
+    /// The path's segments, in order.
+    pub fn segments(&self) -> impl Iterator<Item = &str> {
+        self.0.split('/').filter(|s| !s.is_empty())
+    }
+
     /// Whether `needle` appears anywhere in this path, on segment boundaries.
     #[must_use]
     pub fn contains_segments(&self, needle: &str) -> bool {
@@ -134,6 +139,16 @@ mod tests {
             !p.contains_segments("skills/hooks"),
             "segments must be adjacent"
         );
+    }
+
+    #[test]
+    fn segments_are_yielded_in_order() {
+        let p = RepoPath::root().join(".claude").join("hooks").join("x.sh");
+        assert_eq!(
+            p.segments().collect::<Vec<_>>(),
+            vec![".claude", "hooks", "x.sh"]
+        );
+        assert_eq!(RepoPath::root().segments().count(), 0);
     }
 
     #[test]

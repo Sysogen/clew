@@ -392,4 +392,41 @@ mod tests {
         assert_eq!(report.unparsed.len(), 1);
         assert!(!report.is_complete());
     }
+
+    #[test]
+    fn a_surface_no_tool_reads_is_never_opened() {
+        let tree = FakeTree::default()
+            .dir("", &[(".claude", EntryKind::Directory)])
+            .dir(".claude", &[("hooks", EntryKind::Directory)])
+            .dir(".claude/hooks", &[("compiled", EntryKind::File)]);
+        // Denied on read, so any attempt to open it shows up as unparsed.
+        let contents = FakeContents::default().deny(".claude/hooks/compiled");
+        let policy = ScanPolicy::default();
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &policy).run();
+
+        assert_eq!(report.surfaces.len(), 1, "the hook script is still found");
+        assert!(
+            report.unparsed.is_empty(),
+            "a hook script must not be opened: {report:?}"
+        );
+        assert!(report.is_complete());
+    }
+
+    #[test]
+    fn a_skill_is_found_without_being_read() {
+        let tree = FakeTree::default()
+            .dir("", &[(".claude", EntryKind::Directory)])
+            .dir(".claude", &[("skills", EntryKind::Directory)])
+            .dir(".claude/skills", &[("prose", EntryKind::Directory)])
+            .dir(".claude/skills/prose", &[("SKILL.md", EntryKind::File)]);
+        let contents = FakeContents::default().deny(".claude/skills/prose/SKILL.md");
+        let policy = ScanPolicy::default();
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &policy).run();
+
+        assert_eq!(report.surfaces.len(), 1);
+        assert!(report.unparsed.is_empty());
+        assert!(report.is_complete());
+    }
 }
