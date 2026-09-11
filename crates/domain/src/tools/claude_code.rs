@@ -5,6 +5,7 @@
 
 use super::{CodingTool, ParseError};
 use crate::hook::Hook;
+use crate::permission::Permission;
 use crate::repo_path::RepoPath;
 use crate::surface::SurfaceKind;
 
@@ -54,6 +55,30 @@ impl CodingTool for ClaudeCode {
             return Some(SurfaceKind::Skill);
         }
         None
+    }
+
+    fn permissions(&self, path: &RepoPath, contents: &str) -> Result<Vec<Permission>, ParseError> {
+        if !SETTINGS.iter().any(|s| path.ends_with_segments(s)) {
+            return Ok(Vec::new());
+        }
+
+        let root: serde_json::Value =
+            serde_json::from_str(contents).map_err(|_| ParseError::NotJson)?;
+        let Some(allow) = root
+            .get("permissions")
+            .and_then(|p| p.get("allow"))
+            .and_then(serde_json::Value::as_array)
+        else {
+            return Ok(Vec::new());
+        };
+
+        let mut found: Vec<Permission> = allow
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .map(Permission::parse)
+            .collect();
+        found.sort();
+        Ok(found)
     }
 
     fn reads(&self, path: &RepoPath) -> bool {
@@ -364,5 +389,78 @@ mod tests {
         );
         assert!(!ClaudeCode.reads(&p(".claude/skills/x/SKILL.md")));
         assert!(!ClaudeCode.reads(&p("CLAUDE.md")));
+    }
+
+    fn perms_of(json: &str) -> Vec<Permission> {
+        ClaudeCode
+            .permissions(&p(".claude/settings.json"), json)
+            .expect("valid json")
+    }
+
+    #[test]
+    fn reads_the_allow_list() {
+        let found = perms_of(
+            r#"{"permissions":{"allow":[
+                 "Bash(cargo test:*)",
+                 "WebFetch(domain:example.invalid)",
+                 "mcp__figma__generate"]}}"#,
+        );
+
+        assert_eq!(found.len(), 3, "{found:?}");
+        assert!(found.iter().any(|x| x.tool == "Bash" && !x.is_unscoped()));
+        assert!(
+            found
+                .iter()
+                .any(|x| x.tool == "mcp__figma__generate" && x.is_unscoped())
+        );
+    }
+
+    #[test]
+    fn deny_and_ask_lists_are_not_pre_approvals() {
+        let found = perms_of(
+            r#"{"permissions":{"allow":["Bash(ls)"],"deny":["Bash(rm)"],"ask":["Bash(mv)"]}}"#,
+        );
+
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].scope.as_deref(), Some("ls"));
+    }
+
+    #[test]
+    fn settings_without_permissions_yield_none() {
+        assert!(perms_of("{}").is_empty());
+        assert!(perms_of(r#"{"permissions":{}}"#).is_empty());
+        assert!(perms_of(r#"{"hooks":{}}"#).is_empty());
+    }
+
+    #[test]
+    fn an_unexpected_permissions_shape_yields_none() {
+        assert!(perms_of(r#"{"permissions":"nope"}"#).is_empty());
+        assert!(perms_of(r#"{"permissions":{"allow":"nope"}}"#).is_empty());
+        assert!(perms_of(r#"{"permissions":{"allow":[42,null]}}"#).is_empty());
+    }
+
+    #[test]
+    fn only_settings_files_are_parsed_for_permissions() {
+        let json = r#"{"permissions":{"allow":["Bash(ls)"]}}"#;
+        assert!(
+            ClaudeCode
+                .permissions(&p("CLAUDE.md"), json)
+                .expect("ok")
+                .is_empty()
+        );
+        assert!(
+            ClaudeCode
+                .permissions(&p(".mcp.json"), json)
+                .expect("ok")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn malformed_json_is_an_error_for_permissions() {
+        assert_eq!(
+            ClaudeCode.permissions(&p(".claude/settings.json"), "{nope"),
+            Err(ParseError::NotJson)
+        );
     }
 }
