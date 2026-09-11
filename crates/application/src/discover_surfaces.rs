@@ -3,9 +3,9 @@
 
 //! Walk a repository and report the agent surfaces it configures.
 
+use clew_domain::extract;
 use clew_domain::ports::file_contents::FileContents;
 use clew_domain::ports::file_tree::{FileTree, FileTreeError};
-use clew_domain::tools::REGISTRY;
 use clew_domain::{Hook, McpServer, Permission, RepoPath, ScanPolicy, Surface, catalogue};
 
 /// An MCP server, and the file that declared it.
@@ -85,14 +85,12 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
     fn collect_hooks(&self, report: &mut DiscoveryReport) {
         let paths: Vec<RepoPath> = report.surfaces.iter().map(|s| s.path.clone()).collect();
         for path in paths {
-            // The catalogue names the owning tool; find its implementation.
-            let Some((rule, _)) = catalogue().lookup(&path) else {
+            // A row declaring no extractions is inventory: never opened, which
+            // matters when the file may be a compiled binary.
+            let Some(matched) = catalogue().lookup(&path) else {
                 continue;
             };
-            let Some(tool) = REGISTRY.iter().find(|t| t.name() == rule.tool) else {
-                continue;
-            };
-            if !tool.reads(&path) {
+            if matched.extract.is_empty() {
                 continue;
             }
 
@@ -103,46 +101,33 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
                     continue;
                 }
             };
-            match tool.hooks(&path, &text) {
-                Ok(hooks) => {
-                    for hook in hooks {
-                        report.hooks.push(RegisteredHook {
-                            source: path.clone(),
-                            hook,
-                        });
-                    }
-                }
+
+            // Parsed once, however many extractions the row declares.
+            let found = match extract::run(matched.extract, &text) {
+                Ok(found) => found,
                 Err(error) => {
                     report.unparsed.push((path, error.to_string()));
                     continue;
                 }
-            }
+            };
 
-            match tool.permissions(&path, &text) {
-                Ok(permissions) => {
-                    for permission in permissions {
-                        report.permissions.push(GrantedPermission {
-                            source: path.clone(),
-                            permission,
-                        });
-                    }
-                }
-                Err(error) => {
-                    report.unparsed.push((path, error.to_string()));
-                    continue;
-                }
+            for hook in found.hooks {
+                report.hooks.push(RegisteredHook {
+                    source: path.clone(),
+                    hook,
+                });
             }
-
-            match tool.mcp_servers(&path, &text) {
-                Ok(servers) => {
-                    for server in servers {
-                        report.servers.push(DeclaredServer {
-                            source: path.clone(),
-                            server,
-                        });
-                    }
-                }
-                Err(error) => report.unparsed.push((path, error.to_string())),
+            for permission in found.permissions {
+                report.permissions.push(GrantedPermission {
+                    source: path.clone(),
+                    permission,
+                });
+            }
+            for server in found.servers {
+                report.servers.push(DeclaredServer {
+                    source: path.clone(),
+                    server,
+                });
             }
         }
     }
@@ -167,10 +152,10 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
                     queue.push(entry.path);
                     continue;
                 }
-                if let Some((_, kind)) = catalogue().lookup(&entry.path) {
+                if let Some(matched) = catalogue().lookup(&entry.path) {
                     report.surfaces.push(Surface {
                         path: entry.path,
-                        kind,
+                        kind: matched.kind,
                     });
                 }
             }

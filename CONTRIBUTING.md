@@ -59,9 +59,22 @@ last_verified = "2026-09-11"
 source        = "https://docs.cursor.com/context/rules"
 ```
 
+Add `extract` when the file should be read:
+
+```toml
+extract = ["hooks", "permissions", "mcp-servers"]
+```
+
+Omit it and the file is inventory only: reported, never opened. That matters
+when it may be a compiled binary, and it is why a hook script is never read.
+
+Only declare an extraction whose shape you have checked. `mcp-servers` reads the
+`mcpServers` key; a tool using a different key needs its own extractor, not this
+one.
+
 `source` must be the tool's own documentation, not a blog post, and
 `last_verified` is the day you checked it. Loading rejects a row missing either,
-so an unciteable pattern cannot ship.
+naming an unknown kind, or naming an unknown extraction.
 
 The first matching row wins, so put a specific pattern above a general one.
 

@@ -13,6 +13,7 @@ use globset::{Glob, GlobSet, GlobSetBuilder};
 use serde::Deserialize;
 use thiserror::Error;
 
+use crate::extract::Extraction;
 use crate::repo_path::RepoPath;
 use crate::surface::SurfaceKind;
 
@@ -43,6 +44,14 @@ pub enum CatalogueError {
         /// The date as written.
         date: String,
     },
+    /// A row names an extraction that does not exist.
+    #[error("row {row} names an unknown extraction {extraction:?}")]
+    UnknownExtraction {
+        /// Which row, counting from zero.
+        row: usize,
+        /// The extraction as written.
+        extraction: String,
+    },
     /// A row names a kind the domain does not have.
     #[error("row {row} has an unknown kind {kind:?}")]
     UnknownKind {
@@ -51,6 +60,17 @@ pub enum CatalogueError {
         /// The kind as written.
         kind: String,
     },
+}
+
+/// What a path matched.
+#[derive(Debug, Clone, Copy)]
+pub struct Matched<'a> {
+    /// The row itself.
+    pub rule: &'a SurfaceRule,
+    /// What the file is.
+    pub kind: SurfaceKind,
+    /// What to read out of it. Empty means inventory only.
+    pub extract: &'a [Extraction],
 }
 
 /// One row: a pattern, and what matching it means.
@@ -62,6 +82,9 @@ pub struct SurfaceRule {
     pub tool: String,
     /// What it is.
     pub kind: String,
+    /// What to read out of it. Empty means inventory only.
+    #[serde(default)]
+    pub extract: Vec<String>,
     /// When this row was last checked against primary documentation.
     pub last_verified: String,
     /// The documentation it was checked against.
@@ -80,6 +103,7 @@ struct CatalogueFile {
 pub struct Catalogue {
     rules: Vec<SurfaceRule>,
     kinds: Vec<SurfaceKind>,
+    extractions: Vec<Vec<Extraction>>,
     globs: GlobSet,
 }
 
@@ -96,6 +120,7 @@ impl Catalogue {
 
         let mut builder = GlobSetBuilder::new();
         let mut kinds = Vec::with_capacity(file.surface.len());
+        let mut extractions = Vec::with_capacity(file.surface.len());
 
         for (row, rule) in file.surface.iter().enumerate() {
             let glob = Glob::new(&rule.glob).map_err(|e| CatalogueError::BadGlob {
@@ -112,6 +137,20 @@ impl Catalogue {
                 });
             }
 
+            extractions.push(
+                rule.extract
+                    .iter()
+                    .map(|name| {
+                        Extraction::from_catalogue(name).ok_or_else(|| {
+                            CatalogueError::UnknownExtraction {
+                                row,
+                                extraction: name.clone(),
+                            }
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?,
+            );
+
             kinds.push(SurfaceKind::from_catalogue(&rule.kind).ok_or_else(|| {
                 CatalogueError::UnknownKind {
                     row,
@@ -126,6 +165,7 @@ impl Catalogue {
                 .map_err(|e| CatalogueError::Invalid(e.to_string()))?,
             rules: file.surface,
             kinds,
+            extractions,
         })
     }
 
@@ -134,9 +174,13 @@ impl Catalogue {
     /// Declaration order decides: the first matching row wins, so a specific
     /// pattern must precede a general one.
     #[must_use]
-    pub fn lookup(&self, path: &RepoPath) -> Option<(&SurfaceRule, SurfaceKind)> {
+    pub fn lookup(&self, path: &RepoPath) -> Option<Matched<'_>> {
         let first = self.globs.matches(path.as_str()).into_iter().min()?;
-        Some((&self.rules[first], self.kinds[first]))
+        Some(Matched {
+            rule: &self.rules[first],
+            kind: self.kinds[first],
+            extract: &self.extractions[first],
+        })
     }
 
     /// Every row, in declaration order.
@@ -250,10 +294,10 @@ mod tests {
         );
 
         for (path, kind) in expected {
-            let (_, found) = shipped()
+            let matched = shipped()
                 .lookup(&p(path))
                 .unwrap_or_else(|| panic!("{path} matched no row"));
-            assert_eq!(found, kind, "{path}");
+            assert_eq!(matched.kind, kind, "{path}");
         }
     }
 
@@ -261,22 +305,25 @@ mod tests {
     fn declaration_order_resolves_an_overlap() {
         // A SKILL.md inside a hooks directory matches two rows. The hooks row
         // is declared first, so it wins.
-        let (_, kind) = shipped()
+        let kind = shipped()
             .lookup(&p(".claude/skills/git/hooks/SKILL.md"))
-            .expect("match");
+            .expect("match")
+            .kind;
         assert_eq!(
             kind,
             SurfaceKind::HookScript,
             "the earlier row must win an overlap"
         );
 
-        let (_, settings) = shipped()
+        let settings = shipped()
             .lookup(&p(".claude/settings.json"))
-            .expect("match");
+            .expect("match")
+            .kind;
         assert_eq!(settings, SurfaceKind::ClaudeCode);
-        let (_, skill) = shipped()
+        let skill = shipped()
             .lookup(&p(".claude/skills/prose/SKILL.md"))
-            .expect("match");
+            .expect("match")
+            .kind;
         assert_eq!(skill, SurfaceKind::Skill);
     }
 
@@ -328,6 +375,45 @@ mod tests {
             matches!(error, CatalogueError::UnknownKind { .. }),
             "{error:?}"
         );
+    }
+
+    #[test]
+    fn an_unknown_extraction_is_rejected_at_load() {
+        let error = Catalogue::load(
+            r#"version = 1
+               [[surface]]
+               glob = "x"
+               tool = "x"
+               kind = "skill"
+               extract = ["not-a-thing"]
+               last_verified = "2026-09-11"
+               source = "https://example.invalid"
+            "#,
+        )
+        .expect_err("an unknown extraction must not load");
+        assert!(
+            matches!(error, CatalogueError::UnknownExtraction { .. }),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn a_row_without_extract_is_inventory_only() {
+        let hook = shipped().lookup(&p(".claude/hooks/x.sh")).expect("match");
+        assert!(
+            hook.extract.is_empty(),
+            "a hook script may be a binary and must never be opened"
+        );
+
+        let skill = shipped()
+            .lookup(&p(".claude/skills/a/SKILL.md"))
+            .expect("match");
+        assert!(skill.extract.is_empty());
+
+        let settings = shipped()
+            .lookup(&p(".claude/settings.json"))
+            .expect("match");
+        assert_eq!(settings.extract.len(), 3, "{:?}", settings.extract);
     }
 
     #[test]

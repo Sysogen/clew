@@ -1,23 +1,154 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Sysogen Lda
 
-//! Claude Code.
+//! Reading what a configuration file sets up.
+//!
+//! A catalogue row declares which extractions apply to it. A row declaring
+//! none is inventory: the file is reported and never opened.
 
-use super::{CodingTool, ParseError};
+use thiserror::Error;
+
 use crate::hook::Hook;
 use crate::mcp_server::{McpServer, Transport};
 use crate::permission::Permission;
-use crate::repo_path::RepoPath;
 
-/// The files that can register hooks and permissions.
-const SETTINGS: &[&str] = &[".claude/settings.json", ".claude/settings.local.json"];
+/// Why a file could not be understood.
+#[derive(Debug, Clone, Error, PartialEq, Eq)]
+pub enum ParseError {
+    /// The file is not valid JSON.
+    #[error("not valid JSON")]
+    NotJson,
+}
 
-/// The files that can declare MCP servers. Settings may carry them too.
-const MCP_SOURCES: &[&str] = &[
-    ".mcp.json",
-    ".claude/settings.json",
-    ".claude/settings.local.json",
-];
+/// One thing a file can declare.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Extraction {
+    /// Commands registered against an event.
+    Hooks,
+    /// Operations performed without asking.
+    Permissions,
+    /// Model Context Protocol servers.
+    McpServers,
+}
+
+impl Extraction {
+    /// The extraction a catalogue row names, if it names one that exists.
+    #[must_use]
+    pub fn from_catalogue(name: &str) -> Option<Self> {
+        Some(match name {
+            "hooks" => Self::Hooks,
+            "permissions" => Self::Permissions,
+            "mcp-servers" => Self::McpServers,
+            _ => return None,
+        })
+    }
+}
+
+/// Everything one file declared.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Findings {
+    /// Commands registered against an event.
+    pub hooks: Vec<Hook>,
+    /// Operations pre-approved.
+    pub permissions: Vec<Permission>,
+    /// MCP servers declared.
+    pub servers: Vec<McpServer>,
+}
+
+/// Run `wanted` over `contents`, parsing it once.
+///
+/// A shape that is not recognised yields nothing rather than an error:
+/// configuration files carry keys clew knows nothing about, and a scan must not
+/// stop at the first one.
+///
+/// # Errors
+///
+/// Only when the file will not parse at all.
+pub fn run(wanted: &[Extraction], contents: &str) -> Result<Findings, ParseError> {
+    if wanted.is_empty() {
+        return Ok(Findings::default());
+    }
+
+    let root: serde_json::Value =
+        serde_json::from_str(contents).map_err(|_| ParseError::NotJson)?;
+
+    let mut found = Findings::default();
+    for what in wanted {
+        match what {
+            Extraction::Hooks => found.hooks = hooks(&root),
+            Extraction::Permissions => found.permissions = permissions(&root),
+            Extraction::McpServers => found.servers = mcp_servers(&root),
+        }
+    }
+    Ok(found)
+}
+
+/// Commands registered against an event.
+fn hooks(root: &serde_json::Value) -> Vec<Hook> {
+    let Some(events) = root.get("hooks").and_then(serde_json::Value::as_object) else {
+        return Vec::new();
+    };
+
+    let mut found: Vec<Hook> = events
+        .iter()
+        .flat_map(|(event, entries)| {
+            entries
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|entry| entry.get("hooks")?.as_array())
+                .flatten()
+                .filter_map(move |hook| {
+                    Some(Hook {
+                        event: event.clone(),
+                        command: hook.get("command")?.as_str()?.to_owned(),
+                        kind: hook
+                            .get("type")
+                            .and_then(serde_json::Value::as_str)
+                            .map(ToOwned::to_owned),
+                    })
+                })
+        })
+        .collect();
+    found.sort();
+    found
+}
+
+/// Operations performed without asking.
+fn permissions(root: &serde_json::Value) -> Vec<Permission> {
+    let Some(allow) = root
+        .get("permissions")
+        .and_then(|p| p.get("allow"))
+        .and_then(serde_json::Value::as_array)
+    else {
+        return Vec::new();
+    };
+
+    let mut found: Vec<Permission> = allow
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .filter_map(Permission::parse)
+        .collect();
+    found.sort();
+    found
+}
+
+/// MCP servers declared.
+fn mcp_servers(root: &serde_json::Value) -> Vec<McpServer> {
+    let Some(declared) = root
+        .get("mcpServers")
+        .and_then(serde_json::Value::as_object)
+    else {
+        return Vec::new();
+    };
+
+    let mut found: Vec<McpServer> = declared
+        .iter()
+        .filter_map(|(name, config)| server(name, config))
+        .collect();
+    found.sort();
+    found
+}
 
 /// A field's value when it is a string with something in it. A blank url or
 /// command reaches nothing.
@@ -28,17 +159,15 @@ fn non_blank(value: Option<&serde_json::Value>) -> Option<&str> {
         .filter(|s| !s.is_empty())
 }
 
-/// One server declaration. `None` when it names neither a command nor a url,
-/// because such an entry reaches nothing.
-fn parse_server(name: &str, config: &serde_json::Value) -> Option<McpServer> {
+/// One server declaration. `None` when it names neither a command nor a url.
+fn server(name: &str, config: &serde_json::Value) -> Option<McpServer> {
     let transport = if let Some(url) = non_blank(config.get("url")) {
         Transport::Remote {
             url: url.to_owned(),
         }
     } else {
-        let command = non_blank(config.get("command"))?;
         Transport::Local {
-            command: command.to_owned(),
+            command: non_blank(config.get("command"))?.to_owned(),
             args: config
                 .get("args")
                 .and_then(serde_json::Value::as_array)
@@ -67,117 +196,12 @@ fn parse_server(name: &str, config: &serde_json::Value) -> Option<McpServer> {
     })
 }
 
-/// Claude Code: `.claude/`, the project MCP file, and `CLAUDE.md`.
-pub struct ClaudeCode;
-
-impl CodingTool for ClaudeCode {
-    fn name(&self) -> &'static str {
-        "claude-code"
-    }
-
-    fn permissions(&self, path: &RepoPath, contents: &str) -> Result<Vec<Permission>, ParseError> {
-        if !SETTINGS.iter().any(|s| path.ends_with_segments(s)) {
-            return Ok(Vec::new());
-        }
-
-        let root: serde_json::Value =
-            serde_json::from_str(contents).map_err(|_| ParseError::NotJson)?;
-        let Some(allow) = root
-            .get("permissions")
-            .and_then(|p| p.get("allow"))
-            .and_then(serde_json::Value::as_array)
-        else {
-            return Ok(Vec::new());
-        };
-
-        let mut found: Vec<Permission> = allow
-            .iter()
-            .filter_map(serde_json::Value::as_str)
-            .filter_map(Permission::parse)
-            .collect();
-        found.sort();
-        Ok(found)
-    }
-
-    fn mcp_servers(&self, path: &RepoPath, contents: &str) -> Result<Vec<McpServer>, ParseError> {
-        if !MCP_SOURCES.iter().any(|s| path.ends_with_segments(s)) {
-            return Ok(Vec::new());
-        }
-
-        let root: serde_json::Value =
-            serde_json::from_str(contents).map_err(|_| ParseError::NotJson)?;
-        let Some(declared) = root
-            .get("mcpServers")
-            .and_then(serde_json::Value::as_object)
-        else {
-            return Ok(Vec::new());
-        };
-
-        let mut found: Vec<McpServer> = declared
-            .iter()
-            .filter_map(|(name, config)| parse_server(name, config))
-            .collect();
-        found.sort();
-        Ok(found)
-    }
-
-    fn reads(&self, path: &RepoPath) -> bool {
-        SETTINGS
-            .iter()
-            .chain(MCP_SOURCES)
-            .any(|s| path.ends_with_segments(s))
-    }
-
-    fn hooks(&self, path: &RepoPath, contents: &str) -> Result<Vec<Hook>, ParseError> {
-        if !SETTINGS.iter().any(|s| path.ends_with_segments(s)) {
-            return Ok(Vec::new());
-        }
-
-        let root: serde_json::Value =
-            serde_json::from_str(contents).map_err(|_| ParseError::NotJson)?;
-        let Some(events) = root.get("hooks").and_then(serde_json::Value::as_object) else {
-            return Ok(Vec::new());
-        };
-
-        let mut found: Vec<Hook> = events
-            .iter()
-            .flat_map(|(event, entries)| {
-                entries
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|entry| entry.get("hooks")?.as_array())
-                    .flatten()
-                    .filter_map(move |hook| {
-                        Some(Hook {
-                            event: event.clone(),
-                            command: hook.get("command")?.as_str()?.to_owned(),
-                            kind: hook
-                                .get("type")
-                                .and_then(serde_json::Value::as_str)
-                                .map(ToOwned::to_owned),
-                        })
-                    })
-            })
-            .collect();
-        found.sort();
-        Ok(found)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn p(s: &str) -> RepoPath {
-        s.split('/')
-            .fold(RepoPath::root(), |acc, seg| acc.join(seg))
-    }
-
     fn hooks_of(json: &str) -> Vec<Hook> {
-        ClaudeCode
-            .hooks(&p(".claude/settings.json"), json)
-            .expect("valid json")
+        run(&[Extraction::Hooks], json).expect("valid json").hooks
     }
 
     #[test]
@@ -302,53 +326,15 @@ mod tests {
     #[test]
     fn malformed_json_is_an_error() {
         assert_eq!(
-            ClaudeCode.hooks(&p(".claude/settings.json"), "{not json"),
+            run(&[Extraction::Hooks], "{not json").map(|f| f.hooks),
             Err(ParseError::NotJson)
         );
     }
 
-    #[test]
-    fn only_settings_files_are_parsed_for_hooks() {
-        let json = r#"{"hooks":{"PostToolUse":[{"hooks":[{"command":"x"}]}]}}"#;
-
-        assert!(
-            ClaudeCode
-                .hooks(&p(".mcp.json"), json)
-                .expect("ok")
-                .is_empty()
-        );
-        assert!(
-            ClaudeCode
-                .hooks(&p("CLAUDE.md"), json)
-                .expect("ok")
-                .is_empty()
-        );
-        assert_eq!(
-            ClaudeCode
-                .hooks(&p(".claude/settings.local.json"), json)
-                .expect("ok")
-                .len(),
-            1
-        );
-    }
-
-    #[test]
-    fn only_settings_are_read() {
-        assert!(ClaudeCode.reads(&p(".claude/settings.json")));
-        assert!(ClaudeCode.reads(&p(".claude/settings.local.json")));
-
-        assert!(
-            !ClaudeCode.reads(&p(".claude/hooks/embed.sh")),
-            "may be a binary"
-        );
-        assert!(!ClaudeCode.reads(&p(".claude/skills/x/SKILL.md")));
-        assert!(!ClaudeCode.reads(&p("CLAUDE.md")));
-    }
-
     fn perms_of(json: &str) -> Vec<Permission> {
-        ClaudeCode
-            .permissions(&p(".claude/settings.json"), json)
+        run(&[Extraction::Permissions], json)
             .expect("valid json")
+            .permissions
     }
 
     #[test]
@@ -404,40 +390,22 @@ mod tests {
     }
 
     #[test]
-    fn only_settings_files_are_parsed_for_permissions() {
-        let json = r#"{"permissions":{"allow":["Bash(ls)"]}}"#;
-        assert!(
-            ClaudeCode
-                .permissions(&p("CLAUDE.md"), json)
-                .expect("ok")
-                .is_empty()
-        );
-        assert!(
-            ClaudeCode
-                .permissions(&p(".mcp.json"), json)
-                .expect("ok")
-                .is_empty()
-        );
-    }
-
-    #[test]
     fn malformed_json_is_an_error_for_permissions() {
         assert_eq!(
-            ClaudeCode.permissions(&p(".claude/settings.json"), "{nope"),
+            run(&[Extraction::Permissions], "{nope").map(|f| f.permissions),
             Err(ParseError::NotJson)
         );
     }
 
-    fn servers_of(path_str: &str, json: &str) -> Vec<McpServer> {
-        ClaudeCode
-            .mcp_servers(&p(path_str), json)
+    fn servers_of(json: &str) -> Vec<McpServer> {
+        run(&[Extraction::McpServers], json)
             .expect("valid json")
+            .servers
     }
 
     #[test]
     fn reads_a_local_server_with_its_env_names() {
         let found = servers_of(
-            ".mcp.json",
             r#"{"mcpServers":{"pg":{
                  "command":"npx","args":["-y","server-postgres"],
                  "env":{"DATABASE_URL":"postgres://u:p@h/db","PGPORT":"5432"}}}}"#,
@@ -451,10 +419,8 @@ mod tests {
 
     #[test]
     fn a_credential_value_is_never_recorded() {
-        let found = servers_of(
-            ".mcp.json",
-            r#"{"mcpServers":{"pg":{"command":"x","env":{"TOKEN":"hunter2"}}}}"#,
-        );
+        let found =
+            servers_of(r#"{"mcpServers":{"pg":{"command":"x","env":{"TOKEN":"hunter2"}}}}"#);
 
         let rendered = format!("{found:?}");
         assert!(
@@ -470,7 +436,6 @@ mod tests {
     #[test]
     fn reads_a_remote_server() {
         let found = servers_of(
-            ".mcp.json",
             r#"{"mcpServers":{"atlassian":{"type":"sse","url":"https://mcp.example.invalid/v1/sse"}}}"#,
         );
 
@@ -480,36 +445,21 @@ mod tests {
     }
 
     #[test]
-    fn settings_may_declare_servers_too() {
-        let json = r#"{"mcpServers":{"a":{"command":"x"}}}"#;
-        assert_eq!(servers_of(".claude/settings.json", json).len(), 1);
-        assert_eq!(servers_of(".claude/settings.local.json", json).len(), 1);
-        assert!(servers_of("CLAUDE.md", json).is_empty());
-    }
-
-    #[test]
     fn a_declaration_that_reaches_nothing_is_rejected() {
-        assert!(servers_of(".mcp.json", r#"{"mcpServers":{"a":{}}}"#).is_empty());
-        assert!(servers_of(".mcp.json", r#"{"mcpServers":{"a":{"args":["x"]}}}"#).is_empty());
-        assert!(servers_of(".mcp.json", r#"{"mcpServers":{"a":{"command":42}}}"#).is_empty());
-        assert!(servers_of(".mcp.json", r#"{"mcpServers":{"a":"nope"}}"#).is_empty());
-        assert!(servers_of(".mcp.json", r#"{"mcpServers":{"a":{"url":""}}}"#).is_empty());
-        assert!(servers_of(".mcp.json", r#"{"mcpServers":{"a":{"url":"  "}}}"#).is_empty());
-        assert!(servers_of(".mcp.json", r#"{"mcpServers":{"a":{"command":""}}}"#).is_empty());
-        assert!(servers_of(".mcp.json", r#"{"mcpServers":{"a":{"command":" "}}}"#).is_empty());
+        assert!(servers_of(r#"{"mcpServers":{"a":{}}}"#).is_empty());
+        assert!(servers_of(r#"{"mcpServers":{"a":{"args":["x"]}}}"#).is_empty());
+        assert!(servers_of(r#"{"mcpServers":{"a":{"command":42}}}"#).is_empty());
+        assert!(servers_of(r#"{"mcpServers":{"a":"nope"}}"#).is_empty());
+        assert!(servers_of(r#"{"mcpServers":{"a":{"url":""}}}"#).is_empty());
+        assert!(servers_of(r#"{"mcpServers":{"a":{"url":"  "}}}"#).is_empty());
+        assert!(servers_of(r#"{"mcpServers":{"a":{"command":""}}}"#).is_empty());
+        assert!(servers_of(r#"{"mcpServers":{"a":{"command":" "}}}"#).is_empty());
     }
 
     #[test]
     fn an_unexpected_mcp_shape_yields_none() {
-        assert!(servers_of(".mcp.json", "{}").is_empty());
-        assert!(servers_of(".mcp.json", r#"{"mcpServers":[]}"#).is_empty());
-        assert!(servers_of(".mcp.json", r#"{"mcpServers":"nope"}"#).is_empty());
-    }
-
-    #[test]
-    fn mcp_sources_are_read() {
-        assert!(ClaudeCode.reads(&p(".mcp.json")));
-        assert!(ClaudeCode.reads(&p(".claude/settings.json")));
-        assert!(!ClaudeCode.reads(&p(".claude/hooks/x.sh")));
+        assert!(servers_of("{}").is_empty());
+        assert!(servers_of(r#"{"mcpServers":[]}"#).is_empty());
+        assert!(servers_of(r#"{"mcpServers":"nope"}"#).is_empty());
     }
 }

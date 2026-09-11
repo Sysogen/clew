@@ -27,6 +27,12 @@ repository.
 
 ### Changed
 
+- Catalogue rows declare what to extract. A row without `extract` is inventory:
+  reported, never opened. Adding a tool is now a data change.
+- Cursor and Cline MCP files are parsed for the servers they declare, which they
+  were not before.
+- A file is parsed once however many extractions its row declares, rather than
+  once per extraction.
 - Surface patterns move from Rust into `crates/domain/catalogue.toml`, one row
   each, carrying the tool, the kind, the date it was last checked and the
   documentation it was checked against.

@@ -9,6 +9,7 @@
 //! in [`ports`], implemented by an adapter.
 
 pub mod catalogue;
+pub mod extract;
 pub mod hook;
 pub mod mcp_server;
 pub mod permission;
@@ -16,7 +17,6 @@ pub mod ports;
 pub mod repo_path;
 pub mod scan_policy;
 pub mod surface;
-pub mod tools;
 
 pub use catalogue::{Catalogue, shipped as catalogue};
 pub use hook::Hook;
