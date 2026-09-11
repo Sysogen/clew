@@ -83,6 +83,19 @@ kind = "instruction"
 last_verified = "2026-09-11"
 source = "https://agents.md"
 
+# --- Gemini CLI -------------------------------------------------------------
+
+# Project settings. The user-level ~/.gemini/settings.json is outside a
+# repository, so a scan of one never sees it. A server here may carry
+# trust = true, which bypasses the confirmation before a tool call.
+[[surface]]
+glob = "**/.gemini/settings.json"
+tool = "gemini-cli"
+kind = "gemini"
+extract = ["mcp-servers"]
+last_verified = "2026-09-12"
+source = "https://github.com/google-gemini/gemini-cli/blob/main/docs/reference/configuration.md"
+
 # --- Cursor -----------------------------------------------------------------
 
 [[surface]]
@@ -113,6 +126,16 @@ last_verified = "2026-09-12"
 source = "https://cursor.com/help/customization/rules"
 
 # --- VS Code and Copilot ----------------------------------------------------
+
+# A task may set runOn = "folderOpen", which runs it when the folder is
+# opened, before anyone reads it. Never opened here: the command lives inside
+# the task, and reading it is the rule pack's job.
+[[surface]]
+glob = "**/.vscode/tasks.json"
+tool = "vscode"
+kind = "vscode"
+last_verified = "2026-09-12"
+source = "https://code.visualstudio.com/docs/debugtest/tasks"
 
 [[surface]]
 glob = "**/.vscode/mcp.json"
