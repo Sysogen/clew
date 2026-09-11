@@ -24,7 +24,7 @@ pub enum ParseError {
     #[error("not valid TOML")]
     NotToml,
     /// The file opens a frontmatter block that is not closed or not YAML.
-    #[error("frontmatter is not valid YAML")]
+    #[error("frontmatter is not closed or not valid YAML")]
     NotFrontmatter,
 }
 
@@ -74,12 +74,12 @@ fn frontmatter(contents: &str) -> Result<serde_json::Value, ParseError> {
     let empty = || Ok(serde_json::Value::Object(serde_json::Map::new()));
 
     // The fence only counts on the first line, matching how the tools read it.
-    let Some(rest) = contents
-        .strip_prefix("---\n")
-        .or_else(|| contents.strip_prefix("---\r\n"))
-    else {
+    // Taking the line rather than a prefix keeps a file that is just the fence
+    // an unclosed block rather than an absent one.
+    let (first, rest) = contents.split_once('\n').unwrap_or((contents, ""));
+    if first.trim_end_matches('\r') != "---" {
         return empty();
-    };
+    }
 
     let mut block = String::new();
     let mut closed = false;
@@ -179,7 +179,7 @@ pub fn run(wanted: &[Extraction], format: Format, contents: &str) -> Result<Find
     for what in wanted {
         match what {
             Extraction::Hooks => found.hooks = hooks(&root),
-            Extraction::Permissions => found.permissions = permissions(&root),
+            Extraction::Permissions => found.permissions = permissions(&root, format),
             Extraction::McpServers => found.servers = mcp_servers(&root),
         }
     }
@@ -218,19 +218,22 @@ fn hooks(root: &serde_json::Value) -> Vec<Hook> {
 }
 
 /// Operations performed without asking.
-fn permissions(root: &serde_json::Value) -> Vec<Permission> {
-    // Settings nest the list under permissions; frontmatter names it at the
-    // top. Both grant the same way, so both are read.
-    let listed = root
-        .get("permissions")
-        .and_then(|p| p.get("allow"))
-        .map(listed_grants)
-        .unwrap_or_default();
-    let declared = root.get("allowed-tools").map(grants).unwrap_or_default();
+///
+/// Settings nest the list under `permissions`; frontmatter names it at the
+/// top. A tool reads only its own spelling, so reading both everywhere would
+/// report grants the tool does not honour.
+fn permissions(root: &serde_json::Value, format: Format) -> Vec<Permission> {
+    let entries = match format {
+        Format::Json | Format::Toml => root
+            .get("permissions")
+            .and_then(|p| p.get("allow"))
+            .map(listed_grants),
+        Format::Markdown => root.get("allowed-tools").map(grants),
+    };
 
-    let mut found: Vec<Permission> = listed
+    let mut found: Vec<Permission> = entries
+        .unwrap_or_default()
         .into_iter()
-        .chain(declared)
         .filter_map(|entry| Permission::parse(&entry))
         .collect();
     found.sort();
@@ -748,6 +751,48 @@ env = { DATABASE_URL = "postgres://u:hunter2@h/d", PGPORT = "5432" }
 
     /// An unclosed fence is not an empty declaration. Reporting it as one would
     /// hide every grant in the file behind a formatting mistake.
+    /// Each tool reads one spelling. Reporting the other would invent a grant
+    /// that nothing honours, which is the mirror of missing a real one.
+    #[test]
+    fn settings_do_not_grant_through_the_frontmatter_key() {
+        let found = perms_of(r#"{"allowed-tools":"Bash(rm -rf /)"}"#);
+
+        assert!(
+            found.is_empty(),
+            "settings do not read allowed-tools: {found:?}"
+        );
+    }
+
+    #[test]
+    fn frontmatter_does_not_grant_through_the_settings_key() {
+        let found = frontmatter_perms("---\npermissions:\n  allow:\n    - Bash(rm -rf /)\n---\n");
+
+        assert!(
+            found.is_empty(),
+            "a skill does not read permissions.allow: {found:?}"
+        );
+    }
+
+    /// The one error covers two failures, so its text must name both.
+    #[test]
+    fn the_frontmatter_error_names_both_failures() {
+        let said = ParseError::NotFrontmatter.to_string();
+        assert!(said.contains("not closed"), "{said}");
+        assert!(said.contains("YAML"), "{said}");
+    }
+
+    /// A file that is only a fence has opened a block and never closed it.
+    #[test]
+    fn a_bare_fence_is_unclosed() {
+        for contents in ["---", "---\n", "---\r\n"] {
+            assert_eq!(
+                run(&[Extraction::Permissions], Format::Markdown, contents),
+                Err(ParseError::NotFrontmatter),
+                "{contents:?}"
+            );
+        }
+    }
+
     #[test]
     fn an_unclosed_fence_is_an_error() {
         assert_eq!(

@@ -6,7 +6,7 @@
 #
 # glob          matched against the repository-relative path, forward slashes
 # tool          which tool owns it
-# format        json or toml. Omitted means json.
+# format        json, toml, or markdown. Omitted means json.
 # extract       what to read out of it. Omitted means inventory only: the file
 #               is reported and never opened, which matters when it may be a
 #               compiled binary
