@@ -18,6 +18,41 @@ pub enum ParseError {
     /// The file is not valid JSON.
     #[error("not valid JSON")]
     NotJson,
+    /// The file is not valid TOML.
+    #[error("not valid TOML")]
+    NotToml,
+}
+
+/// How a file is written.
+///
+/// Both parse into the same value type, so an extractor never knows which it
+/// came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Format {
+    /// The default, and what most agent configuration uses.
+    #[default]
+    Json,
+    /// Codex configuration.
+    Toml,
+}
+
+impl Format {
+    /// The format a catalogue row names, if it names one that exists.
+    #[must_use]
+    pub fn from_catalogue(name: &str) -> Option<Self> {
+        Some(match name {
+            "json" => Self::Json,
+            "toml" => Self::Toml,
+            _ => return None,
+        })
+    }
+
+    fn parse(self, contents: &str) -> Result<serde_json::Value, ParseError> {
+        match self {
+            Self::Json => serde_json::from_str(contents).map_err(|_| ParseError::NotJson),
+            Self::Toml => toml::from_str(contents).map_err(|_| ParseError::NotToml),
+        }
+    }
 }
 
 /// One thing a file can declare.
@@ -64,13 +99,12 @@ pub struct Findings {
 /// # Errors
 ///
 /// Only when the file will not parse at all.
-pub fn run(wanted: &[Extraction], contents: &str) -> Result<Findings, ParseError> {
+pub fn run(wanted: &[Extraction], format: Format, contents: &str) -> Result<Findings, ParseError> {
     if wanted.is_empty() {
         return Ok(Findings::default());
     }
 
-    let root: serde_json::Value =
-        serde_json::from_str(contents).map_err(|_| ParseError::NotJson)?;
+    let root = format.parse(contents)?;
 
     let mut found = Findings::default();
     for what in wanted {
@@ -135,18 +169,17 @@ fn permissions(root: &serde_json::Value) -> Vec<Permission> {
 
 /// MCP servers declared.
 fn mcp_servers(root: &serde_json::Value) -> Vec<McpServer> {
-    let Some(declared) = root
-        .get("mcpServers")
-        .and_then(serde_json::Value::as_object)
-    else {
-        return Vec::new();
-    };
-
-    let mut found: Vec<McpServer> = declared
+    // Claude Code and Cursor write mcpServers; Codex writes mcp_servers. A file
+    // carrying both is odd, but reading only the first would hide servers, so
+    // both tables are read and identical entries collapsed.
+    let mut found: Vec<McpServer> = ["mcpServers", "mcp_servers"]
         .iter()
+        .filter_map(|key| root.get(key)?.as_object())
+        .flatten()
         .filter_map(|(name, config)| server(name, config))
         .collect();
     found.sort();
+    found.dedup();
     found
 }
 
@@ -201,7 +234,9 @@ mod tests {
     use super::*;
 
     fn hooks_of(json: &str) -> Vec<Hook> {
-        run(&[Extraction::Hooks], json).expect("valid json").hooks
+        run(&[Extraction::Hooks], Format::Json, json)
+            .expect("valid json")
+            .hooks
     }
 
     #[test]
@@ -324,15 +359,145 @@ mod tests {
     }
 
     #[test]
+    fn reads_mcp_servers_from_toml() {
+        let found = run(
+            &[Extraction::McpServers],
+            Format::Toml,
+            r#"
+approval_policy = "never"
+
+[mcp_servers.postgres]
+command = "npx"
+args = ["-y", "server-postgres"]
+
+[mcp_servers.postgres.env]
+DATABASE_URL = "postgres://u:hunter2@h/d"
+"#,
+        )
+        .expect("valid toml")
+        .servers;
+
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].name, "postgres");
+        assert_eq!(found[0].invocation(), "npx -y server-postgres");
+        assert_eq!(found[0].env, vec!["DATABASE_URL"]);
+        assert!(
+            !format!("{found:?}").contains("hunter2"),
+            "a value is a credential whatever the format"
+        );
+    }
+
+    #[test]
+    fn both_spellings_of_the_server_key_are_read() {
+        let camel = run(
+            &[Extraction::McpServers],
+            Format::Json,
+            r#"{"mcpServers":{"a":{"command":"x"}}}"#,
+        )
+        .expect("valid")
+        .servers;
+        let snake = run(
+            &[Extraction::McpServers],
+            Format::Json,
+            r#"{"mcp_servers":{"a":{"command":"x"}}}"#,
+        )
+        .expect("valid")
+        .servers;
+
+        assert_eq!(camel.len(), 1, "Claude Code and Cursor spelling");
+        assert_eq!(snake.len(), 1, "Codex spelling");
+        assert_eq!(camel, snake);
+    }
+
+    #[test]
+    fn both_tables_are_read_when_a_file_carries_both() {
+        let found = servers_of(
+            r#"{"mcpServers":{"a":{"command":"x"}},
+                "mcp_servers":{"b":{"command":"y"}}}"#,
+        );
+
+        assert_eq!(found.len(), 2, "neither table may be dropped: {found:?}");
+        assert!(found.iter().any(|s| s.name == "a"));
+        assert!(found.iter().any(|s| s.name == "b"));
+    }
+
+    #[test]
+    fn an_entry_declared_identically_in_both_tables_appears_once() {
+        let found = servers_of(
+            r#"{"mcpServers":{"a":{"command":"x"}},
+                "mcp_servers":{"a":{"command":"x"}}}"#,
+        );
+
+        assert_eq!(found.len(), 1, "{found:?}");
+    }
+
+    #[test]
+    fn a_name_declared_differently_in_both_tables_keeps_both() {
+        let found = servers_of(
+            r#"{"mcpServers":{"a":{"command":"x"}},
+                "mcp_servers":{"a":{"command":"y"}}}"#,
+        );
+
+        assert_eq!(found.len(), 2, "a conflict must be visible, not resolved");
+    }
+
+    #[test]
+    fn toml_reads_an_inline_env_table() {
+        let found = run(
+            &[Extraction::McpServers],
+            Format::Toml,
+            r#"
+[mcp_servers.pg]
+command = "npx"
+env = { DATABASE_URL = "postgres://u:hunter2@h/d", PGPORT = "5432" }
+"#,
+        )
+        .expect("valid toml")
+        .servers;
+
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].env, vec!["DATABASE_URL", "PGPORT"]);
+        assert!(!format!("{found:?}").contains("hunter2"));
+    }
+
+    #[test]
+    fn malformed_toml_is_its_own_error() {
+        assert_eq!(
+            run(&[Extraction::McpServers], Format::Toml, "[unclosed"),
+            Err(ParseError::NotToml)
+        );
+        // A format mismatch is an error, not a silent empty result.
+        assert_eq!(
+            run(
+                &[Extraction::McpServers],
+                Format::Toml,
+                r#"{"mcpServers":{}}"#
+            ),
+            Err(ParseError::NotToml)
+        );
+    }
+
+    #[test]
+    fn toml_without_servers_yields_none() {
+        let found = run(
+            &[Extraction::McpServers],
+            Format::Toml,
+            "approval_policy = \"never\"\nsandbox_mode = \"read-only\"\n",
+        )
+        .expect("valid toml");
+        assert!(found.servers.is_empty());
+    }
+
+    #[test]
     fn malformed_json_is_an_error() {
         assert_eq!(
-            run(&[Extraction::Hooks], "{not json").map(|f| f.hooks),
+            run(&[Extraction::Hooks], Format::Json, "{not json").map(|f| f.hooks),
             Err(ParseError::NotJson)
         );
     }
 
     fn perms_of(json: &str) -> Vec<Permission> {
-        run(&[Extraction::Permissions], json)
+        run(&[Extraction::Permissions], Format::Json, json)
             .expect("valid json")
             .permissions
     }
@@ -392,13 +557,13 @@ mod tests {
     #[test]
     fn malformed_json_is_an_error_for_permissions() {
         assert_eq!(
-            run(&[Extraction::Permissions], "{nope").map(|f| f.permissions),
+            run(&[Extraction::Permissions], Format::Json, "{nope").map(|f| f.permissions),
             Err(ParseError::NotJson)
         );
     }
 
     fn servers_of(json: &str) -> Vec<McpServer> {
-        run(&[Extraction::McpServers], json)
+        run(&[Extraction::McpServers], Format::Json, json)
             .expect("valid json")
             .servers
     }

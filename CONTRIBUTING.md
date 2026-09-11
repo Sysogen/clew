@@ -68,9 +68,19 @@ extract = ["hooks", "permissions", "mcp-servers"]
 Omit it and the file is inventory only: reported, never opened. That matters
 when it may be a compiled binary, and it is why a hook script is never read.
 
+Add `format` when the file is not JSON:
+
+```toml
+format = "toml"
+```
+
+Both formats parse into the same value, so an extractor never knows which it
+came from and a new format costs one arm rather than a second copy of every
+extractor.
+
 Only declare an extraction whose shape you have checked. `mcp-servers` reads the
-`mcpServers` key; a tool using a different key needs its own extractor, not this
-one.
+`mcpServers` key and Codex's `mcp_servers`; a tool using a third spelling needs
+that spelling added, and a tool with a different shape needs its own extractor.
 
 `source` must be the tool's own documentation, not a blog post, and
 `last_verified` is the day you checked it. Loading rejects a row missing either,

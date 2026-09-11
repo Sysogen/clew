@@ -13,7 +13,7 @@ use globset::{Glob, GlobSet, GlobSetBuilder};
 use serde::Deserialize;
 use thiserror::Error;
 
-use crate::extract::Extraction;
+use crate::extract::{Extraction, Format};
 use crate::repo_path::RepoPath;
 use crate::surface::SurfaceKind;
 
@@ -52,6 +52,14 @@ pub enum CatalogueError {
         /// The extraction as written.
         extraction: String,
     },
+    /// A row names a format that does not exist.
+    #[error("row {row} names an unknown format {format:?}")]
+    UnknownFormat {
+        /// Which row, counting from zero.
+        row: usize,
+        /// The format as written.
+        format: String,
+    },
     /// A row names a kind the domain does not have.
     #[error("row {row} has an unknown kind {kind:?}")]
     UnknownKind {
@@ -71,6 +79,8 @@ pub struct Matched<'a> {
     pub kind: SurfaceKind,
     /// What to read out of it. Empty means inventory only.
     pub extract: &'a [Extraction],
+    /// How the file is written.
+    pub format: Format,
 }
 
 /// One row: a pattern, and what matching it means.
@@ -85,10 +95,17 @@ pub struct SurfaceRule {
     /// What to read out of it. Empty means inventory only.
     #[serde(default)]
     pub extract: Vec<String>,
+    /// How the file is written. Omitted means JSON.
+    #[serde(default = "default_format")]
+    pub format: String,
     /// When this row was last checked against primary documentation.
     pub last_verified: String,
     /// The documentation it was checked against.
     pub source: String,
+}
+
+fn default_format() -> String {
+    "json".to_owned()
 }
 
 #[derive(Debug, Deserialize)]
@@ -104,6 +121,7 @@ pub struct Catalogue {
     rules: Vec<SurfaceRule>,
     kinds: Vec<SurfaceKind>,
     extractions: Vec<Vec<Extraction>>,
+    formats: Vec<Format>,
     globs: GlobSet,
 }
 
@@ -121,6 +139,7 @@ impl Catalogue {
         let mut builder = GlobSetBuilder::new();
         let mut kinds = Vec::with_capacity(file.surface.len());
         let mut extractions = Vec::with_capacity(file.surface.len());
+        let mut formats = Vec::with_capacity(file.surface.len());
 
         for (row, rule) in file.surface.iter().enumerate() {
             let glob = Glob::new(&rule.glob).map_err(|e| CatalogueError::BadGlob {
@@ -151,6 +170,13 @@ impl Catalogue {
                     .collect::<Result<Vec<_>, _>>()?,
             );
 
+            formats.push(Format::from_catalogue(&rule.format).ok_or_else(|| {
+                CatalogueError::UnknownFormat {
+                    row,
+                    format: rule.format.clone(),
+                }
+            })?);
+
             kinds.push(SurfaceKind::from_catalogue(&rule.kind).ok_or_else(|| {
                 CatalogueError::UnknownKind {
                     row,
@@ -166,6 +192,7 @@ impl Catalogue {
             rules: file.surface,
             kinds,
             extractions,
+            formats,
         })
     }
 
@@ -180,6 +207,7 @@ impl Catalogue {
             rule: &self.rules[first],
             kind: self.kinds[first],
             extract: &self.extractions[first],
+            format: self.formats[first],
         })
     }
 
@@ -293,13 +321,21 @@ mod tests {
             "every catalogue row needs a case here"
         );
 
+        let all = &[
+            Extraction::Hooks,
+            Extraction::Permissions,
+            Extraction::McpServers,
+        ][..];
+        let servers = &[Extraction::McpServers][..];
         let parsed = [
-            (".claude/settings.json", 3),
-            (".claude/settings.local.json", 3),
-            (".mcp.json", 1),
-            (".cursor/mcp.json", 1),
-            ("cline_mcp_settings.json", 1),
+            (".claude/settings.json", all),
+            (".claude/settings.local.json", all),
+            (".mcp.json", servers),
+            (".cursor/mcp.json", servers),
+            ("cline_mcp_settings.json", servers),
+            (".codex/config.toml", servers),
         ];
+        let toml_rows = [".codex/config.toml"];
 
         for (path, kind) in expected {
             let matched = shipped()
@@ -310,13 +346,18 @@ mod tests {
             let want = parsed
                 .iter()
                 .find(|(q, _)| *q == path)
-                .map_or(0, |(_, n)| *n);
+                .map_or(&[][..], |(_, e)| *e);
             assert_eq!(
-                matched.extract.len(),
-                want,
-                "{path} declares the wrong extractions: {:?}",
-                matched.extract
+                matched.extract, want,
+                "{path} declares the wrong extractions"
             );
+
+            let expected_format = if toml_rows.contains(&path) {
+                Format::Toml
+            } else {
+                Format::Json
+            };
+            assert_eq!(matched.format, expected_format, "{path}");
         }
     }
 
@@ -392,6 +433,26 @@ mod tests {
         .expect_err("an unknown kind must not load");
         assert!(
             matches!(error, CatalogueError::UnknownKind { .. }),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn an_unknown_format_is_rejected_at_load() {
+        let error = Catalogue::load(
+            r#"version = 1
+               [[surface]]
+               glob = "x"
+               tool = "x"
+               kind = "skill"
+               format = "yaml"
+               last_verified = "2026-09-11"
+               source = "https://example.invalid"
+            "#,
+        )
+        .expect_err("a format clew cannot parse must not load");
+        assert!(
+            matches!(error, CatalogueError::UnknownFormat { .. }),
             "{error:?}"
         );
     }

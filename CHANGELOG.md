@@ -10,6 +10,9 @@ repository.
 
 ### Added
 
+- Read TOML, so Codex `config.toml` reports the MCP servers it declares. Both
+  formats parse into the same value, so every extractor works on either.
+
 - Release automation: a version bump on `main` tags itself, then publishes the
   workspace to crates.io and attaches binaries for five targets.
 
