@@ -126,6 +126,16 @@ jobs:
       - name: Build
         run: cargo build --release --locked --target ${{ matrix.target }} -p clew-cli
 
+      - name: Never executes
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            ./scripts/check-no-exec.sh
+          else
+            ./scripts/check-no-exec.sh "target/${{ matrix.target }}/release/clew"
+          fi
+
       - name: Package
         shell: bash
         run: |

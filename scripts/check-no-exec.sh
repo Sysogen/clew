@@ -7,26 +7,23 @@
 # The source scan rejects any API that can start a process. The binary scan is
 # the stronger one: a linked artifact that never reaches Command has no
 # undefined reference to execvp, fork or posix_spawn, and one that does reaches
-# for about a dozen of them. That holds whatever the source looks like.
-#
-#   ./scripts/check-no-exec.sh            source only
-#   ./scripts/check-no-exec.sh <binary>   source and that binary
+# for about a dozen of them.
 
 set -euo pipefail
 
 # Matched with perl, so these are perl patterns. Written to catch the call, not
-# the word: clew's own domain has a `command` field on every hook it reports.
+# the word.
 readonly FORBIDDEN='(?x)
       (?: std:: )? process::Command
     | \bCommand::new\b
-    | \blibc::(?: execv | execl | execle | execvp | execvpe | fork
-                | system | posix_spawn )
+    | \blibc::(?: execv | execl | execle | execlp | execvp | execvpe | execve
+                | fork | vfork | system | posix_spawn )
     | \btokio::process\b
     | \bstd::os::unix::process::CommandExt\b
 '
 
-# Any of these in the symbol table means the artifact can start a process.
-readonly SPAWN_SYMBOLS='execv|execl|execvp|execve|_fork$|posix_spawn|\bsystem\b|popen|CreateProcess'
+# Matched against a bare symbol name, so pthread_atfork cannot look like fork.
+readonly SPAWN_SYMBOL='^_?(execv|execl|execle|execlp|execvp|execvpe|execve|fork|vfork|posix_spawn[a-z_]*|system|popen|CreateProcess[AW]?)(@.*)?$'
 
 fail() {
     printf 'no-exec: %s\n' "$1" >&2
@@ -34,50 +31,52 @@ fail() {
 }
 
 scan_source() {
-    local hits
-    hits="$(find crates -name '*.rs' -print0 \
-        | xargs -0 perl -ne "print qq(  \$ARGV:\$.: \$_) if /$FORBIDDEN/; close ARGV if eof" 2>/dev/null || true)"
+    command -v perl >/dev/null 2>&1 || fail 'perl is unavailable, so the source was not scanned'
+    [ -d crates ] || fail 'no crates directory, so there is nothing to scan'
+
+    local files count hits
+    files="$(find crates -name '*.rs')"
+    count="$(printf '%s\n' "$files" | grep -c . || true)"
+    [ "$count" -gt 0 ] || fail 'found no Rust sources, so the scan would pass vacuously'
+
+    # No `|| true`: a perl or xargs failure must not read as a clean scan.
+    hits="$(printf '%s\n' "$files" \
+        | xargs perl -ne "print qq(  \$ARGV:\$.: \$_) if /$FORBIDDEN/; close ARGV if eof")"
 
     if [ -n "$hits" ]; then
         printf '%s\n' "$hits" >&2
         fail 'source can start a process'
     fi
-    printf 'no-exec: no process-spawning API in %s source files\n' \
-        "$(find crates -name '*.rs' | wc -l | tr -d ' ')"
+    printf 'no-exec: no process-spawning API in %s source files\n' "$count"
 }
 
 scan_binary() {
     local binary="$1"
     [ -f "$binary" ] || fail "no binary at $binary"
-
-    if ! command -v nm >/dev/null 2>&1; then
-        printf 'no-exec: nm is unavailable, skipping the binary scan\n' >&2
-        return 0
-    fi
+    command -v nm >/dev/null 2>&1 || fail 'nm is unavailable, so the binary was not scanned'
 
     # The release profile strips, and the two nm implementations disagree about
-    # where undefined symbols then live: GNU needs -D to read the dynamic table,
-    # macOS reports nothing for -D and everything for -u. Try both and require
-    # that one of them actually read something.
-    local undefined hits
-    undefined=""
+    # where undefined symbols then live: GNU needs -D to read the dynamic
+    # table, macOS reports nothing for -D and everything for -u.
+    local names form hits
+    names=""
     for form in "-D -u" "-u"; do
         # shellcheck disable=SC2086
-        undefined="$(nm $form "$binary" 2>/dev/null || true)"
-        [ -n "$undefined" ] && break
+        names="$(nm $form "$binary" 2>/dev/null | awk 'NF { print $NF }' || true)"
+        [ -n "$names" ] && break
     done
-    [ -n "$undefined" ] || fail "read no symbols from $binary; the scan would pass vacuously"
+    [ -n "$names" ] || fail "read no symbols from $binary; the scan would pass vacuously"
 
-    hits="$(printf '%s\n' "$undefined" | grep -iE "$SPAWN_SYMBOLS" || true)"
+    hits="$(printf '%s\n' "$names" | grep -E "$SPAWN_SYMBOL" || true)"
     if [ -n "$hits" ]; then
-        printf '%s\n' "$hits" >&2
-        fail "$binary imports a process-spawning symbol"
+        printf '%s\n' "$hits" | sed 's/^/  /' >&2
+        fail "$binary imports a symbol that can start a process"
     fi
     printf 'no-exec: %s imports none of %s undefined symbols that can spawn\n' \
-        "$(basename "$binary")" "$(printf '%s\n' "$undefined" | wc -l | tr -d ' ')"
+        "$(basename "$binary")" "$(printf '%s\n' "$names" | grep -c . || true)"
 }
 
 scan_source
-# An empty argument is treated as none: a caller passing "\${1:-}" should not
+# An empty argument is treated as none, so a caller passing "${1:-}" does not
 # get a confusing failure about a binary at the empty path.
 [ "$#" -eq 0 ] || [ -z "$1" ] || scan_binary "$1"

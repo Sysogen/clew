@@ -10,8 +10,6 @@ multiple-versions = "warn"
 deny = [
     { name = "openssl" },
     { name = "openssl-sys" },
-    # clew never executes what it finds. These exist to start processes, so
-    # pulling one in would break the guarantee before anyone wrote a call.
     { name = "duct" },
     { name = "subprocess" },
     { name = "xshell" },

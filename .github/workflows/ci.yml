@@ -71,9 +71,6 @@ jobs:
       - name: Build
         run: cargo build --release --locked -p clew-cli
 
-      # The source scan rejects the API. The binary scan is the stronger claim:
-      # a linked artifact that never reaches Command has no undefined reference
-      # to execvp, fork or posix_spawn.
       - name: Proof
         run: ./scripts/check-no-exec.sh target/release/clew
 
