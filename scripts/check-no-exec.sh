@@ -55,9 +55,17 @@ scan_binary() {
         return 0
     fi
 
+    # The release profile strips, and the two nm implementations disagree about
+    # where undefined symbols then live: GNU needs -D to read the dynamic table,
+    # macOS reports nothing for -D and everything for -u. Try both and require
+    # that one of them actually read something.
     local undefined hits
-    # macOS nm wants -u; GNU nm accepts it too.
-    undefined="$(nm -u "$binary" 2>/dev/null || true)"
+    undefined=""
+    for form in "-D -u" "-u"; do
+        # shellcheck disable=SC2086
+        undefined="$(nm $form "$binary" 2>/dev/null || true)"
+        [ -n "$undefined" ] && break
+    done
     [ -n "$undefined" ] || fail "read no symbols from $binary; the scan would pass vacuously"
 
     hits="$(printf '%s\n' "$undefined" | grep -iE "$SPAWN_SYMBOLS" || true)"
