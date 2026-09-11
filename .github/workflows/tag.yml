@@ -1,0 +1,87 @@
+---
+name: Tag
+
+# Tags only when a push changes the version in Cargo.toml. Checking merely
+# that the tag is absent would release on any push while the current version is
+# untagged, including the first one, which is the opposite of the contract.
+#
+# The first release is therefore manual: push v0.1.0 by hand, or dispatch
+# Release with the tag.
+"on":
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  tag:
+    name: Tag a version change
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Did this push change the version
+        id: version
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          read_version() {
+            python3 -c "
+import re, sys
+m = re.search(r'^version = \"([^\"]+)\"', sys.stdin.read(), re.M)
+print(m.group(1) if m else '')"
+          }
+
+          now="$(read_version < Cargo.toml)"
+          echo "version=$now" >> "$GITHUB_OUTPUT"
+
+          empty=0000000000000000000000000000000000000000
+          if [ -z "$BEFORE" ] || [ "$BEFORE" = "$empty" ] \
+            || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            echo "no previous commit to compare against; not tagging"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          was="$(git show "$BEFORE:Cargo.toml" | read_version)"
+          echo "$was -> $now"
+          if [ "$was" = "$now" ]; then
+            echo "the version did not change; not tagging"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Tag
+        id: tag
+        if: steps.version.outputs.changed == 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          tag="v$VERSION"
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            echo "$tag already exists" >&2
+            exit 1
+          fi
+          # Unsigned: a runner holds no signing key. The commit it points at is
+          # signed, which is what the history is verified against.
+          git -c user.name="github-actions[bot]" \
+              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              tag -a "$tag" -m "clew $tag"
+          git push origin "$tag"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      # A tag pushed with GITHUB_TOKEN does not trigger another workflow, so
+      # the release is started explicitly.
+      - name: Start the release
+        if: steps.version.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: gh workflow run release.yml --field "tag=$TAG"

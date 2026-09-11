@@ -195,6 +195,41 @@ Linux, macOS, and Windows. Those are correctness, not style.
 A maintainer can waive the title check for one pull request with the
 `override: commit-convention` label.
 
+## Releasing
+
+Maintainers only.
+
+1. Open a pull request that raises `version` in the root `Cargo.toml`, raises
+   the five `clew-*` entries under `[workspace.dependencies]` to match, and
+   moves `CHANGELOG.md`'s `Unreleased` section under the new number.
+2. Merge it.
+
+The internal dependency pins are not optional. Miss them and the published
+crates ask for the previous release of each other, so the five are not a
+coherent set. `./scripts/check-versions.sh` runs in CI and fails the pull
+request if they drift.
+
+From there `Tag` sees the version changed, creates `v<version>`, and starts
+`Release`. A push that does not change the version produces no tag, so a
+documentation change does not release.
+
+`Release` refuses to publish unless CI already succeeded on that commit, the
+tag matches the manifest version, and the tag is an ancestor of `main`. It
+builds every binary before publishing, because a crates.io version can be
+yanked but never replaced and a failed target must not leave crates published
+without artifacts.
+
+### The first release is manual
+
+`Tag` only fires on a version change, so the current version never gets a tag
+on its own. Push it by hand, or use `Release`'s `Run workflow` button and give
+it the tag. The same applies to retrying a failed release.
+
+### Before any release
+
+`Release` needs a `CARGO_REGISTRY_TOKEN` secret in the `crates-io` environment,
+scoped to `publish-update` for the five `clew-*` crates.
+
 ## Reporting a bug
 
 Open an issue with the surface you expected, what `clew` reported, and the
