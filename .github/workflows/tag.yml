@@ -1,0 +1,63 @@
+---
+name: Tag
+
+# Tags when the released version changes, not on every merge. A docs-only
+# merge should not produce a release, and the version bump is the one place a
+# human decides that a release is wanted.
+"on":
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  tag:
+    name: Tag a version change
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Read the version
+        id: version
+        run: |
+          set -euo pipefail
+          version="$(cargo metadata --format-version 1 --no-deps \
+            | python3 -c 'import json,sys
+pkgs = json.load(sys.stdin)["packages"]
+print(next(p["version"] for p in pkgs if p["name"] == "clew-cli"))')"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Manifest is at $version"
+
+      - name: Tag, if it does not exist
+        id: tag
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          tag="v$VERSION"
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            echo "$tag already exists, nothing to release"
+            echo "created=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Unsigned: a runner holds no signing key. The commit it points at is
+          # signed, which is what the history is verified against.
+          git -c user.name="github-actions[bot]" \
+              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              tag -a "$tag" -m "clew $tag"
+          git push origin "$tag"
+          echo "created=true" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      # A tag pushed with GITHUB_TOKEN does not trigger another workflow, so
+      # the release is started explicitly.
+      - name: Start the release
+        if: steps.tag.outputs.created == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: gh workflow run release.yml --field "tag=$TAG"

@@ -10,6 +10,9 @@ repository.
 
 ### Added
 
+- Release automation: a version bump on `main` tags itself, then publishes the
+  workspace to crates.io and attaches binaries for five targets.
+
 - Report the MCP servers a configuration declares, with how each is reached
   and the names of the environment variables it is given. Names only: a value
   there is routinely a credential.

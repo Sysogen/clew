@@ -195,6 +195,35 @@ Linux, macOS, and Windows. Those are correctness, not style.
 A maintainer can waive the title check for one pull request with the
 `override: commit-convention` label.
 
+## Releasing
+
+Maintainers only, and it is one decision: bump the version.
+
+1. Open a pull request raising `version` in the root `Cargo.toml` and moving
+   `CHANGELOG.md`'s `Unreleased` section under the new number.
+2. Merge it.
+
+From there `Tag` notices the version changed, creates `v<version>`, and starts
+`Release`, which re-runs every gate, publishes the workspace to crates.io, builds
+binaries for five targets, and creates the GitHub release with checksums.
+
+A merge that does not change the version produces no tag, so a documentation
+change does not release.
+
+### Before the first release
+
+`Release` needs a `CARGO_REGISTRY_TOKEN` secret in the `crates-io` environment.
+Scope it to `publish-update` for the five `clew-*` crates.
+
+### If something goes wrong
+
+`Release` refuses to run when the tag does not match the version in the manifest,
+or when the tag is not an ancestor of `main`. Both are there because **a
+crates.io publish cannot be undone**: a version can be yanked, never replaced.
+
+To release a tag by hand, or to retry a failed run, use the `Release` workflow's
+`Run workflow` button and give it the tag.
+
 ## Reporting a bug
 
 Open an issue with the surface you expected, what `clew` reported, and the
