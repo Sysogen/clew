@@ -36,6 +36,23 @@ Code, Continue, Cline, Aider, Copilot, and devcontainers.
 `clew` never reads a credential value, and never executes a hook, script, or
 command it discovers. It reads files and reports paths.
 
+Both are checked, not claimed. CI asserts that the released Linux and macOS
+binaries import no process-spawning symbol, which is what a linked artifact that
+never reaches `Command` looks like, and a test puts a password in an MCP `env`
+block and asserts it never reaches the output.
+
+The source scan runs on every build; the symbol scan needs `nm`, so it covers
+the ELF and Mach-O artifacts rather than the Windows one.
+
+```
+$ ./scripts/check-no-exec.sh target/release/clew
+no-exec: no process-spawning API in 19 source files
+no-exec: clew imports none of 75 undefined symbols that can spawn
+```
+
+That is why clew is safe to point at a repository you do not control, and safe
+to run unattended in CI.
+
 This is an early release covering discovery only.
 
 ## Configuration
