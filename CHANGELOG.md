@@ -10,6 +10,9 @@ repository.
 
 ### Added
 
+- Find Cursor project rules under `.cursor/rules`, at any depth. Only `.mdc`
+  counts, since Cursor ignores a plain `.md` placed there.
+
 - Read Markdown frontmatter, so a skill reports the tools it is allowed to use.
   The opening fence must be the first line, as the tools themselves require, and
   a fence that never closes is an error rather than an empty result.

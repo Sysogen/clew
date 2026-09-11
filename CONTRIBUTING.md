@@ -86,6 +86,10 @@ that spelling added, and a tool with a different shape needs its own extractor.
 `allowed-tools`, which may be a list or one comma-separated line. Each format
 reads only its own spelling, since reporting the other would invent a grant.
 
+A `*` crosses `/` here, since globs are compiled with globset's defaults. No
+current row depends on that, but write `**` when you mean any depth rather
+than relying on it.
+
 `source` must be the tool's own documentation, not a blog post, and
 `last_verified` is the day you checked it. Loading rejects a row missing either,
 naming an unknown kind, or naming an unknown extraction.
