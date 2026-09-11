@@ -12,7 +12,6 @@ use crate::hook::Hook;
 use crate::mcp_server::McpServer;
 use crate::permission::Permission;
 use crate::repo_path::RepoPath;
-use crate::surface::SurfaceKind;
 
 /// Why a configuration file could not be understood.
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
@@ -27,9 +26,6 @@ pub trait CodingTool: Sync {
     /// Stable identifier. Appears in output and in rule identifiers, so
     /// renaming one is a breaking change.
     fn name(&self) -> &'static str;
-
-    /// Classify a repository-relative path, if this tool owns it.
-    fn classify(&self, path: &RepoPath) -> Option<SurfaceKind>;
 
     /// Whether this tool parses `path`, so a caller knows not to read a file
     /// nothing will look at. A hook script is a surface, not a configuration.
@@ -94,13 +90,17 @@ mod tests {
     }
 
     #[test]
-    fn no_two_tools_claim_the_claude_settings_path() {
-        let path = RepoPath::root().join(".claude").join("settings.json");
-        let claimants: Vec<&str> = REGISTRY
-            .iter()
-            .filter(|t| t.classify(&path).is_some())
-            .map(|t| t.name())
-            .collect();
-        assert!(claimants.len() <= 1, "path claimed by {claimants:?}");
+    fn the_catalogue_never_names_a_tool_that_cannot_parse_its_surface() {
+        let implemented: Vec<&str> = REGISTRY.iter().map(|t| t.name()).collect();
+        for rule in crate::catalogue::shipped().rules() {
+            if rule.kind == "settings" || rule.kind == "mcp-servers" {
+                assert!(
+                    implemented.contains(&rule.tool.as_str()) || rule.tool != "claude-code",
+                    "{} names {}, which has no implementation",
+                    rule.glob,
+                    rule.tool
+                );
+            }
+        }
     }
 }

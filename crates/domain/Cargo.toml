@@ -8,8 +8,13 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-# A parser, not a runtime: no IO, no async, nothing the domain must not have.
+# Compiles the catalogue's globs into one matcher, so matching a path against
+# every row costs one pass rather than one comparison per row.
+globset.workspace = true
+# Parsers, not runtimes: no IO, no async, nothing the domain must not have.
+serde.workspace = true
 serde_json.workspace = true
+toml.workspace = true
 thiserror.workspace = true
 
 [lints]

@@ -1,0 +1,135 @@
+# The surfaces clew recognises.
+#
+# Rows, not code. A tool renaming a path is a one-line change here, reviewable
+# by anyone, with a citation and a date. Order matters: the first matching row
+# wins, so a specific pattern must precede a general one.
+#
+# glob          matched against the repository-relative path, forward slashes
+# tool          which tool owns it; extraction is dispatched on this
+# kind          what it is, for display and for rules
+# last_verified when this row was last checked against primary documentation
+# source        the documentation it was checked against
+
+version = 1
+
+# --- Claude Code ------------------------------------------------------------
+
+[[surface]]
+glob = "**/.claude/settings.json"
+tool = "claude-code"
+kind = "claude-code"
+last_verified = "2026-09-11"
+source = "https://code.claude.com/docs/en/settings"
+
+[[surface]]
+glob = "**/.claude/settings.local.json"
+tool = "claude-code"
+kind = "claude-code"
+last_verified = "2026-09-11"
+source = "https://code.claude.com/docs/en/settings"
+
+[[surface]]
+glob = "**/.mcp.json"
+tool = "claude-code"
+kind = "mcp-servers"
+last_verified = "2026-09-11"
+source = "https://code.claude.com/docs/en/mcp"
+
+[[surface]]
+glob = "**/.claude/**/hooks/**"
+tool = "claude-code"
+kind = "hook-script"
+last_verified = "2026-09-11"
+source = "https://code.claude.com/docs/en/hooks"
+
+[[surface]]
+glob = "**/.claude/skills/**/SKILL.md"
+tool = "claude-code"
+kind = "skill"
+last_verified = "2026-09-11"
+source = "https://code.claude.com/docs/en/skills"
+
+[[surface]]
+glob = "**/CLAUDE.md"
+tool = "claude-code"
+kind = "instruction"
+last_verified = "2026-09-11"
+source = "https://code.claude.com/docs/en/memory"
+
+# --- Codex ------------------------------------------------------------------
+
+[[surface]]
+glob = "**/.codex/config.toml"
+tool = "codex"
+kind = "codex"
+last_verified = "2026-09-11"
+source = "https://github.com/openai/codex/blob/main/docs/config.md"
+
+[[surface]]
+glob = "**/AGENTS.md"
+tool = "codex"
+kind = "instruction"
+last_verified = "2026-09-11"
+source = "https://agents.md"
+
+# --- Cursor -----------------------------------------------------------------
+
+[[surface]]
+glob = "**/.cursor/mcp.json"
+tool = "cursor"
+kind = "cursor"
+last_verified = "2026-09-11"
+source = "https://docs.cursor.com/context/model-context-protocol"
+
+[[surface]]
+glob = "**/.cursorrules"
+tool = "cursor"
+kind = "cursor"
+last_verified = "2026-09-11"
+source = "https://docs.cursor.com/context/rules"
+
+# --- VS Code and Copilot ----------------------------------------------------
+
+[[surface]]
+glob = "**/.vscode/mcp.json"
+tool = "vscode"
+kind = "vscode"
+last_verified = "2026-09-11"
+source = "https://code.visualstudio.com/docs/copilot/chat/mcp-servers"
+
+[[surface]]
+glob = "**/.github/copilot-instructions.md"
+tool = "copilot"
+kind = "copilot"
+last_verified = "2026-09-11"
+source = "https://docs.github.com/copilot/customizing-copilot"
+
+# --- Others -----------------------------------------------------------------
+
+[[surface]]
+glob = "**/.continue/config.json"
+tool = "continue"
+kind = "continue"
+last_verified = "2026-09-11"
+source = "https://docs.continue.dev/reference"
+
+[[surface]]
+glob = "**/cline_mcp_settings.json"
+tool = "cline"
+kind = "cline"
+last_verified = "2026-09-11"
+source = "https://docs.cline.bot/mcp/configuring-mcp-servers"
+
+[[surface]]
+glob = "**/.aider.conf.yml"
+tool = "aider"
+kind = "aider"
+last_verified = "2026-09-11"
+source = "https://aider.chat/docs/config/aider_conf.html"
+
+[[surface]]
+glob = "**/.devcontainer/devcontainer.json"
+tool = "devcontainer"
+kind = "devcontainer"
+last_verified = "2026-09-11"
+source = "https://containers.dev/implementors/json_reference/"

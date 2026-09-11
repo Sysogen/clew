@@ -37,6 +37,27 @@ pub enum SurfaceKind {
 }
 
 impl SurfaceKind {
+    /// The kind a catalogue row names, if it names one that exists.
+    #[must_use]
+    pub fn from_catalogue(name: &str) -> Option<Self> {
+        Some(match name {
+            "mcp-servers" => Self::McpServers,
+            "claude-code" => Self::ClaudeCode,
+            "codex" => Self::Codex,
+            "cursor" => Self::Cursor,
+            "vscode" => Self::VsCode,
+            "continue" => Self::Continue,
+            "cline" => Self::Cline,
+            "aider" => Self::Aider,
+            "copilot" => Self::Copilot,
+            "devcontainer" => Self::DevContainer,
+            "instruction" => Self::InstructionFile,
+            "hook-script" => Self::HookScript,
+            "skill" => Self::Skill,
+            _ => return None,
+        })
+    }
+
     /// Short human-readable label.
     #[must_use]
     pub fn label(self) -> &'static str {

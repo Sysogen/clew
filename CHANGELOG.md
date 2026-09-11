@@ -27,6 +27,13 @@ repository.
 
 ### Changed
 
+- Surface patterns move from Rust into `crates/domain/catalogue.toml`, one row
+  each, carrying the tool, the kind, the date it was last checked and the
+  documentation it was checked against.
+- **Breaking**: `clew_domain::classify` is removed. Use
+  `clew_domain::catalogue().lookup(path)`, which returns the matching row
+  alongside the kind. No published crate depends on it.
+
 - Restructure into five crates along ports and adapters: `clew-domain`,
   `clew-application`, `clew-adapter-cli`, `clew-adapter-fs`, and `clew-cli` as
   the composition root. The compiler enforces the dependency direction, and the
