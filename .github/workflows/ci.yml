@@ -62,6 +62,21 @@ jobs:
           rustup toolchain install "$msrv" --profile minimal --no-self-update
           cargo "+$msrv" check --workspace --all-targets
 
+  no-exec:
+    name: Never executes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Build
+        run: cargo build --release --locked -p clew-cli
+
+      # The source scan rejects the API. The binary scan is the stronger claim:
+      # a linked artifact that never reaches Command has no undefined reference
+      # to execvp, fork or posix_spawn.
+      - name: Proof
+        run: ./scripts/check-no-exec.sh target/release/clew
+
   workflows:
     name: Workflow files
     runs-on: ubuntu-latest
