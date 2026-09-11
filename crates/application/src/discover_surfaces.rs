@@ -103,7 +103,7 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
             };
 
             // Parsed once, however many extractions the row declares.
-            let found = match extract::run(matched.extract, &text) {
+            let found = match extract::run(matched.extract, matched.format, &text) {
                 Ok(found) => found,
                 Err(error) => {
                     report.unparsed.push((path, error.to_string()));

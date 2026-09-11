@@ -6,6 +6,7 @@
 #
 # glob          matched against the repository-relative path, forward slashes
 # tool          which tool owns it
+# format        json or toml. Omitted means json.
 # extract       what to read out of it. Omitted means inventory only: the file
 #               is reported and never opened, which matters when it may be a
 #               compiled binary
@@ -68,6 +69,8 @@ source = "https://code.claude.com/docs/en/memory"
 glob = "**/.codex/config.toml"
 tool = "codex"
 kind = "codex"
+format = "toml"
+extract = ["mcp-servers"]
 last_verified = "2026-09-11"
 source = "https://github.com/openai/codex/blob/main/docs/config.md"
 
