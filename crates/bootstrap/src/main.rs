@@ -8,10 +8,10 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use clew_adapter_cli::{Command, parse, report};
-use clew_adapter_fs::StdFileTree;
+use clew_adapter_fs::{StdFileContents, StdFileTree};
 use clew_application::DiscoverSurfaces;
 use clew_domain::ScanPolicy;
-use clew_domain::scan_policy::DEFAULT_MAX_DEPTH;
+use clew_domain::scan_policy::{DEFAULT_MAX_DEPTH, DEFAULT_MAX_FILE_BYTES};
 
 const USAGE: &str = "\
 Discover AI coding agent configuration surfaces in a repository.
@@ -23,15 +23,24 @@ USAGE:
 
 ENVIRONMENT:
     CLEW_MAX_DEPTH      Directory recursion limit
+    CLEW_MAX_FILE_BYTES Largest configuration file read
 
 clew never reads a credential value, and never executes a hook, script, or
 command it discovers. Symbolic links are reported, never followed.";
 
 fn max_depth() -> usize {
-    env::var("CLEW_MAX_DEPTH")
+    env_or("CLEW_MAX_DEPTH", DEFAULT_MAX_DEPTH)
+}
+
+fn max_file_bytes() -> u64 {
+    env_or("CLEW_MAX_FILE_BYTES", DEFAULT_MAX_FILE_BYTES)
+}
+
+fn env_or<T: std::str::FromStr>(name: &str, fallback: T) -> T {
+    env::var(name)
         .ok()
         .and_then(|v| v.parse().ok())
-        .unwrap_or(DEFAULT_MAX_DEPTH)
+        .unwrap_or(fallback)
 }
 
 fn main() -> ExitCode {
@@ -61,8 +70,10 @@ fn main() -> ExitCode {
     }
 
     let tree = StdFileTree::new(&root);
-    let policy = ScanPolicy::with_default_pruning(max_depth());
-    let found = DiscoverSurfaces::new(&tree, &policy).run();
+    let contents = StdFileContents::new(&root);
+    let policy =
+        ScanPolicy::with_default_pruning(max_depth()).with_max_file_bytes(max_file_bytes());
+    let found = DiscoverSurfaces::new(&tree, &contents, &policy).run();
 
     print!("{}", report(&found, &root));
 

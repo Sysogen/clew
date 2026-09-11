@@ -3,8 +3,19 @@
 
 //! Walk a repository and report the agent surfaces it configures.
 
+use clew_domain::ports::file_contents::FileContents;
 use clew_domain::ports::file_tree::{FileTree, FileTreeError};
-use clew_domain::{RepoPath, ScanPolicy, Surface, classify};
+use clew_domain::tools::REGISTRY;
+use clew_domain::{Hook, RepoPath, ScanPolicy, Surface, classify};
+
+/// A hook, and the file that registered it.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct RegisteredHook {
+    /// The configuration file it was read from.
+    pub source: RepoPath,
+    /// The hook itself.
+    pub hook: Hook,
+}
 
 /// What a scan found, and where it could not look.
 ///
@@ -15,28 +26,67 @@ use clew_domain::{RepoPath, ScanPolicy, Surface, classify};
 pub struct DiscoveryReport {
     /// Surfaces found, in path order.
     pub surfaces: Vec<Surface>,
+    /// Hooks the surfaces register, in path order.
+    pub hooks: Vec<RegisteredHook>,
     /// Directories that could not be listed, with the reason.
     pub unreadable: Vec<(RepoPath, FileTreeError)>,
+    /// Surfaces that could not be read or understood, with the reason.
+    pub unparsed: Vec<(RepoPath, String)>,
 }
 
 impl DiscoveryReport {
-    /// Whether every directory in scope was successfully listed.
+    /// Whether everything in scope was read and understood.
     #[must_use]
     pub fn is_complete(&self) -> bool {
-        self.unreadable.is_empty()
+        self.unreadable.is_empty() && self.unparsed.is_empty()
     }
 }
 
 /// Discovers agent surfaces beneath a scan root.
-pub struct DiscoverSurfaces<'a, T: FileTree> {
+pub struct DiscoverSurfaces<'a, T: FileTree, C: FileContents> {
     tree: &'a T,
+    contents: &'a C,
     policy: &'a ScanPolicy,
 }
 
-impl<'a, T: FileTree> DiscoverSurfaces<'a, T> {
-    /// Bind the use case to a file tree and a policy.
-    pub fn new(tree: &'a T, policy: &'a ScanPolicy) -> Self {
-        Self { tree, policy }
+impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
+    /// Bind the use case to its ports and a policy.
+    pub fn new(tree: &'a T, contents: &'a C, policy: &'a ScanPolicy) -> Self {
+        Self {
+            tree,
+            contents,
+            policy,
+        }
+    }
+
+    /// Read every surface and collect the hooks it registers.
+    fn collect_hooks(&self, report: &mut DiscoveryReport) {
+        let paths: Vec<RepoPath> = report.surfaces.iter().map(|s| s.path.clone()).collect();
+        for path in paths {
+            let text = match self.contents.read(&path, self.policy.max_file_bytes()) {
+                Ok(text) => text,
+                Err(error) => {
+                    report.unparsed.push((path, error.to_string()));
+                    continue;
+                }
+            };
+            // One tool owns a path, so ask that one. Asking all of them would
+            // duplicate any failure once a second tool exists.
+            let Some(tool) = REGISTRY.iter().find(|t| t.classify(&path).is_some()) else {
+                continue;
+            };
+            match tool.hooks(&path, &text) {
+                Ok(hooks) => {
+                    for hook in hooks {
+                        report.hooks.push(RegisteredHook {
+                            source: path.clone(),
+                            hook,
+                        });
+                    }
+                }
+                Err(error) => report.unparsed.push((path, error.to_string())),
+            }
+        }
     }
 
     /// Run the scan.
@@ -69,7 +119,10 @@ impl<'a, T: FileTree> DiscoverSurfaces<'a, T> {
         }
 
         report.surfaces.sort();
+        self.collect_hooks(&mut report);
+        report.hooks.sort();
         report.unreadable.sort_by(|a, b| a.0.cmp(&b.0));
+        report.unparsed.sort_by(|a, b| a.0.cmp(&b.0));
         report
     }
 }
@@ -79,6 +132,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use clew_domain::SurfaceKind;
+    use clew_domain::ports::file_contents::{FileContents, FileContentsError};
     use clew_domain::ports::file_tree::{DirEntry, EntryKind};
 
     use super::*;
@@ -120,6 +174,41 @@ mod tests {
         }
     }
 
+    /// In-memory file contents. An absent path reads as an empty JSON object,
+    /// not an empty string, so a traversal-only test does not silently produce
+    /// a parse failure for a settings surface it never populated.
+    #[derive(Default)]
+    struct FakeContents {
+        files: BTreeMap<String, String>,
+        denied: Vec<String>,
+    }
+
+    impl FakeContents {
+        fn file(mut self, at: &str, body: &str) -> Self {
+            self.files.insert(at.to_owned(), body.to_owned());
+            self
+        }
+
+        fn deny(mut self, at: &str) -> Self {
+            self.denied.push(at.to_owned());
+            self
+        }
+    }
+
+    impl FileContents for FakeContents {
+        fn read(&self, path: &RepoPath, _max: u64) -> Result<String, FileContentsError> {
+            let key = path.as_str().to_owned();
+            if self.denied.contains(&key) {
+                return Err(FileContentsError::PermissionDenied);
+            }
+            Ok(self
+                .files
+                .get(&key)
+                .cloned()
+                .unwrap_or_else(|| "{}".to_owned()))
+        }
+    }
+
     fn path(s: &str) -> RepoPath {
         if s.is_empty() {
             return RepoPath::root();
@@ -133,7 +222,7 @@ mod tests {
         let tree = FakeTree::default().dir("", &[("CLAUDE.md", EntryKind::File)]);
         let policy = ScanPolicy::default();
 
-        let report = DiscoverSurfaces::new(&tree, &policy).run();
+        let report = DiscoverSurfaces::new(&tree, &FakeContents::default(), &policy).run();
 
         assert!(report.is_complete());
         assert_eq!(report.surfaces.len(), 1);
@@ -147,11 +236,12 @@ mod tests {
             .dir(".claude", &[("settings.json", EntryKind::File)]);
         let policy = ScanPolicy::default();
 
-        let report = DiscoverSurfaces::new(&tree, &policy).run();
+        let report = DiscoverSurfaces::new(&tree, &FakeContents::default(), &policy).run();
 
         assert_eq!(report.surfaces.len(), 1);
         assert_eq!(report.surfaces[0].path.as_str(), ".claude/settings.json");
         assert_eq!(report.surfaces[0].kind, SurfaceKind::ClaudeCode);
+        assert!(report.is_complete(), "{report:?}");
     }
 
     #[test]
@@ -161,7 +251,7 @@ mod tests {
             .dir("node_modules", &[("CLAUDE.md", EntryKind::File)]);
         let policy = ScanPolicy::default();
 
-        let report = DiscoverSurfaces::new(&tree, &policy).run();
+        let report = DiscoverSurfaces::new(&tree, &FakeContents::default(), &policy).run();
 
         assert!(report.surfaces.is_empty());
     }
@@ -173,7 +263,7 @@ mod tests {
             .dir("escape", &[("CLAUDE.md", EntryKind::File)]);
         let policy = ScanPolicy::default();
 
-        let report = DiscoverSurfaces::new(&tree, &policy).run();
+        let report = DiscoverSurfaces::new(&tree, &FakeContents::default(), &policy).run();
 
         assert!(report.surfaces.is_empty());
         assert!(report.is_complete());
@@ -186,7 +276,7 @@ mod tests {
             .deny("secret");
         let policy = ScanPolicy::default();
 
-        let report = DiscoverSurfaces::new(&tree, &policy).run();
+        let report = DiscoverSurfaces::new(&tree, &FakeContents::default(), &policy).run();
 
         assert!(!report.is_complete());
         assert_eq!(report.unreadable.len(), 1);
@@ -207,7 +297,7 @@ mod tests {
             .deny("secret");
         let policy = ScanPolicy::default();
 
-        let report = DiscoverSurfaces::new(&tree, &policy).run();
+        let report = DiscoverSurfaces::new(&tree, &FakeContents::default(), &policy).run();
 
         assert_eq!(report.surfaces.len(), 1);
         assert_eq!(report.unreadable.len(), 1);
@@ -228,9 +318,74 @@ mod tests {
             .dir("a", &[("AGENTS.md", EntryKind::File)]);
         let policy = ScanPolicy::default();
 
-        let report = DiscoverSurfaces::new(&tree, &policy).run();
+        let report = DiscoverSurfaces::new(&tree, &FakeContents::default(), &policy).run();
 
         let paths: Vec<&str> = report.surfaces.iter().map(|s| s.path.as_str()).collect();
         assert_eq!(paths, vec!["CLAUDE.md", "a/AGENTS.md", "z/AGENTS.md"]);
+    }
+
+    #[test]
+    fn reports_the_hooks_a_settings_file_registers() {
+        let tree = FakeTree::default()
+            .dir("", &[(".claude", EntryKind::Directory)])
+            .dir(".claude", &[("settings.json", EntryKind::File)]);
+        let contents = FakeContents::default().file(
+            ".claude/settings.json",
+            r#"{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"x.sh"}]}]}}"#,
+        );
+        let policy = ScanPolicy::default();
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &policy).run();
+
+        assert_eq!(report.hooks.len(), 1, "{report:?}");
+        assert_eq!(report.hooks[0].source.as_str(), ".claude/settings.json");
+        assert_eq!(report.hooks[0].hook.event, "SessionStart");
+        assert_eq!(report.hooks[0].hook.command, "x.sh");
+        assert!(report.is_complete());
+    }
+
+    #[test]
+    fn a_surface_with_no_hooks_yields_none() {
+        let tree = FakeTree::default().dir("", &[("CLAUDE.md", EntryKind::File)]);
+        let contents = FakeContents::default().file("CLAUDE.md", "# instructions");
+        let policy = ScanPolicy::default();
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &policy).run();
+
+        assert_eq!(report.surfaces.len(), 1);
+        assert!(report.hooks.is_empty());
+        assert!(report.is_complete());
+    }
+
+    #[test]
+    fn an_unreadable_surface_is_reported_not_swallowed() {
+        let tree = FakeTree::default()
+            .dir("", &[(".claude", EntryKind::Directory)])
+            .dir(".claude", &[("settings.json", EntryKind::File)]);
+        let contents = FakeContents::default().deny(".claude/settings.json");
+        let policy = ScanPolicy::default();
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &policy).run();
+
+        assert_eq!(report.surfaces.len(), 1, "the surface is still found");
+        assert_eq!(report.unparsed.len(), 1);
+        assert!(
+            !report.is_complete(),
+            "a scan that could not read must say so"
+        );
+    }
+
+    #[test]
+    fn malformed_settings_are_reported_not_swallowed() {
+        let tree = FakeTree::default()
+            .dir("", &[(".claude", EntryKind::Directory)])
+            .dir(".claude", &[("settings.json", EntryKind::File)]);
+        let contents = FakeContents::default().file(".claude/settings.json", "{not json");
+        let policy = ScanPolicy::default();
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &policy).run();
+
+        assert_eq!(report.unparsed.len(), 1);
+        assert!(!report.is_complete());
     }
 }

