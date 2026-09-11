@@ -30,6 +30,10 @@ pub enum SurfaceKind {
     DevContainer,
     /// A natural-language instruction file read by an agent.
     InstructionFile,
+    /// A script an agent hook can invoke.
+    HookScript,
+    /// A skill definition an agent loads.
+    Skill,
 }
 
 impl SurfaceKind {
@@ -48,6 +52,8 @@ impl SurfaceKind {
             Self::Copilot => "Copilot",
             Self::DevContainer => "devcontainer",
             Self::InstructionFile => "instruction file",
+            Self::HookScript => "hook script",
+            Self::Skill => "skill",
         }
     }
 }

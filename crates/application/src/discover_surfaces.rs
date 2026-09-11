@@ -63,17 +63,21 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
     fn collect_hooks(&self, report: &mut DiscoveryReport) {
         let paths: Vec<RepoPath> = report.surfaces.iter().map(|s| s.path.clone()).collect();
         for path in paths {
+            // One tool owns a path, so ask that one. Asking all of them would
+            // duplicate any failure once a second tool exists.
+            let Some(tool) = REGISTRY.iter().find(|t| t.classify(&path).is_some()) else {
+                continue;
+            };
+            if !tool.reads(&path) {
+                continue;
+            }
+
             let text = match self.contents.read(&path, self.policy.max_file_bytes()) {
                 Ok(text) => text,
                 Err(error) => {
                     report.unparsed.push((path, error.to_string()));
                     continue;
                 }
-            };
-            // One tool owns a path, so ask that one. Asking all of them would
-            // duplicate any failure once a second tool exists.
-            let Some(tool) = REGISTRY.iter().find(|t| t.classify(&path).is_some()) else {
-                continue;
             };
             match tool.hooks(&path, &text) {
                 Ok(hooks) => {
@@ -387,5 +391,42 @@ mod tests {
 
         assert_eq!(report.unparsed.len(), 1);
         assert!(!report.is_complete());
+    }
+
+    #[test]
+    fn a_surface_no_tool_reads_is_never_opened() {
+        let tree = FakeTree::default()
+            .dir("", &[(".claude", EntryKind::Directory)])
+            .dir(".claude", &[("hooks", EntryKind::Directory)])
+            .dir(".claude/hooks", &[("compiled", EntryKind::File)]);
+        // Denied on read, so any attempt to open it shows up as unparsed.
+        let contents = FakeContents::default().deny(".claude/hooks/compiled");
+        let policy = ScanPolicy::default();
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &policy).run();
+
+        assert_eq!(report.surfaces.len(), 1, "the hook script is still found");
+        assert!(
+            report.unparsed.is_empty(),
+            "a hook script must not be opened: {report:?}"
+        );
+        assert!(report.is_complete());
+    }
+
+    #[test]
+    fn a_skill_is_found_without_being_read() {
+        let tree = FakeTree::default()
+            .dir("", &[(".claude", EntryKind::Directory)])
+            .dir(".claude", &[("skills", EntryKind::Directory)])
+            .dir(".claude/skills", &[("prose", EntryKind::Directory)])
+            .dir(".claude/skills/prose", &[("SKILL.md", EntryKind::File)]);
+        let contents = FakeContents::default().deny(".claude/skills/prose/SKILL.md");
+        let policy = ScanPolicy::default();
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &policy).run();
+
+        assert_eq!(report.surfaces.len(), 1);
+        assert!(report.unparsed.is_empty());
+        assert!(report.is_complete());
     }
 }
