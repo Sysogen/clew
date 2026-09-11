@@ -39,6 +39,18 @@ pub fn report(report: &DiscoveryReport, root: &str) -> String {
                 );
             }
 
+            for declared in report.servers.iter().filter(|d| d.source == surface.path) {
+                let _ = writeln!(
+                    out,
+                    "  server \"{}\": {}",
+                    declared.server.name,
+                    declared.server.invocation()
+                );
+                if !declared.server.env.is_empty() {
+                    let _ = writeln!(out, "    reads {}", declared.server.env.join(", "));
+                }
+            }
+
             // Summarised, not listed: a settings file routinely pre-approves
             // dozens, and an unscoped grant is the one worth reading.
             let granted: Vec<_> = report
@@ -136,6 +148,7 @@ mod tests {
             ],
             hooks: vec![],
             permissions: vec![],
+            servers: vec![],
             unreadable: vec![],
             unparsed: vec![],
         };
@@ -155,6 +168,7 @@ mod tests {
             surfaces: vec![surface("CLAUDE.md", SurfaceKind::InstructionFile)],
             hooks: vec![],
             permissions: vec![],
+            servers: vec![],
             unreadable: vec![(
                 RepoPath::root().join("secret"),
                 FileTreeError::PermissionDenied,
@@ -175,6 +189,7 @@ mod tests {
             surfaces: vec![surface("CLAUDE.md", SurfaceKind::InstructionFile)],
             hooks: vec![],
             permissions: vec![],
+            servers: vec![],
             unreadable: vec![],
             unparsed: vec![],
         };
@@ -188,6 +203,7 @@ mod tests {
             surfaces: vec![],
             hooks: vec![],
             permissions: vec![],
+            servers: vec![],
             unreadable: vec![(RepoPath::root().join("a"), FileTreeError::NotFound)],
             unparsed: vec![],
         };
@@ -197,6 +213,7 @@ mod tests {
             surfaces: vec![],
             hooks: vec![],
             permissions: vec![],
+            servers: vec![],
             unreadable: vec![
                 (RepoPath::root().join("a"), FileTreeError::NotFound),
                 (RepoPath::root().join("b"), FileTreeError::NotFound),
@@ -220,6 +237,7 @@ mod tests {
                 },
             }],
             permissions: vec![],
+            servers: vec![],
             unreadable: vec![],
             unparsed: vec![],
         };
@@ -241,6 +259,7 @@ mod tests {
             surfaces: vec![surface(".claude/settings.json", SurfaceKind::ClaudeCode)],
             hooks: vec![],
             permissions: vec![],
+            servers: vec![],
             unreadable: vec![],
             unparsed: vec![(
                 RepoPath::root().join(".claude").join("settings.json"),
@@ -273,6 +292,7 @@ mod tests {
                 granted("Bash(cargo build:*)"),
                 granted("WebSearch"),
             ],
+            servers: vec![],
             unreadable: vec![],
             unparsed: vec![],
         };
