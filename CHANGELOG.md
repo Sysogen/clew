@@ -73,6 +73,13 @@ repository.
 
 ### Security
 
+- Never record a credential written into an MCP argument or url. A value behind
+  a flag naming a credential, one written as `key=value`, and one carrying an
+  issuer's prefix are replaced by `<redacted>`; a url keeps its host and path
+  and drops its userinfo and query. Only the names of environment variables
+  were held back before, so a token passed as `--api-key` reached the report.
+  The value is dropped as the file is read, so nothing downstream holds one.
+
 - Never follow a symbolic link. A link is reported and not traversed, so a scan
   cannot be walked out of its own root.
 
