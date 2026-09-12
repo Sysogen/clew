@@ -20,6 +20,8 @@ pub enum SurfaceKind {
     VsCode,
     /// Gemini CLI configuration.
     Gemini,
+    /// Kiro configuration, steering, or hooks.
+    Kiro,
     /// Continue configuration.
     Continue,
     /// Cline configuration.
@@ -49,6 +51,7 @@ impl SurfaceKind {
             "cursor" => Self::Cursor,
             "vscode" => Self::VsCode,
             "gemini" => Self::Gemini,
+            "kiro" => Self::Kiro,
             "continue" => Self::Continue,
             "cline" => Self::Cline,
             "aider" => Self::Aider,
@@ -71,6 +74,7 @@ impl SurfaceKind {
             Self::Cursor => "Cursor",
             Self::VsCode => "VS Code",
             Self::Gemini => "Gemini CLI",
+            Self::Kiro => "Kiro",
             Self::Continue => "Continue",
             Self::Cline => "Cline",
             Self::Aider => "Aider",

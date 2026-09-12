@@ -511,6 +511,40 @@ mod tests {
         assert_eq!(report.servers.len(), 3, "the servers are still reported");
     }
 
+    /// Kiro's own configuration example, kept verbatim. Its env values are
+    /// hard-coded credentials in the documentation itself, so this also holds
+    /// the line on what a report may carry.
+    #[test]
+    fn a_kiro_config_reports_servers_without_their_secrets() {
+        let tree = FakeTree::default()
+            .dir("", &[(".kiro", EntryKind::Directory)])
+            .dir(".kiro", &[("settings", EntryKind::Directory)])
+            .dir(".kiro/settings", &[("mcp.json", EntryKind::File)]);
+        let contents = FakeContents::default().file(
+            ".kiro/settings/mcp.json",
+            r#"{"mcpServers":{
+                 "local":{"command":"uvx","args":["mcp-server-fetch"],
+                          "env":{"ENV_VAR1":"hard-coded-variable"},
+                          "autoApprove":["*"]},
+                 "remote":{"url":"https://endpoint.to.connect.to"}}}"#,
+        );
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &ScanPolicy::default()).run();
+
+        assert_eq!(report.servers.len(), 2, "{report:?}");
+        assert!(
+            report
+                .servers
+                .iter()
+                .any(|s| s.server.invocation() == "uvx mcp-server-fetch")
+        );
+        assert!(
+            !format!("{report:?}").contains("hard-coded-variable"),
+            "a value in env is a credential whatever the tool calls it"
+        );
+        assert!(report.is_complete());
+    }
+
     fn skill_tree() -> FakeTree {
         FakeTree::default()
             .dir("", &[(".claude", EntryKind::Directory)])
