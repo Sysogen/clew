@@ -37,6 +37,13 @@ repository.
 
 ### Added
 
+- Find `.env` and `.env.*`, reported and never opened: the file is credential
+  values, and clew records none. `.envrc` is a direnv script and not matched.
+
+- Find Cline rules in `.clinerules`, and the `GEMINI.md` and `AGENT.md`
+  instruction files. The shared names are matched last, so a rules directory
+  holding one keeps its own row.
+
 - Find Zed project settings, skills, and `.rules`. Its MCP servers sit under
   `context_servers`, so that key is read alongside the two common spellings.
   Zed writes JSON with `//` comments, so that row is read as `jsonc`.

@@ -328,6 +328,11 @@ mod tests {
             (".windsurfrules", SurfaceKind::Windsurf),
             (".continue/config.json", SurfaceKind::Continue),
             ("cline_mcp_settings.json", SurfaceKind::Cline),
+            (".clinerules/coding.md", SurfaceKind::Cline),
+            ("GEMINI.md", SurfaceKind::InstructionFile),
+            ("AGENT.md", SurfaceKind::InstructionFile),
+            (".env", SurfaceKind::EnvFile),
+            (".env.local", SurfaceKind::EnvFile),
             (".aider.conf.yml", SurfaceKind::Aider),
             (".devcontainer/devcontainer.json", SurfaceKind::DevContainer),
         ];
@@ -533,6 +538,69 @@ mod tests {
             shipped()
                 .lookup(&p(".agents/skills/team/review/SKILL.md"))
                 .is_none()
+        );
+    }
+
+    /// An env file is nothing but values, and clew never reads one. The row
+    /// exists so a scan says the credentials are there.
+    #[test]
+    fn env_files_are_matched_and_never_read() {
+        for path in [".env", ".env.local", ".env.production", "api/.env"] {
+            let m = shipped()
+                .lookup(&p(path))
+                .unwrap_or_else(|| panic!("{path}"));
+            assert_eq!(m.kind, SurfaceKind::EnvFile, "{path}");
+            assert!(m.extract.is_empty(), "{path} must never be opened");
+        }
+    }
+
+    /// `.envrc` is a direnv script, not an env file, and a directory named
+    /// `.env` holds paths rather than values.
+    #[test]
+    fn the_env_rows_stop_at_env_files() {
+        assert!(shipped().lookup(&p(".envrc")).is_none());
+        assert!(shipped().lookup(&p(".env/sub/file")).is_none());
+        assert!(
+            shipped()
+                .lookup(&p("services/.env.local/README.md"))
+                .is_none(),
+            "a directory named .env.local holds paths, not values"
+        );
+        assert!(shipped().lookup(&p("environment.txt")).is_none());
+    }
+
+    #[test]
+    fn cline_reads_markdown_and_text_in_its_rules_directory() {
+        for path in [
+            ".clinerules/a.md",
+            ".clinerules/b.txt",
+            "api/.clinerules/c/d.md",
+        ] {
+            assert_eq!(
+                shipped().lookup(&p(path)).map(|m| m.kind),
+                Some(SurfaceKind::Cline),
+                "{path}"
+            );
+        }
+        assert!(
+            shipped().lookup(&p(".clinerules/notes.json")).is_none(),
+            "Cline processes .md and .txt there, nothing else"
+        );
+    }
+
+    /// A rules directory may hold a file named for another tool. The specific
+    /// row must win, which is why the shared names are listed last.
+    #[test]
+    fn a_shared_name_inside_a_rules_directory_keeps_its_own_row() {
+        assert_eq!(
+            shipped()
+                .lookup(&p(".devin/rules/AGENT.md"))
+                .map(|m| m.kind),
+            Some(SurfaceKind::Windsurf)
+        );
+        assert_eq!(
+            shipped().lookup(&p("AGENT.md")).map(|m| m.kind),
+            Some(SurfaceKind::InstructionFile)
         );
     }
 

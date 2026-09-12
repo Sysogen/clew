@@ -232,6 +232,13 @@ source = "https://docs.continue.dev/reference"
 # extract: the server key here is not `mcpServers`; shape unverified
 
 [[surface]]
+glob = "**/.clinerules/**/*.{md,txt}"
+tool = "cline"
+kind = "cline"
+last_verified = "2026-09-12"
+source = "https://docs.cline.bot/features/cline-rules"
+
+[[surface]]
 glob = "**/cline_mcp_settings.json"
 tool = "cline"
 kind = "cline"
@@ -252,3 +259,35 @@ tool = "devcontainer"
 kind = "devcontainer"
 last_verified = "2026-09-11"
 source = "https://containers.dev/implementors/json_reference/"
+
+# --- Read by more than one tool ----------------------------------------------
+#
+# Last, so a rules directory holding one of these keeps its own row.
+
+[[surface]]
+glob = "**/GEMINI.md"
+tool = "gemini-cli"
+kind = "instruction"
+last_verified = "2026-09-12"
+source = "https://github.com/google-gemini/gemini-cli/blob/main/docs/reference/configuration.md"
+
+[[surface]]
+glob = "**/AGENT.md"
+tool = "zed"
+kind = "instruction"
+last_verified = "2026-09-12"
+source = "https://github.com/zed-industries/zed/blob/main/docs/src/ai/rules.md"
+
+[[surface]]
+glob = "**/.env"
+tool = "any"
+kind = "env"
+last_verified = "2026-09-12"
+source = "https://code.claude.com/docs/en/settings"
+
+[[surface]]
+glob = "**/.env.*"
+tool = "any"
+kind = "env"
+last_verified = "2026-09-12"
+source = "https://code.claude.com/docs/en/settings"
