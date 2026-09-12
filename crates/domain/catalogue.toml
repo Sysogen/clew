@@ -66,9 +66,6 @@ last_verified = "2026-09-11"
 source = "https://code.claude.com/docs/en/memory"
 
 # --- Kiro -------------------------------------------------------------------
-#
-# Ahead of Codex because Kiro keeps AGENTS.md inside its steering directory,
-# and the first matching row wins.
 
 [[surface]]
 glob = "**/.kiro/settings/mcp.json"
@@ -78,7 +75,6 @@ extract = ["mcp-servers"]
 last_verified = "2026-09-12"
 source = "https://kiro.dev/docs/mcp/configuration/"
 
-# Frontmatter inclusion = "always" puts the file in every interaction.
 [[surface]]
 glob = "**/.kiro/steering/**/*.md"
 tool = "kiro"
@@ -86,7 +82,6 @@ kind = "kiro"
 last_verified = "2026-09-12"
 source = "https://kiro.dev/docs/steering/"
 
-# Fires on an event with no prompt, running a shell command or injecting one.
 [[surface]]
 glob = "**/.kiro/hooks/**/*.json"
 tool = "kiro"
@@ -115,7 +110,6 @@ source = "https://agents.md"
 
 # --- Gemini CLI -------------------------------------------------------------
 
-# Project settings. The user-level file sits outside any repository.
 [[surface]]
 glob = "**/.gemini/settings.json"
 tool = "gemini-cli"
@@ -152,7 +146,6 @@ source = "https://cursor.com/help/customization/rules"
 
 # --- VS Code and Copilot ----------------------------------------------------
 
-# A task may set runOn = "folderOpen", which runs it when the folder opens.
 [[surface]]
 glob = "**/.vscode/tasks.json"
 tool = "vscode"
