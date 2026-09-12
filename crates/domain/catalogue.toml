@@ -168,6 +168,58 @@ kind = "copilot"
 last_verified = "2026-09-12"
 source = "https://docs.github.com/en/copilot/how-tos/copilot-on-github/customize-copilot/add-custom-instructions/add-repository-instructions"
 
+# --- Zed --------------------------------------------------------------------
+
+[[surface]]
+glob = "**/.zed/settings.json"
+tool = "zed"
+kind = "zed"
+extract = ["mcp-servers"]
+last_verified = "2026-09-12"
+source = "https://github.com/zed-industries/zed/blob/main/docs/src/ai/mcp.md"
+
+# Zed's frontmatter is name, description, and disable-model-invocation. No
+# grant to read, so nothing is claimed.
+[[surface]]
+glob = "**/.agents/skills/**/SKILL.md"
+tool = "zed"
+kind = "zed"
+last_verified = "2026-09-12"
+source = "https://github.com/zed-industries/zed/blob/main/docs/src/ai/skills.md"
+
+[[surface]]
+glob = "**/.rules"
+tool = "zed"
+kind = "zed"
+last_verified = "2026-09-12"
+source = "https://github.com/zed-industries/zed/blob/main/docs/src/ai/instructions.md"
+
+# --- Windsurf ---------------------------------------------------------------
+#
+# Only the rules are here. Its MCP configuration is documented at
+# ~/.codeium/windsurf/mcp_config.json, which no repository contains.
+
+[[surface]]
+glob = "**/.devin/rules/**/*.md"
+tool = "windsurf"
+kind = "windsurf"
+last_verified = "2026-09-12"
+source = "https://docs.windsurf.com/windsurf/cascade/memories"
+
+[[surface]]
+glob = "**/.windsurf/rules/**/*.md"
+tool = "windsurf"
+kind = "windsurf"
+last_verified = "2026-09-12"
+source = "https://docs.windsurf.com/windsurf/cascade/memories"
+
+[[surface]]
+glob = "**/.windsurfrules"
+tool = "windsurf"
+kind = "windsurf"
+last_verified = "2026-09-12"
+source = "https://docs.windsurf.com/windsurf/cascade/memories"
+
 # --- Others -----------------------------------------------------------------
 
 [[surface]]

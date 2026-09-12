@@ -37,6 +37,13 @@ repository.
 
 ### Added
 
+- Find Zed project settings, skills, and `.rules`. Its MCP servers sit under
+  `context_servers`, so that key is read alongside the two common spellings.
+
+- Find Windsurf rules: `.devin/rules`, the legacy `.windsurf/rules`, and the
+  legacy `.windsurfrules`. Its MCP configuration lives outside a repository
+  and so has no row.
+
 - Read Kiro agent hooks, which list entries naming their own trigger rather
   than keying a map by event. Both shapes are read from the same key.
   An injected prompt is reported alongside a shell command, since both fire

@@ -324,7 +324,7 @@ fn mcp_servers(root: &serde_json::Value) -> Vec<McpServer> {
     // Claude Code and Cursor write mcpServers; Codex writes mcp_servers. A file
     // carrying both is odd, but reading only the first would hide servers, so
     // both tables are read and identical entries collapsed.
-    let mut found: Vec<McpServer> = ["mcpServers", "mcp_servers"]
+    let mut found: Vec<McpServer> = ["mcpServers", "mcp_servers", "context_servers"]
         .iter()
         .filter_map(|key| root.get(key)?.as_object())
         .flatten()
@@ -1051,6 +1051,49 @@ env = { DATABASE_URL = "postgres://u:hunter2@h/d", PGPORT = "5432" }
         assert!(servers_of(r#"{"mcpServers":{"a":{"url":"  "}}}"#).is_empty());
         assert!(servers_of(r#"{"mcpServers":{"a":{"command":""}}}"#).is_empty());
         assert!(servers_of(r#"{"mcpServers":{"a":{"command":" "}}}"#).is_empty());
+    }
+
+    /// Zed's own example, kept verbatim. It names the key `context_servers`,
+    /// so reading only the two common spellings would report none of them.
+    #[test]
+    fn reads_zeds_context_servers() {
+        let found = servers_of(
+            r#"{"context_servers":{
+                 "local-mcp-server":{"command":"some-command","args":["arg-1","arg-2"],"env":{}},
+                 "remote-mcp-server":{"url":"https://example.com/mcp",
+                                      "headers":{"Authorization":"Bearer SECRETTOKEN"}}}}"#,
+        );
+
+        assert_eq!(found.len(), 2, "{found:?}");
+        let by = |name: &str| {
+            found
+                .iter()
+                .find(|s| s.name == name)
+                .map(McpServer::invocation)
+        };
+        assert_eq!(
+            by("local-mcp-server"),
+            Some("some-command arg-1 arg-2".to_owned())
+        );
+        assert_eq!(
+            by("remote-mcp-server"),
+            Some("https://example.com/mcp".to_owned())
+        );
+        assert!(
+            !format!("{found:?}").contains("SECRETTOKEN"),
+            "a header is not read, so its token cannot escape: {found:?}"
+        );
+    }
+
+    /// Zed nests the same key under an agent profile to toggle tools. Those
+    /// entries name no command or `url`, so they are not servers.
+    #[test]
+    fn a_nested_context_servers_block_declares_no_server() {
+        let found = servers_of(
+            r#"{"agent":{"profiles":{"ask":{"context_servers":{"container-use":{"tools":{"grep":true}}}}}}}"#,
+        );
+
+        assert!(found.is_empty(), "{found:?}");
     }
 
     #[test]

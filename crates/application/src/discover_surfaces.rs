@@ -578,6 +578,27 @@ mod tests {
         assert!(report.is_complete());
     }
 
+    #[test]
+    fn a_zed_config_reports_its_context_servers() {
+        let tree = FakeTree::default()
+            .dir("", &[(".zed", EntryKind::Directory)])
+            .dir(".zed", &[("settings.json", EntryKind::File)]);
+        let contents = FakeContents::default().file(
+            ".zed/settings.json",
+            r#"{"tab_size":2,
+                "context_servers":{"pg":{"command":"npx","args":["-y","server-postgres"]}}}"#,
+        );
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &ScanPolicy::default()).run();
+
+        assert_eq!(report.servers.len(), 1, "{report:?}");
+        assert_eq!(
+            report.servers[0].server.invocation(),
+            "npx -y server-postgres"
+        );
+        assert!(report.is_complete());
+    }
+
     fn skill_tree() -> FakeTree {
         FakeTree::default()
             .dir("", &[(".claude", EntryKind::Directory)])

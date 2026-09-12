@@ -315,6 +315,12 @@ mod tests {
             (".vscode/mcp.json", SurfaceKind::VsCode),
             (".vscode/tasks.json", SurfaceKind::VsCode),
             (".github/copilot-instructions.md", SurfaceKind::Copilot),
+            (".zed/settings.json", SurfaceKind::Zed),
+            (".agents/skills/a/SKILL.md", SurfaceKind::Zed),
+            (".rules", SurfaceKind::Zed),
+            (".devin/rules/a.md", SurfaceKind::Windsurf),
+            (".windsurf/rules/a.md", SurfaceKind::Windsurf),
+            (".windsurfrules", SurfaceKind::Windsurf),
             (".continue/config.json", SurfaceKind::Continue),
             ("cline_mcp_settings.json", SurfaceKind::Cline),
             (".aider.conf.yml", SurfaceKind::Aider),
@@ -340,6 +346,7 @@ mod tests {
             (".mcp.json", servers),
             (".gemini/settings.json", servers),
             (".kiro/settings/mcp.json", servers),
+            (".zed/settings.json", servers),
             (".kiro/hooks/lint-on-save.json", &[Extraction::Hooks][..]),
             (".cursor/mcp.json", servers),
             ("cline_mcp_settings.json", servers),
@@ -502,6 +509,38 @@ mod tests {
                 "{path}"
             );
         }
+    }
+
+    #[test]
+    fn windsurf_rules_match_in_both_directories_and_at_the_root() {
+        for path in [
+            ".devin/rules/style.md",
+            ".windsurf/rules/style.md",
+            "packages/api/.devin/rules/nested/a.md",
+            ".windsurfrules",
+        ] {
+            assert_eq!(
+                shipped().lookup(&p(path)).map(|m| m.kind),
+                Some(SurfaceKind::Windsurf),
+                "{path}"
+            );
+        }
+    }
+
+    #[test]
+    fn zed_skills_are_inventory_while_claude_skills_are_read() {
+        let zed = shipped()
+            .lookup(&p(".agents/skills/a/SKILL.md"))
+            .expect("match");
+        assert!(
+            zed.extract.is_empty(),
+            "Zed documents no grant in its frontmatter"
+        );
+
+        let claude = shipped()
+            .lookup(&p(".claude/skills/a/SKILL.md"))
+            .expect("match");
+        assert_eq!(claude.extract, &[Extraction::Permissions]);
     }
 
     /// The two rows overlap, and only their order separates them.
