@@ -69,9 +69,9 @@ pub enum CatalogueError {
         /// The scope as written.
         scope: String,
     },
-    /// A home row whose glob does not begin with a directory name.
-    #[error("row {row} is a home row and must start with a directory: {glob:?}")]
-    UnanchoredHomeRow {
+    /// A row outside a repository whose glob does not begin with a directory.
+    #[error("row {row} is scanned from a directory it must name: {glob:?}")]
+    UnanchoredRow {
         /// Which row, counting from zero.
         row: usize,
         /// The glob as written.
@@ -224,15 +224,15 @@ impl Catalogue {
                 })?;
             // A home scan enters only the directories its rows name, so the
             // first segment has to be one.
-            if scope == Scope::Home
-                && rule.glob.split('/').next().is_none_or(|first| {
-                    first.is_empty()
-                        || first == "."
-                        || first == ".."
-                        || first.contains(['*', '?', '[', '{'])
-                })
-            {
-                return Err(CatalogueError::UnanchoredHomeRow {
+            let mut segments = rule.glob.split('/');
+            let anchored = segments
+                .next()
+                .is_some_and(|first| !first.is_empty() && !first.contains(['*', '?', '[', '{']));
+            // A traversal segment anywhere resolves outside the root the scan
+            // was given, so none is allowed at any position.
+            let walks_out = rule.glob.split('/').any(|s| s == "." || s == "..");
+            if scope != Scope::Repository && (!anchored || walks_out) {
+                return Err(CatalogueError::UnanchoredRow {
                     row,
                     glob: rule.glob.clone(),
                 });
@@ -293,18 +293,19 @@ impl Catalogue {
             .collect()
     }
 
-    /// The directories a home scan starts from, in order and without repeats.
+    /// The directories a scan of `scope` starts from, in order, without
+    /// repeats.
     ///
-    /// Walking a whole home directory would cost far more than it finds, so a
-    /// home row is anchored and only the directories they name are entered.
+    /// Walking a whole home directory or a whole machine would cost far more
+    /// than it finds, so only the directories the rows name are entered.
     #[must_use]
-    pub fn home_roots(&self) -> Vec<&str> {
+    pub fn roots_in(&self, scope: Scope) -> Vec<&str> {
         let mut roots: Vec<&str> = Vec::new();
-        for (rule, scope) in self.rules.iter().zip(&self.scopes) {
-            if *scope != Scope::Home {
+        for (rule, wanted) in self.rules.iter().zip(&self.scopes) {
+            if *wanted != scope {
                 continue;
             }
-            let root = rule.glob.split('/').next().unwrap_or(&rule.glob);
+            let root = literal_prefix(&rule.glob);
             if !roots.contains(&root) {
                 roots.push(root);
             }
@@ -320,6 +321,26 @@ impl Catalogue {
 }
 
 /// Whether `value` is a calendar day written `YYYY-MM-DD`.
+/// The directory a glob is rooted at: its leading literal segments, without a
+/// trailing filename.
+///
+/// `etc/devin/rules/**/*.md` is entered at `etc/devin/rules`, not at `etc`, so
+/// a scan reads what the row names rather than the rest of the machine.
+fn literal_prefix(glob: &str) -> &str {
+    let wild = |s: &&str| s.contains(['*', '?', '[', '{']);
+    let segments: Vec<&str> = glob.split('/').collect();
+    let mut keep = segments.iter().take_while(|s| !wild(s)).count();
+    // Every segment is literal, so the last one names the file itself.
+    if keep == segments.len() {
+        keep = keep.saturating_sub(1);
+    }
+    if keep == 0 {
+        return glob;
+    }
+    let end = segments[..keep].iter().map(|s| s.len() + 1).sum::<usize>() - 1;
+    &glob[..end]
+}
+
 fn is_iso_date(value: &str) -> bool {
     let parts: Vec<&str> = value.split('-').collect();
     let [y, m, d] = parts[..] else { return false };
@@ -712,7 +733,7 @@ mod tests {
     /// A home row names the directory the scan enters. A traversal segment
     /// would send it above the home directory, or into all of it.
     #[test]
-    fn a_home_row_cannot_walk_out_of_the_home_directory() {
+    fn a_row_outside_a_repository_cannot_walk_out_of_its_root() {
         for glob in ["../outside/**", "./**", ".", ".."] {
             let error = Catalogue::load(&format!(
                 r#"version = 1
@@ -727,17 +748,86 @@ mod tests {
             ))
             .expect_err("{glob} must not load");
             assert!(
-                matches!(error, CatalogueError::UnanchoredHomeRow { .. }),
+                matches!(error, CatalogueError::UnanchoredRow { .. }),
                 "{glob}: {error:?}"
             );
         }
     }
 
     #[test]
-    fn a_home_scan_enters_only_the_directories_its_rows_name() {
+    fn a_scan_enters_only_the_directories_its_rows_name() {
         assert_eq!(
-            shipped().home_roots(),
-            vec![".claude", ".gemini", ".kiro", ".codeium", ".agents"]
+            shipped().roots_in(Scope::Home),
+            vec![
+                ".claude",
+                ".gemini",
+                ".kiro/settings",
+                ".kiro/steering",
+                ".codeium/windsurf",
+                ".codeium/windsurf/memories",
+                ".agents/skills",
+                ".agents"
+            ]
+        );
+        assert_eq!(
+            shipped().roots_in(Scope::System),
+            vec!["etc/devin/rules", "etc/windsurf/rules"],
+            "a system scan reads what the rows name, not the rest of /etc"
+        );
+    }
+
+    /// A row must name a directory the scan can enter, and a traversal segment
+    /// anywhere resolves outside the root the scan was given.
+    #[test]
+    fn a_row_outside_a_repository_cannot_reach_past_its_root() {
+        for glob in ["foo/../../outside/**/*.md", "a/./b/**/*.md", "a/../b"] {
+            let error = Catalogue::load(&format!(
+                r#"version = 1
+                   [[surface]]
+                   scope = "home"
+                   glob = "{glob}"
+                   tool = "x"
+                   kind = "skill"
+                   last_verified = "2026-09-12"
+                   source = "https://example.invalid"
+                "#
+            ))
+            .expect_err("must not load");
+            assert!(
+                matches!(error, CatalogueError::UnanchoredRow { .. }),
+                "{glob}: {error:?}"
+            );
+        }
+    }
+
+    /// Policy an administrator deploys is not in any repository and not in any
+    /// home directory, and nobody being scanned chose it.
+    #[test]
+    fn each_system_surface_keeps_its_own_kind() {
+        let expected = [
+            ("etc/devin/rules/policy.md", SurfaceKind::Windsurf),
+            ("etc/windsurf/rules/policy.md", SurfaceKind::Windsurf),
+        ];
+
+        assert_eq!(
+            expected.len(),
+            shipped().rules_in(Scope::System).len(),
+            "every system row needs a case here"
+        );
+
+        for (path, kind) in expected {
+            let m = shipped()
+                .lookup_in(&p(path), Scope::System)
+                .unwrap_or_else(|| panic!("{path} matched no system row"));
+            assert_eq!(m.kind, kind, "{path}");
+            assert!(m.extract.is_empty(), "{path} is inventory");
+        }
+
+        assert!(
+            shipped()
+                .lookup_in(&p("etc/devin/rules/policy.md"), Scope::Home)
+                .is_none(),
+            "a system path is not a home row"
         );
     }
 

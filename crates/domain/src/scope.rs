@@ -15,6 +15,8 @@ pub enum Scope {
     Repository,
     /// The home directory of whoever runs the agent.
     Home,
+    /// The machine, where an administrator deploys policy nobody can edit.
+    System,
 }
 
 impl Scope {
@@ -24,6 +26,7 @@ impl Scope {
         Some(match name {
             "repository" => Self::Repository,
             "home" => Self::Home,
+            "system" => Self::System,
             _ => return None,
         })
     }
@@ -40,7 +43,14 @@ mod tests {
 
     #[test]
     fn an_unknown_scope_is_not_guessed_at() {
-        assert_eq!(Scope::from_catalogue("system"), None);
+        assert_eq!(Scope::from_catalogue("machine"), None);
         assert_eq!(Scope::from_catalogue("Home"), None);
+    }
+
+    #[test]
+    fn each_tree_has_its_own_name() {
+        assert_eq!(Scope::from_catalogue("system"), Some(Scope::System));
+        assert_eq!(Scope::from_catalogue("home"), Some(Scope::Home));
+        assert_eq!(Scope::from_catalogue("repository"), Some(Scope::Repository));
     }
 }
