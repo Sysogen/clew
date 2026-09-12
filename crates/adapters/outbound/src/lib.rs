@@ -60,8 +60,19 @@ fn kind_of(path: &Path) -> Result<EntryKind, FileTreeError> {
 impl FileTree for StdFileTree {
     fn read_dir(&self, path: &RepoPath) -> Result<Vec<DirEntry>, FileTreeError> {
         let absolute = self.absolute(path);
-        if !absolute.is_dir() {
-            return Err(FileTreeError::NotADirectory);
+        if path.as_str().is_empty() {
+            // The operator named this one, so it is followed like any path
+            // they type. Everything below it was discovered instead.
+            if !absolute.is_dir() {
+                return Err(FileTreeError::NotADirectory);
+            }
+        } else {
+            // symlink_metadata does not follow, so a link to a directory is
+            // refused rather than walked out of the scan root.
+            let found = fs::symlink_metadata(&absolute).map_err(|e| map_error(&e))?;
+            if !found.is_dir() {
+                return Err(FileTreeError::NotADirectory);
+            }
         }
 
         let mut entries = Vec::new();
@@ -242,6 +253,47 @@ mod contents_tests {
         let read = StdFileContents::new(&dir).read(&path("sub"), 1024);
 
         assert_eq!(read, Err(FileContentsError::NotARegularFile));
+    }
+
+    /// A directory reached by a link is outside the tree being scanned, and
+    /// walking into one leaves the scan root however it was reached.
+    #[cfg(unix)]
+    #[test]
+    fn never_walks_into_a_linked_directory() {
+        let dir = scratch("linkdir");
+        let outside = dir.join("outside");
+        fs::create_dir(&outside).expect("mkdir");
+        fs::write(outside.join("settings.json"), "{}").expect("write");
+        let inside = dir.join("root");
+        fs::create_dir(&inside).expect("mkdir");
+        std::os::unix::fs::symlink(&outside, inside.join(".claude")).expect("symlink");
+
+        let read = StdFileTree::new(&inside).read_dir(&path(".claude"));
+
+        assert_eq!(
+            read,
+            Err(FileTreeError::NotADirectory),
+            "a linked directory must be refused, not walked"
+        );
+    }
+
+    /// The operator named the root, so it is followed like any path they type.
+    /// On macOS /tmp is itself a link, and refusing it would refuse the scan.
+    #[cfg(unix)]
+    #[test]
+    fn the_root_itself_may_be_a_link() {
+        let dir = scratch("linkroot");
+        let real = dir.join("real");
+        fs::create_dir(&real).expect("mkdir");
+        fs::write(real.join("CLAUDE.md"), "x").expect("write");
+        let link = dir.join("link");
+        std::os::unix::fs::symlink(&real, &link).expect("symlink");
+
+        let entries = StdFileTree::new(&link)
+            .read_dir(&RepoPath::root())
+            .expect("the named root is read");
+
+        assert_eq!(entries.len(), 1);
     }
 
     #[cfg(unix)]

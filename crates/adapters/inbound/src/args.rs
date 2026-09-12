@@ -13,6 +13,9 @@ pub enum Command {
         /// The scan root.
         root: String,
     },
+    /// Scan the home directory for agent surfaces kept outside any
+    /// repository.
+    System,
     /// Print usage.
     Help,
     /// Print the version.
@@ -46,6 +49,7 @@ where
         Some("path") => Ok(Command::Path {
             root: args.get(1).cloned().unwrap_or_else(|| ".".to_owned()),
         }),
+        Some("system") => Ok(Command::System),
         Some(other) => Err(ParseError::UnknownCommand(other.to_owned())),
     }
 }
@@ -53,6 +57,12 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn system_takes_no_root() {
+        assert_eq!(parse(["system"]), Ok(Command::System));
+        assert_eq!(parse(["system", "/tmp"]), Ok(Command::System));
+    }
 
     #[test]
     fn no_arguments_is_help() {

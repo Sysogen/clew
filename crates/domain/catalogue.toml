@@ -291,3 +291,76 @@ tool = "any"
 kind = "env"
 last_verified = "2026-09-12"
 source = "https://code.claude.com/docs/en/settings"
+
+# --- Outside a repository ----------------------------------------------------
+#
+# Anchored at the home directory, which a scan of a checkout never sees and a
+# code review never covers.
+
+[[surface]]
+scope = "home"
+glob = ".claude/settings.json"
+tool = "claude-code"
+kind = "claude-code"
+extract = ["hooks", "permissions", "mcp-servers"]
+last_verified = "2026-09-12"
+source = "https://code.claude.com/docs/en/settings"
+
+[[surface]]
+scope = "home"
+glob = ".gemini/settings.json"
+tool = "gemini-cli"
+kind = "gemini"
+extract = ["mcp-servers"]
+last_verified = "2026-09-12"
+source = "https://github.com/google-gemini/gemini-cli/blob/main/docs/reference/configuration.md"
+
+[[surface]]
+scope = "home"
+glob = ".kiro/settings/mcp.json"
+tool = "kiro"
+kind = "kiro"
+extract = ["mcp-servers"]
+last_verified = "2026-09-12"
+source = "https://kiro.dev/docs/mcp/configuration/"
+
+[[surface]]
+scope = "home"
+glob = ".kiro/steering/**/*.md"
+tool = "kiro"
+kind = "kiro"
+last_verified = "2026-09-12"
+source = "https://kiro.dev/docs/steering/"
+
+[[surface]]
+scope = "home"
+glob = ".codeium/windsurf/mcp_config.json"
+tool = "windsurf"
+kind = "windsurf"
+extract = ["mcp-servers"]
+last_verified = "2026-09-12"
+source = "https://docs.windsurf.com/windsurf/cascade/mcp"
+
+[[surface]]
+scope = "home"
+glob = ".codeium/windsurf/memories/global_rules.md"
+tool = "windsurf"
+kind = "windsurf"
+last_verified = "2026-09-12"
+source = "https://docs.windsurf.com/windsurf/cascade/memories"
+
+[[surface]]
+scope = "home"
+glob = ".agents/skills/*/SKILL.md"
+tool = "zed"
+kind = "zed"
+last_verified = "2026-09-12"
+source = "https://github.com/zed-industries/zed/blob/main/docs/src/ai/skills.md"
+
+[[surface]]
+scope = "home"
+glob = ".agents/AGENTS.md"
+tool = "cline"
+kind = "instruction"
+last_verified = "2026-09-12"
+source = "https://docs.cline.bot/features/cline-rules"

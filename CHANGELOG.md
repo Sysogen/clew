@@ -10,6 +10,18 @@ repository.
 
 ### Added
 
+- `clew system`, which scans the home directory for the agent configuration
+  kept outside any repository: user-level MCP servers, global rules, and
+  global skills for Claude Code, Gemini CLI, Kiro, Windsurf, Zed, and Cline.
+  A repository holds what a team shares and reviews; this is the half nobody
+  reviews. The scan enters only the directories those rows name rather than
+  walking a home directory, and a root that is absent means the tool is not
+  installed rather than a gap in the scan.
+
+- Catalogue rows carry a `scope`, `repository` or `home`. The two trees are
+  matched separately, so a path both use is never reported against the wrong
+  one.
+
 - Read Markdown frontmatter, so a skill reports the tools it is allowed to use.
   The opening fence must be the first line, as the tools themselves require, and
   a fence that never closes is an error rather than an empty result.
@@ -71,6 +83,15 @@ repository.
   when the folder is opened. Reported, never opened.
 
 ### Fixed
+
+- Never walk into a directory reached by a symbolic link. The check followed
+  the link, so a home root such as `~/.claude -> /elsewhere` was traversed and
+  reported files outside the tree being scanned. The root the operator names is
+  still followed; everything discovered below it is not.
+
+- Stop redacting the argument after a value that merely reads like a
+  credential. `docker run -e JIRA_API_TOKEN ghcr.io/org/image` hid the image,
+  which is what a typosquat check reads. Only a flag introduces a value.
 
 - Five catalogue citations pointed at pages that had moved or gone. Every
   source now resolves and names the file its row claims, and `.cursorrules`

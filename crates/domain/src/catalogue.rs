@@ -15,6 +15,7 @@ use thiserror::Error;
 
 use crate::extract::{Extraction, Format};
 use crate::repo_path::RepoPath;
+use crate::scope::Scope;
 use crate::surface::SurfaceKind;
 
 /// The catalogue as shipped, embedded so the binary needs no data files.
@@ -60,6 +61,22 @@ pub enum CatalogueError {
         /// The format as written.
         format: String,
     },
+    /// A row names a scope that does not exist.
+    #[error("row {row} names an unknown scope {scope:?}")]
+    UnknownScope {
+        /// Which row, counting from zero.
+        row: usize,
+        /// The scope as written.
+        scope: String,
+    },
+    /// A home row whose glob does not begin with a directory name.
+    #[error("row {row} is a home row and must start with a directory: {glob:?}")]
+    UnanchoredHomeRow {
+        /// Which row, counting from zero.
+        row: usize,
+        /// The glob as written.
+        glob: String,
+    },
     /// A row names a kind the domain does not have.
     #[error("row {row} has an unknown kind {kind:?}")]
     UnknownKind {
@@ -81,6 +98,8 @@ pub struct Matched<'a> {
     pub extract: &'a [Extraction],
     /// How the file is written.
     pub format: Format,
+    /// Which tree it belongs to.
+    pub scope: Scope,
 }
 
 /// One row: a pattern, and what matching it means.
@@ -102,6 +121,13 @@ pub struct SurfaceRule {
     pub last_verified: String,
     /// The documentation it was checked against.
     pub source: String,
+    /// Which tree it is matched against. Omitted means the repository.
+    #[serde(default = "default_scope")]
+    pub scope: String,
+}
+
+fn default_scope() -> String {
+    "repository".to_owned()
 }
 
 fn default_format() -> String {
@@ -122,6 +148,7 @@ pub struct Catalogue {
     kinds: Vec<SurfaceKind>,
     extractions: Vec<Vec<Extraction>>,
     formats: Vec<Format>,
+    scopes: Vec<Scope>,
     globs: GlobSet,
 }
 
@@ -140,6 +167,7 @@ impl Catalogue {
         let mut kinds = Vec::with_capacity(file.surface.len());
         let mut extractions = Vec::with_capacity(file.surface.len());
         let mut formats = Vec::with_capacity(file.surface.len());
+        let mut scopes = Vec::with_capacity(file.surface.len());
 
         for (row, rule) in file.surface.iter().enumerate() {
             // A `*` stays inside one segment. Crossing them made `.env.*`
@@ -188,6 +216,28 @@ impl Catalogue {
                     kind: rule.kind.clone(),
                 }
             })?);
+
+            let scope =
+                Scope::from_catalogue(&rule.scope).ok_or_else(|| CatalogueError::UnknownScope {
+                    row,
+                    scope: rule.scope.clone(),
+                })?;
+            // A home scan enters only the directories its rows name, so the
+            // first segment has to be one.
+            if scope == Scope::Home
+                && rule.glob.split('/').next().is_none_or(|first| {
+                    first.is_empty()
+                        || first == "."
+                        || first == ".."
+                        || first.contains(['*', '?', '[', '{'])
+                })
+            {
+                return Err(CatalogueError::UnanchoredHomeRow {
+                    row,
+                    glob: rule.glob.clone(),
+                });
+            }
+            scopes.push(scope);
         }
 
         Ok(Self {
@@ -197,6 +247,7 @@ impl Catalogue {
             rules: file.surface,
             kinds,
             extractions,
+            scopes,
             formats,
         })
     }
@@ -207,13 +258,58 @@ impl Catalogue {
     /// pattern must precede a general one.
     #[must_use]
     pub fn lookup(&self, path: &RepoPath) -> Option<Matched<'_>> {
-        let first = self.globs.matches(path.as_str()).into_iter().min()?;
+        self.lookup_in(path, Scope::Repository)
+    }
+
+    /// The first row of `scope` matching `path`.
+    ///
+    /// Rows of another scope are not candidates: a home path and a repository
+    /// path can read alike, and reporting one as the other would name the
+    /// wrong tree.
+    #[must_use]
+    pub fn lookup_in(&self, path: &RepoPath, scope: Scope) -> Option<Matched<'_>> {
+        let first = self
+            .globs
+            .matches(path.as_str())
+            .into_iter()
+            .find(|i| self.scopes[*i] == scope)?;
         Some(Matched {
             rule: &self.rules[first],
             kind: self.kinds[first],
             extract: &self.extractions[first],
             format: self.formats[first],
+            scope: self.scopes[first],
         })
+    }
+
+    /// The rows belonging to one scope.
+    #[must_use]
+    pub fn rules_in(&self, scope: Scope) -> Vec<&SurfaceRule> {
+        self.rules
+            .iter()
+            .zip(&self.scopes)
+            .filter(|(_, s)| **s == scope)
+            .map(|(rule, _)| rule)
+            .collect()
+    }
+
+    /// The directories a home scan starts from, in order and without repeats.
+    ///
+    /// Walking a whole home directory would cost far more than it finds, so a
+    /// home row is anchored and only the directories they name are entered.
+    #[must_use]
+    pub fn home_roots(&self) -> Vec<&str> {
+        let mut roots: Vec<&str> = Vec::new();
+        for (rule, scope) in self.rules.iter().zip(&self.scopes) {
+            if *scope != Scope::Home {
+                continue;
+            }
+            let root = rule.glob.split('/').next().unwrap_or(&rule.glob);
+            if !roots.contains(&root) {
+                roots.push(root);
+            }
+        }
+        roots
     }
 
     /// Every row, in declaration order.
@@ -268,6 +364,7 @@ pub fn shipped() -> &'static Catalogue {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scope::Scope;
 
     fn p(s: &str) -> RepoPath {
         s.split('/')
@@ -339,8 +436,8 @@ mod tests {
 
         assert_eq!(
             expected.len(),
-            shipped().rules().len(),
-            "every catalogue row needs a case here"
+            shipped().rules_in(Scope::Repository).len(),
+            "every repository row needs a case here"
         );
 
         let all = &[
@@ -543,6 +640,107 @@ mod tests {
 
     /// An env file is nothing but values, and clew never reads one. The row
     /// exists so a scan says the credentials are there.
+    /// Home rows are the half a scan of a checkout cannot see, so each is
+    /// pinned to the tree it belongs to and what it declares.
+    #[test]
+    fn each_home_surface_keeps_its_own_kind_and_extractions() {
+        let all = &[
+            Extraction::Hooks,
+            Extraction::Permissions,
+            Extraction::McpServers,
+        ][..];
+        let servers = &[Extraction::McpServers][..];
+        let expected: &[(&str, SurfaceKind, &[Extraction])] = &[
+            (".claude/settings.json", SurfaceKind::ClaudeCode, all),
+            (".gemini/settings.json", SurfaceKind::Gemini, servers),
+            (".kiro/settings/mcp.json", SurfaceKind::Kiro, servers),
+            (".kiro/steering/product.md", SurfaceKind::Kiro, &[]),
+            (
+                ".codeium/windsurf/mcp_config.json",
+                SurfaceKind::Windsurf,
+                servers,
+            ),
+            (
+                ".codeium/windsurf/memories/global_rules.md",
+                SurfaceKind::Windsurf,
+                &[],
+            ),
+            (".agents/skills/a/SKILL.md", SurfaceKind::Zed, &[]),
+            (".agents/AGENTS.md", SurfaceKind::InstructionFile, &[]),
+        ];
+
+        assert_eq!(
+            expected.len(),
+            shipped().rules_in(Scope::Home).len(),
+            "every home row needs a case here"
+        );
+
+        for (path, kind, extract) in expected {
+            let m = shipped()
+                .lookup_in(&p(path), Scope::Home)
+                .unwrap_or_else(|| panic!("{path} matched no home row"));
+            assert_eq!(m.kind, *kind, "{path}");
+            assert_eq!(m.extract, *extract, "{path}");
+            assert_eq!(m.scope, Scope::Home, "{path}");
+        }
+    }
+
+    /// The two trees are matched separately. A repository holding a .claude
+    /// directory must not be read against a home row, or the report names the
+    /// wrong tree.
+    #[test]
+    fn a_scope_never_matches_a_row_from_the_other() {
+        assert!(
+            shipped()
+                .lookup_in(&p(".codeium/windsurf/mcp_config.json"), Scope::Repository)
+                .is_none(),
+            "a home-only path has no repository row"
+        );
+        assert!(
+            shipped().lookup_in(&p("CLAUDE.md"), Scope::Home).is_none(),
+            "a repository-only path has no home row"
+        );
+        assert_eq!(
+            shipped()
+                .lookup_in(&p(".claude/settings.json"), Scope::Home)
+                .map(|m| m.scope),
+            Some(Scope::Home),
+            "a path both trees use resolves to the tree asked for"
+        );
+    }
+
+    /// A home row names the directory the scan enters. A traversal segment
+    /// would send it above the home directory, or into all of it.
+    #[test]
+    fn a_home_row_cannot_walk_out_of_the_home_directory() {
+        for glob in ["../outside/**", "./**", ".", ".."] {
+            let error = Catalogue::load(&format!(
+                r#"version = 1
+                   [[surface]]
+                   scope = "home"
+                   glob = "{glob}"
+                   tool = "x"
+                   kind = "skill"
+                   last_verified = "2026-09-12"
+                   source = "https://example.invalid"
+                "#
+            ))
+            .expect_err("{glob} must not load");
+            assert!(
+                matches!(error, CatalogueError::UnanchoredHomeRow { .. }),
+                "{glob}: {error:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_home_scan_enters_only_the_directories_its_rows_name() {
+        assert_eq!(
+            shipped().home_roots(),
+            vec![".claude", ".gemini", ".kiro", ".codeium", ".agents"]
+        );
+    }
+
     #[test]
     fn env_files_are_matched_and_never_read() {
         for path in [".env", ".env.local", ".env.production", "api/.env"] {

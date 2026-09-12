@@ -116,7 +116,9 @@ fn redact_args(args: &[String]) -> Vec<String> {
             Some((flag, _)) if names_a_credential(flag) => out.push(format!("{flag}={REDACTED}")),
             _ if looks_issued(arg) => out.push(REDACTED.to_owned()),
             _ => {
-                redact_next = names_a_credential(arg);
+                // Only a flag introduces a value. `-e JIRA_API_TOKEN` passes a
+                // name, and redacting what follows would hide the image run.
+                redact_next = arg.starts_with('-') && names_a_credential(arg);
                 out.push(arg.clone());
             }
         }
@@ -213,6 +215,25 @@ mod tests {
             let said = local(&[arg]);
             assert!(!said.contains(arg), "{said}");
         }
+    }
+
+    /// A name passed as a value does not introduce a secret. Redacting after
+    /// it hid the image being run, which is what a typosquat check reads.
+    #[test]
+    fn a_variable_name_passed_as_a_value_redacts_nothing() {
+        let said = local(&[
+            "run",
+            "-e",
+            "JIRA_API_TOKEN",
+            "-e",
+            "JIRA_URL",
+            "ghcr.io/org/image:1.2",
+        ]);
+
+        assert_eq!(
+            said,
+            "npx run -e JIRA_API_TOKEN -e JIRA_URL ghcr.io/org/image:1.2"
+        );
     }
 
     /// Over-redaction hides findings, so a flag that merely reads like one is
