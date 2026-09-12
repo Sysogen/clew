@@ -18,6 +18,8 @@ pub enum SurfaceKind {
     Cursor,
     /// Visual Studio Code agent configuration.
     VsCode,
+    /// Gemini CLI configuration.
+    Gemini,
     /// Continue configuration.
     Continue,
     /// Cline configuration.
@@ -46,6 +48,7 @@ impl SurfaceKind {
             "codex" => Self::Codex,
             "cursor" => Self::Cursor,
             "vscode" => Self::VsCode,
+            "gemini" => Self::Gemini,
             "continue" => Self::Continue,
             "cline" => Self::Cline,
             "aider" => Self::Aider,
@@ -67,6 +70,7 @@ impl SurfaceKind {
             Self::Codex => "Codex",
             Self::Cursor => "Cursor",
             Self::VsCode => "VS Code",
+            Self::Gemini => "Gemini CLI",
             Self::Continue => "Continue",
             Self::Cline => "Cline",
             Self::Aider => "Aider",

@@ -35,6 +35,12 @@ repository.
   permission-denied scan printed a clean result.
 - `--version` and `--help`, and a `path` subcommand naming what the tool does.
 
+### Added
+
+- Find Gemini CLI project settings and report the MCP servers they declare.
+- Find `.vscode/tasks.json`. A task can set `runOn: folderOpen`, which runs it
+  when the folder is opened. Reported, never opened.
+
 ### Fixed
 
 - Five catalogue citations pointed at pages that had moved or gone. Every
@@ -72,6 +78,13 @@ repository.
 - Reject an unknown subcommand instead of falling through to a default.
 
 ### Security
+
+- Never record a credential written into an MCP argument or url. A value behind
+  a flag naming a credential, one written as `key=value`, and one carrying an
+  issuer's prefix are replaced by `<redacted>`; a url keeps its host and path
+  and drops its userinfo and query. Only the names of environment variables
+  were held back before, so a token passed as `--api-key` reached the report.
+  The value is dropped as the file is read, so nothing downstream holds one.
 
 - Never follow a symbolic link. A link is reported and not traversed, so a scan
   cannot be walked out of its own root.

@@ -312,23 +312,19 @@ fn non_blank(value: Option<&serde_json::Value>) -> Option<&str> {
 /// One server declaration. `None` when it names neither a command nor a url.
 fn server(name: &str, config: &serde_json::Value) -> Option<McpServer> {
     let transport = if let Some(url) = non_blank(config.get("url")) {
-        Transport::Remote {
-            url: url.to_owned(),
-        }
+        Transport::remote(url)
     } else {
-        Transport::Local {
-            command: non_blank(config.get("command"))?.to_owned(),
-            args: config
-                .get("args")
-                .and_then(serde_json::Value::as_array)
-                .map(|args| {
-                    args.iter()
-                        .filter_map(serde_json::Value::as_str)
-                        .map(ToOwned::to_owned)
-                        .collect()
-                })
-                .unwrap_or_default(),
-        }
+        let args: Vec<String> = config
+            .get("args")
+            .and_then(serde_json::Value::as_array)
+            .map(|args| {
+                args.iter()
+                    .filter_map(serde_json::Value::as_str)
+                    .map(ToOwned::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default();
+        Transport::local(non_blank(config.get("command"))?.to_owned(), &args)
     };
 
     // Names only. A value here is routinely a credential.
@@ -877,6 +873,28 @@ env = { DATABASE_URL = "postgres://u:hunter2@h/d", PGPORT = "5432" }
         assert!(
             !rendered.contains("hunter2"),
             "the value must never leave the file: {rendered}"
+        );
+    }
+
+    /// Extraction is where file content becomes a domain value, so it is where
+    /// a credential must stop. Asserted on the whole value, not on what one
+    /// formatter chooses to show.
+    #[test]
+    fn a_credential_in_an_argument_or_url_is_never_recorded() {
+        let found = servers_of(
+            r#"{"mcpServers":{
+                 "a":{"command":"npx","args":["srv","--api-key","sk-live-SECRET"]},
+                 "b":{"url":"https://u:pw@mcp.example.invalid/sse?token=TOKENV"}}}"#,
+        );
+
+        assert_eq!(found.len(), 2, "{found:?}");
+        let held = format!("{found:?}");
+        for secret in ["sk-live-SECRET", "TOKENV", "pw@"] {
+            assert!(!held.contains(secret), "{secret} was recorded: {held}");
+        }
+        assert!(
+            held.contains("srv"),
+            "the package must survive redaction: {held}"
         );
     }
 
