@@ -163,11 +163,11 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
                 Err(error) => {
                     // A home root that is not there means the tool is not
                     // installed, which is an answer rather than a gap.
+                    // Absent means the tool is not installed. A root that is
+                    // there and is not a directory, a symlink among them, is
+                    // still a gap and still said.
                     if self.scope == Scope::Home
-                        && matches!(
-                            error,
-                            FileTreeError::NotFound | FileTreeError::NotADirectory
-                        )
+                        && error == FileTreeError::NotFound
                         && catalogue().home_roots().contains(&dir.as_str())
                     {
                         continue;
@@ -704,6 +704,30 @@ mod tests {
         assert!(report.surfaces.is_empty());
         assert!(report.unreadable.is_empty(), "{report:?}");
         assert!(report.is_complete());
+    }
+
+    /// A root that is there but is not a directory, a symlink among them, is
+    /// a gap: the subtree was not inspected and the report must say so.
+    #[test]
+    fn a_home_root_that_is_not_a_directory_is_reported() {
+        struct NotDir;
+        impl FileTree for NotDir {
+            fn read_dir(&self, path: &RepoPath) -> Result<Vec<DirEntry>, FileTreeError> {
+                if path.as_str() == ".claude" {
+                    Err(FileTreeError::NotADirectory)
+                } else {
+                    Err(FileTreeError::NotFound)
+                }
+            }
+        }
+
+        let report =
+            DiscoverSurfaces::new(&NotDir, &FakeContents::default(), &ScanPolicy::default())
+                .in_home()
+                .run();
+
+        assert_eq!(report.unreadable.len(), 1, "{report:?}");
+        assert!(!report.is_complete());
     }
 
     /// A root that exists and cannot be read is a gap, and must still be said.

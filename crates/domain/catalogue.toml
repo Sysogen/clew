@@ -351,7 +351,7 @@ source = "https://docs.windsurf.com/windsurf/cascade/memories"
 
 [[surface]]
 scope = "home"
-glob = ".agents/skills/**/SKILL.md"
+glob = ".agents/skills/*/SKILL.md"
 tool = "zed"
 kind = "zed"
 last_verified = "2026-09-12"

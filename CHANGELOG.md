@@ -84,6 +84,11 @@ repository.
 
 ### Fixed
 
+- Never walk into a directory reached by a symbolic link. The check followed
+  the link, so a home root such as `~/.claude -> /elsewhere` was traversed and
+  reported files outside the tree being scanned. The root the operator names is
+  still followed; everything discovered below it is not.
+
 - Stop redacting the argument after a value that merely reads like a
   credential. `docker run -e JIRA_API_TOKEN ghcr.io/org/image` hid the image,
   which is what a typosquat check reads. Only a flag introduces a value.

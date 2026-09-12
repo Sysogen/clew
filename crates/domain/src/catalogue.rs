@@ -225,11 +225,12 @@ impl Catalogue {
             // A home scan enters only the directories its rows name, so the
             // first segment has to be one.
             if scope == Scope::Home
-                && rule
-                    .glob
-                    .split('/')
-                    .next()
-                    .is_none_or(|first| first.is_empty() || first.contains(['*', '?', '[', '{']))
+                && rule.glob.split('/').next().is_none_or(|first| {
+                    first.is_empty()
+                        || first == "."
+                        || first == ".."
+                        || first.contains(['*', '?', '[', '{'])
+                })
             {
                 return Err(CatalogueError::UnanchoredHomeRow {
                     row,
@@ -706,6 +707,30 @@ mod tests {
             Some(Scope::Home),
             "a path both trees use resolves to the tree asked for"
         );
+    }
+
+    /// A home row names the directory the scan enters. A traversal segment
+    /// would send it above the home directory, or into all of it.
+    #[test]
+    fn a_home_row_cannot_walk_out_of_the_home_directory() {
+        for glob in ["../outside/**", "./**", ".", ".."] {
+            let error = Catalogue::load(&format!(
+                r#"version = 1
+                   [[surface]]
+                   scope = "home"
+                   glob = "{glob}"
+                   tool = "x"
+                   kind = "skill"
+                   last_verified = "2026-09-12"
+                   source = "https://example.invalid"
+                "#
+            ))
+            .expect_err("{glob} must not load");
+            assert!(
+                matches!(error, CatalogueError::UnanchoredHomeRow { .. }),
+                "{glob}: {error:?}"
+            );
+        }
     }
 
     #[test]
