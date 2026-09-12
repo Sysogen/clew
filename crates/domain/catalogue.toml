@@ -78,8 +78,7 @@ extract = ["mcp-servers"]
 last_verified = "2026-09-12"
 source = "https://kiro.dev/docs/mcp/configuration/"
 
-# Steering declares its inclusion in frontmatter. inclusion = "always" loads
-# the file into every interaction. Reading that is the rule pack's job.
+# Frontmatter inclusion = "always" puts the file in every interaction.
 [[surface]]
 glob = "**/.kiro/steering/**/*.md"
 tool = "kiro"
@@ -87,9 +86,7 @@ kind = "kiro"
 last_verified = "2026-09-12"
 source = "https://kiro.dev/docs/steering/"
 
-# A hook here fires on an event with no prompt, running a shell command or
-# injecting one. Kiro lists entries that name their own trigger rather than
-# keying a map by event, and both shapes are read.
+# Fires on an event with no prompt, running a shell command or injecting one.
 [[surface]]
 glob = "**/.kiro/hooks/**/*.json"
 tool = "kiro"
@@ -118,6 +115,7 @@ source = "https://agents.md"
 
 # --- Gemini CLI -------------------------------------------------------------
 
+# Project settings. The user-level file sits outside any repository.
 [[surface]]
 glob = "**/.gemini/settings.json"
 tool = "gemini-cli"
@@ -154,6 +152,7 @@ source = "https://cursor.com/help/customization/rules"
 
 # --- VS Code and Copilot ----------------------------------------------------
 
+# A task may set runOn = "folderOpen", which runs it when the folder opens.
 [[surface]]
 glob = "**/.vscode/tasks.json"
 tool = "vscode"

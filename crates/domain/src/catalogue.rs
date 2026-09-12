@@ -504,10 +504,7 @@ mod tests {
         }
     }
 
-    /// AGENTS.md lives inside Kiro's steering directory as well as at a
-    /// repository root, so the two rows overlap and only the order separates
-    /// them. The specific one must win, or the file is filed under the wrong
-    /// tool.
+    /// The two rows overlap, and only their order separates them.
     #[test]
     fn a_steering_agents_file_is_kiro_not_the_generic_row() {
         assert_eq!(

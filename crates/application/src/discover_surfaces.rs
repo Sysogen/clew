@@ -385,7 +385,7 @@ mod tests {
         assert_eq!(report.hooks.len(), 1, "{report:?}");
         assert_eq!(report.hooks[0].source.as_str(), ".claude/settings.json");
         assert_eq!(report.hooks[0].hook.event, "SessionStart");
-        assert_eq!(report.hooks[0].hook.command, "x.sh");
+        assert_eq!(report.hooks[0].hook.action.text(), "x.sh");
         assert!(report.is_complete());
     }
 
@@ -487,8 +487,7 @@ mod tests {
         assert!(report.is_complete());
     }
 
-    /// Reading a new surface must not open a new way for a credential to reach
-    /// the report, so the guarantee is asserted where the row is added.
+    /// A new surface must not open a new way for a credential to escape.
     #[test]
     fn a_gemini_config_reports_no_credential() {
         let tree = FakeTree::default()
@@ -511,9 +510,8 @@ mod tests {
         assert_eq!(report.servers.len(), 3, "the servers are still reported");
     }
 
-    /// Kiro's own configuration example, kept verbatim. Its env values are
-    /// hard-coded credentials in the documentation itself, so this also holds
-    /// the line on what a report may carry.
+    /// Kiro's own example, kept verbatim. Its env values are hard-coded
+    /// credentials in the documentation itself.
     #[test]
     fn a_kiro_config_reports_servers_without_their_secrets() {
         let tree = FakeTree::default()
@@ -545,8 +543,7 @@ mod tests {
         assert!(report.is_complete());
     }
 
-    /// Kiro's documented hook file, reported end to end. The command is the
-    /// finding: it runs on an event with no one asked.
+    /// Kiro's documented hook file, reported end to end.
     #[test]
     fn a_kiro_hook_file_reports_its_command() {
         let tree = FakeTree::default()
@@ -569,7 +566,8 @@ mod tests {
             report
                 .hooks
                 .iter()
-                .any(|h| h.hook.command == "npx eslint --fix" && h.hook.event == "PostFileSave")
+                .any(|h| h.hook.action.text() == "npx eslint --fix"
+                    && h.hook.event == "PostFileSave")
         );
         assert!(
             report

