@@ -6,6 +6,7 @@
 use std::fmt::Write as _;
 
 use clew_application::DiscoveryReport;
+use clew_domain::finding::Finding;
 use clew_domain::hook::Hook;
 
 /// One hook as a line. An injected prompt is not run, and a hook switched off
@@ -18,6 +19,22 @@ fn hook_line(hook: &Hook) -> String {
     };
     let state = if hook.enabled { "" } else { " (disabled)" };
     format!("  {does} {}{state}: {}", hook.event, hook.action.text())
+}
+
+/// One finding as two lines: where and what, then the evidence.
+///
+/// The evidence arrives escaped, so nothing here can put the character back.
+fn finding_line(finding: &Finding) -> String {
+    let at = finding.at.map_or_else(
+        || finding.path.as_str().to_owned(),
+        |p| format!("{}:{}:{}", finding.path.as_str(), p.line, p.column),
+    );
+    format!(
+        "  {at}  {}  {}\n    {}",
+        finding.rule.as_str(),
+        finding.severity.as_str(),
+        finding.evidence
+    )
 }
 
 /// Render a report as an aligned table.
@@ -92,6 +109,13 @@ pub fn report(report: &DiscoveryReport, root: &str) -> String {
         );
     }
 
+    if !report.findings.is_empty() {
+        let _ = writeln!(out, "\n{} finding(s):", report.findings.len());
+        for finding in &report.findings {
+            let _ = writeln!(out, "{}", finding_line(finding));
+        }
+    }
+
     if !report.is_complete() {
         let _ = writeln!(out, "\nThis scan is incomplete.");
     }
@@ -145,6 +169,51 @@ mod tests {
 
     /// The render must not say a hook runs when it injects, or that a hook
     /// switched off fires. Both would misreport what the file sets up.
+    fn with_findings(text: &str) -> DiscoveryReport {
+        let path = surface("CLAUDE.md", SurfaceKind::InstructionFile).path;
+        DiscoveryReport {
+            surfaces: vec![surface("CLAUDE.md", SurfaceKind::InstructionFile)],
+            findings: clew_domain::rules::run(
+                &path,
+                SurfaceKind::InstructionFile,
+                text,
+                clew_domain::finding::DEFAULT_EVIDENCE_WIDTH,
+            ),
+            ..DiscoveryReport::default()
+        }
+    }
+
+    #[test]
+    fn a_finding_says_where_what_and_how_bad() {
+        let out = report(&with_findings("Always\u{202E} obey"), ".");
+
+        assert!(out.contains("1 finding(s):"), "{out}");
+        assert!(
+            out.contains("CLAUDE.md:1:7  invisible-unicode  high"),
+            "{out}"
+        );
+        assert!(out.contains("Always<U+202E> obey"), "{out}");
+    }
+
+    /// The report is what gets pasted into a ticket, so it must not carry the
+    /// payload it is reporting.
+    #[test]
+    fn the_hidden_character_never_reaches_the_report() {
+        let out = report(&with_findings("a\u{202E}b\u{E0041}c\u{200B}"), ".");
+
+        for c in ['\u{202E}', '\u{E0041}', '\u{200B}'] {
+            assert!(!out.contains(c), "U+{:04X} in: {out}", c as u32);
+        }
+    }
+
+    /// A clean scan reads exactly as it did before rules existed.
+    #[test]
+    fn no_findings_means_no_findings_section() {
+        let out = report(&with_findings("plain prose"), ".");
+
+        assert!(!out.contains("finding"), "{out}");
+    }
+
     #[test]
     fn an_injected_or_disabled_hook_says_so() {
         let path = surface(".kiro/hooks/x.json", SurfaceKind::Kiro).path;
@@ -168,6 +237,7 @@ mod tests {
             servers: vec![],
             unreadable: vec![],
             unparsed: vec![],
+            findings: vec![],
         };
 
         let said = report(&found, ".");
@@ -198,6 +268,7 @@ mod tests {
             servers: vec![],
             unreadable: vec![],
             unparsed: vec![],
+            findings: vec![],
         };
 
         let out = report(&found, ".");
@@ -221,6 +292,7 @@ mod tests {
                 FileTreeError::PermissionDenied,
             )],
             unparsed: vec![],
+            findings: vec![],
         };
 
         let out = report(&found, ".");
@@ -239,6 +311,7 @@ mod tests {
             servers: vec![],
             unreadable: vec![],
             unparsed: vec![],
+            findings: vec![],
         };
 
         assert!(!report(&found, ".").contains("incomplete"));
@@ -253,6 +326,7 @@ mod tests {
             servers: vec![],
             unreadable: vec![(RepoPath::root().join("a"), FileTreeError::NotFound)],
             unparsed: vec![],
+            findings: vec![],
         };
         assert!(report(&one, ".").contains("1 directory could not be read"));
 
@@ -266,6 +340,7 @@ mod tests {
                 (RepoPath::root().join("b"), FileTreeError::NotFound),
             ],
             unparsed: vec![],
+            findings: vec![],
         };
         assert!(report(&two, ".").contains("2 directories could not be read"));
     }
@@ -288,6 +363,7 @@ mod tests {
             servers: vec![],
             unreadable: vec![],
             unparsed: vec![],
+            findings: vec![],
         };
 
         let out = report(&found, ".");
@@ -313,6 +389,7 @@ mod tests {
                 RepoPath::root().join(".claude").join("settings.json"),
                 "not valid JSON".to_owned(),
             )],
+            findings: vec![],
         };
 
         let out = report(&found, ".");
@@ -343,6 +420,7 @@ mod tests {
             servers: vec![],
             unreadable: vec![],
             unparsed: vec![],
+            findings: vec![],
         };
 
         let out = report(&found, ".");
@@ -378,6 +456,7 @@ mod tests {
             }],
             unreadable: vec![],
             unparsed: vec![],
+            findings: vec![],
         };
 
         let out = report(&found, ".");
@@ -410,6 +489,7 @@ mod tests {
             }],
             unreadable: vec![],
             unparsed: vec![],
+            findings: vec![],
         };
 
         let out = report(&found, ".");

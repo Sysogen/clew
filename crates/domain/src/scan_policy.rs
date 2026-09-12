@@ -3,6 +3,7 @@
 
 //! How far a scan descends and what it refuses to enter.
 
+use crate::finding::DEFAULT_EVIDENCE_WIDTH;
 use crate::ports::file_tree::{DirEntry, EntryKind};
 use crate::repo_path::RepoPath;
 
@@ -22,6 +23,7 @@ pub struct ScanPolicy {
     max_depth: usize,
     pruned: Vec<String>,
     max_file_bytes: u64,
+    evidence_width: usize,
 }
 
 impl ScanPolicy {
@@ -32,6 +34,7 @@ impl ScanPolicy {
             max_depth,
             pruned,
             max_file_bytes: DEFAULT_MAX_FILE_BYTES,
+            evidence_width: DEFAULT_EVIDENCE_WIDTH,
         }
     }
 
@@ -40,6 +43,19 @@ impl ScanPolicy {
     pub fn with_max_file_bytes(mut self, bytes: u64) -> Self {
         self.max_file_bytes = bytes;
         self
+    }
+
+    /// Cap how much of an offending line a finding quotes.
+    #[must_use]
+    pub fn with_evidence_width(mut self, width: usize) -> Self {
+        self.evidence_width = width;
+        self
+    }
+
+    /// How much of an offending line a finding quotes.
+    #[must_use]
+    pub fn evidence_width(&self) -> usize {
+        self.evidence_width
     }
 
     /// The per-file size cap.

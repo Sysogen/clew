@@ -10,11 +10,13 @@
 
 pub mod catalogue;
 pub mod extract;
+pub mod finding;
 pub mod hook;
 pub mod mcp_server;
 pub mod permission;
 pub mod ports;
 pub mod repo_path;
+pub mod rules;
 pub mod scan_policy;
 pub mod scope;
 pub mod surface;

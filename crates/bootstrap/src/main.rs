@@ -12,6 +12,7 @@ use clew_adapter_fs::{StdFileContents, StdFileTree};
 use clew_application::DiscoverSurfaces;
 use clew_domain::ScanPolicy;
 use clew_domain::catalogue;
+use clew_domain::finding::DEFAULT_EVIDENCE_WIDTH;
 use clew_domain::scan_policy::{DEFAULT_MAX_DEPTH, DEFAULT_MAX_FILE_BYTES};
 use clew_domain::scope::Scope;
 
@@ -27,6 +28,7 @@ USAGE:
 ENVIRONMENT:
     CLEW_MAX_DEPTH      Directory recursion limit
     CLEW_MAX_FILE_BYTES Largest configuration file read
+    CLEW_EVIDENCE_WIDTH Characters of an offending line a finding quotes
 
 A repository holds what a team shares. `system` reads the rest: what each
 engineer set up alone under their home directory, and what an administrator
@@ -49,6 +51,10 @@ fn max_depth() -> usize {
 
 fn max_file_bytes() -> u64 {
     env_or("CLEW_MAX_FILE_BYTES", DEFAULT_MAX_FILE_BYTES)
+}
+
+fn evidence_width() -> usize {
+    env_or("CLEW_EVIDENCE_WIDTH", DEFAULT_EVIDENCE_WIDTH)
 }
 
 fn env_or<T: std::str::FromStr>(name: &str, fallback: T) -> T {
@@ -97,8 +103,9 @@ fn main() -> ExitCode {
         }
     };
 
-    let policy =
-        ScanPolicy::with_default_pruning(max_depth()).with_max_file_bytes(max_file_bytes());
+    let policy = ScanPolicy::with_default_pruning(max_depth())
+        .with_max_file_bytes(max_file_bytes())
+        .with_evidence_width(evidence_width());
     let mut complete = true;
 
     for (root, scope) in &scans {
