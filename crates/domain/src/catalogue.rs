@@ -9,7 +9,7 @@
 
 use std::sync::OnceLock;
 
-use globset::{Glob, GlobSet, GlobSetBuilder};
+use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use serde::Deserialize;
 use thiserror::Error;
 
@@ -142,11 +142,16 @@ impl Catalogue {
         let mut formats = Vec::with_capacity(file.surface.len());
 
         for (row, rule) in file.surface.iter().enumerate() {
-            let glob = Glob::new(&rule.glob).map_err(|e| CatalogueError::BadGlob {
-                row,
-                glob: rule.glob.clone(),
-                reason: e.to_string(),
-            })?;
+            // A `*` stays inside one segment. Crossing them made `.env.*`
+            // take a directory named `.env.local`.
+            let glob = GlobBuilder::new(&rule.glob)
+                .literal_separator(true)
+                .build()
+                .map_err(|e| CatalogueError::BadGlob {
+                    row,
+                    glob: rule.glob.clone(),
+                    reason: e.to_string(),
+                })?;
             builder.add(glob);
 
             if !is_iso_date(&rule.last_verified) {
@@ -315,6 +320,12 @@ mod tests {
             (".vscode/mcp.json", SurfaceKind::VsCode),
             (".vscode/tasks.json", SurfaceKind::VsCode),
             (".github/copilot-instructions.md", SurfaceKind::Copilot),
+            (".zed/settings.json", SurfaceKind::Zed),
+            (".agents/skills/a/SKILL.md", SurfaceKind::Zed),
+            (".rules", SurfaceKind::Zed),
+            (".devin/rules/a.md", SurfaceKind::Windsurf),
+            (".windsurf/rules/a.md", SurfaceKind::Windsurf),
+            (".windsurfrules", SurfaceKind::Windsurf),
             (".continue/config.json", SurfaceKind::Continue),
             ("cline_mcp_settings.json", SurfaceKind::Cline),
             (".aider.conf.yml", SurfaceKind::Aider),
@@ -340,6 +351,7 @@ mod tests {
             (".mcp.json", servers),
             (".gemini/settings.json", servers),
             (".kiro/settings/mcp.json", servers),
+            (".zed/settings.json", servers),
             (".kiro/hooks/lint-on-save.json", &[Extraction::Hooks][..]),
             (".cursor/mcp.json", servers),
             ("cline_mcp_settings.json", servers),
@@ -347,6 +359,7 @@ mod tests {
         ];
         let formats = [
             (".codex/config.toml", Format::Toml),
+            (".zed/settings.json", Format::Jsonc),
             (".claude/skills/a/SKILL.md", Format::Markdown),
         ];
 
@@ -502,6 +515,57 @@ mod tests {
                 "{path}"
             );
         }
+    }
+
+    /// A Zed skill is a named folder holding a SKILL.md. Neither a bare file
+    /// nor a deeper tree is one, and reporting either would inventory a file
+    /// Zed never loads.
+    #[test]
+    fn a_zed_skill_is_exactly_one_folder_deep() {
+        assert_eq!(
+            shipped()
+                .lookup(&p(".agents/skills/review/SKILL.md"))
+                .map(|m| m.kind),
+            Some(SurfaceKind::Zed)
+        );
+        assert!(shipped().lookup(&p(".agents/skills/SKILL.md")).is_none());
+        assert!(
+            shipped()
+                .lookup(&p(".agents/skills/team/review/SKILL.md"))
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn windsurf_rules_match_in_both_directories_and_at_the_root() {
+        for path in [
+            ".devin/rules/style.md",
+            ".windsurf/rules/style.md",
+            "packages/api/.devin/rules/nested/a.md",
+            ".windsurfrules",
+        ] {
+            assert_eq!(
+                shipped().lookup(&p(path)).map(|m| m.kind),
+                Some(SurfaceKind::Windsurf),
+                "{path}"
+            );
+        }
+    }
+
+    #[test]
+    fn zed_skills_are_inventory_while_claude_skills_are_read() {
+        let zed = shipped()
+            .lookup(&p(".agents/skills/a/SKILL.md"))
+            .expect("match");
+        assert!(
+            zed.extract.is_empty(),
+            "Zed documents no grant in its frontmatter"
+        );
+
+        let claude = shipped()
+            .lookup(&p(".claude/skills/a/SKILL.md"))
+            .expect("match");
+        assert_eq!(claude.extract, &[Extraction::Permissions]);
     }
 
     /// The two rows overlap, and only their order separates them.

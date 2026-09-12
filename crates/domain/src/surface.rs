@@ -22,6 +22,10 @@ pub enum SurfaceKind {
     Gemini,
     /// Kiro configuration, steering, or hooks.
     Kiro,
+    /// Zed configuration, skills, or rules.
+    Zed,
+    /// Windsurf rules.
+    Windsurf,
     /// Continue configuration.
     Continue,
     /// Cline configuration.
@@ -52,6 +56,8 @@ impl SurfaceKind {
             "vscode" => Self::VsCode,
             "gemini" => Self::Gemini,
             "kiro" => Self::Kiro,
+            "zed" => Self::Zed,
+            "windsurf" => Self::Windsurf,
             "continue" => Self::Continue,
             "cline" => Self::Cline,
             "aider" => Self::Aider,
@@ -75,6 +81,8 @@ impl SurfaceKind {
             Self::VsCode => "VS Code",
             Self::Gemini => "Gemini CLI",
             Self::Kiro => "Kiro",
+            Self::Zed => "Zed",
+            Self::Windsurf => "Windsurf",
             Self::Continue => "Continue",
             Self::Cline => "Cline",
             Self::Aider => "Aider",
