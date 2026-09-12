@@ -9,7 +9,7 @@
 
 use std::sync::OnceLock;
 
-use globset::{Glob, GlobSet, GlobSetBuilder};
+use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use serde::Deserialize;
 use thiserror::Error;
 
@@ -142,11 +142,16 @@ impl Catalogue {
         let mut formats = Vec::with_capacity(file.surface.len());
 
         for (row, rule) in file.surface.iter().enumerate() {
-            let glob = Glob::new(&rule.glob).map_err(|e| CatalogueError::BadGlob {
-                row,
-                glob: rule.glob.clone(),
-                reason: e.to_string(),
-            })?;
+            // A `*` stays inside one segment. Crossing them made `.env.*`
+            // take a directory named `.env.local`.
+            let glob = GlobBuilder::new(&rule.glob)
+                .literal_separator(true)
+                .build()
+                .map_err(|e| CatalogueError::BadGlob {
+                    row,
+                    glob: rule.glob.clone(),
+                    reason: e.to_string(),
+                })?;
             builder.add(glob);
 
             if !is_iso_date(&rule.last_verified) {
@@ -354,6 +359,7 @@ mod tests {
         ];
         let formats = [
             (".codex/config.toml", Format::Toml),
+            (".zed/settings.json", Format::Jsonc),
             (".claude/skills/a/SKILL.md", Format::Markdown),
         ];
 
@@ -509,6 +515,25 @@ mod tests {
                 "{path}"
             );
         }
+    }
+
+    /// A Zed skill is a named folder holding a SKILL.md. Neither a bare file
+    /// nor a deeper tree is one, and reporting either would inventory a file
+    /// Zed never loads.
+    #[test]
+    fn a_zed_skill_is_exactly_one_folder_deep() {
+        assert_eq!(
+            shipped()
+                .lookup(&p(".agents/skills/review/SKILL.md"))
+                .map(|m| m.kind),
+            Some(SurfaceKind::Zed)
+        );
+        assert!(shipped().lookup(&p(".agents/skills/SKILL.md")).is_none());
+        assert!(
+            shipped()
+                .lookup(&p(".agents/skills/team/review/SKILL.md"))
+                .is_none()
+        );
     }
 
     #[test]

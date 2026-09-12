@@ -39,6 +39,11 @@ repository.
 
 - Find Zed project settings, skills, and `.rules`. Its MCP servers sit under
   `context_servers`, so that key is read alongside the two common spellings.
+  Zed writes JSON with `//` comments, so that row is read as `jsonc`.
+
+- A `*` in a catalogue glob now stays inside one path segment. It crossed `/`
+  before, so `.env.*` also took a directory named `.env.local`, and a row had
+  no way to say "one directory deep".
 
 - Find Windsurf rules: `.devin/rules`, the legacy `.windsurf/rules`, and the
   legacy `.windsurfrules`. Its MCP configuration lives outside a repository

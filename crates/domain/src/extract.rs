@@ -39,6 +39,8 @@ pub enum Format {
     Json,
     /// Codex configuration.
     Toml,
+    /// JSON that may carry comments, as several editors write it.
+    Jsonc,
     /// A Markdown file whose declarations live in a leading YAML block.
     Markdown,
 }
@@ -50,6 +52,7 @@ impl Format {
         Some(match name {
             "json" => Self::Json,
             "toml" => Self::Toml,
+            "jsonc" => Self::Jsonc,
             "markdown" => Self::Markdown,
             _ => return None,
         })
@@ -59,9 +62,77 @@ impl Format {
         match self {
             Self::Json => serde_json::from_str(contents).map_err(|_| ParseError::NotJson),
             Self::Toml => toml::from_str(contents).map_err(|_| ParseError::NotToml),
+            Self::Jsonc => {
+                serde_json::from_str(&without_comments(contents)).map_err(|_| ParseError::NotJson)
+            }
             Self::Markdown => frontmatter(contents),
         }
     }
+}
+
+/// The same text without its comments.
+///
+/// Newlines are kept, so a parse error still names the right line. A `//`
+/// inside a string is part of the value, as every url shows.
+fn without_comments(contents: &str) -> String {
+    #[derive(PartialEq)]
+    enum At {
+        Code,
+        Str,
+        Line,
+        Block,
+    }
+
+    let mut out = String::with_capacity(contents.len());
+    let mut at = At::Code;
+    let mut escaped = false;
+    let mut chars = contents.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        match at {
+            At::Str => {
+                out.push(c);
+                if escaped {
+                    escaped = false;
+                } else if c == '\\' {
+                    escaped = true;
+                } else if c == '"' {
+                    at = At::Code;
+                }
+            }
+            At::Line => {
+                if c == '\n' {
+                    at = At::Code;
+                    out.push(c);
+                }
+            }
+            At::Block => {
+                if c == '*' && chars.peek() == Some(&'/') {
+                    chars.next();
+                    at = At::Code;
+                } else if c == '\n' {
+                    out.push(c);
+                }
+            }
+            At::Code => match (c, chars.peek()) {
+                ('/', Some('/')) => {
+                    chars.next();
+                    at = At::Line;
+                }
+                ('/', Some('*')) => {
+                    chars.next();
+                    at = At::Block;
+                }
+                _ => {
+                    if c == '"' {
+                        at = At::Str;
+                    }
+                    out.push(c);
+                }
+            },
+        }
+    }
+    out
 }
 
 /// The YAML block a Markdown file opens with.
@@ -259,7 +330,7 @@ fn keyed_hooks(events: &serde_json::Map<String, serde_json::Value>) -> Vec<Hook>
 /// report grants the tool does not honour.
 fn permissions(root: &serde_json::Value, format: Format) -> Vec<Permission> {
     let entries = match format {
-        Format::Json | Format::Toml => root
+        Format::Json | Format::Jsonc | Format::Toml => root
             .get("permissions")
             .and_then(|p| p.get("allow"))
             .map(listed_grants),
@@ -321,9 +392,8 @@ fn split_grants(line: &str) -> Vec<String> {
 
 /// MCP servers declared.
 fn mcp_servers(root: &serde_json::Value) -> Vec<McpServer> {
-    // Claude Code and Cursor write mcpServers; Codex writes mcp_servers. A file
-    // carrying both is odd, but reading only the first would hide servers, so
-    // both tables are read and identical entries collapsed.
+    // Every spelling is read, not the first found, or a file carrying two
+    // would report only one of them.
     let mut found: Vec<McpServer> = ["mcpServers", "mcp_servers", "context_servers"]
         .iter()
         .filter_map(|key| root.get(key)?.as_object())
@@ -1094,6 +1164,60 @@ env = { DATABASE_URL = "postgres://u:hunter2@h/d", PGPORT = "5432" }
         );
 
         assert!(found.is_empty(), "{found:?}");
+    }
+
+    /// Zed documents its settings as JSON with `//` comments, and its own
+    /// default file is full of them, so plain JSON parsing would report every
+    /// real one unreadable.
+    #[test]
+    fn reads_json_that_carries_comments() {
+        let found = run(
+            &[Extraction::McpServers],
+            Format::Jsonc,
+            r#"{
+              // the agent's servers
+              "context_servers": {
+                /* one of them */
+                "pg": { "command": "npx", "args": ["-y", "srv"] }
+              }
+            }"#,
+        )
+        .expect("valid jsonc")
+        .servers;
+
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].invocation(), "npx -y srv");
+    }
+
+    /// A comment marker inside a string is part of the value, not a comment.
+    #[test]
+    fn a_comment_marker_inside_a_string_survives() {
+        let found = run(
+            &[Extraction::McpServers],
+            Format::Jsonc,
+            r#"{"context_servers":{"a":{"url":"https://h.invalid/x"},
+                                   "b":{"command":"echo","args":["// not a comment","a\"b/*x*/"]}}}"#,
+        )
+        .expect("valid jsonc")
+        .servers;
+
+        assert_eq!(found.len(), 2, "{found:?}");
+        let b = found.iter().find(|s| s.name == "b").expect("b");
+        assert_eq!(b.invocation(), r#"echo // not a comment a"b/*x*/"#);
+        let a = found.iter().find(|s| s.name == "a").expect("a");
+        assert_eq!(
+            a.invocation(),
+            "https://h.invalid/x",
+            "a url is not a comment"
+        );
+    }
+
+    #[test]
+    fn jsonc_that_is_not_json_at_all_is_an_error() {
+        assert_eq!(
+            run(&[Extraction::McpServers], Format::Jsonc, "{nope"),
+            Err(ParseError::NotJson)
+        );
     }
 
     #[test]

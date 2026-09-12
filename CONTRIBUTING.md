@@ -97,9 +97,8 @@ depth; a `settings.json` sitting anywhere else does not. A `hooks` directory mus
 sit below `.claude`, which is why the glob is `**/.claude/**/hooks/**` rather
 than `**/hooks/**`.
 
-Wildcards are looser than they look. Globs compile with globset's defaults, so a
-`*` crosses `/` and is not confined to one segment. No current row depends on
-that. Write `**` where you mean any depth, so the row says what it means.
+A `*` stays inside one segment and `**` crosses them, so
+`**/.agents/skills/*/SKILL.md` is one directory deep and no more.
 
 ## Two rules that are not style preferences
 
