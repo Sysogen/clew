@@ -14,16 +14,20 @@ use clew_domain::ScanPolicy;
 use clew_domain::scan_policy::{DEFAULT_MAX_DEPTH, DEFAULT_MAX_FILE_BYTES};
 
 const USAGE: &str = "\
-Discover AI coding agent configuration surfaces in a repository.
+Discover AI coding agent configuration surfaces.
 
 USAGE:
     clew path [DIR]     List agent surfaces found under DIR (default: .)
+    clew system         List agent surfaces in the home directory
     clew --version
     clew --help
 
 ENVIRONMENT:
     CLEW_MAX_DEPTH      Directory recursion limit
     CLEW_MAX_FILE_BYTES Largest configuration file read
+
+A repository holds what a team shares. The home directory holds what each
+engineer set up alone, which no code review covers; `system` reads that.
 
 clew never reads a credential value, and never executes a hook, script, or
 command it discovers. Symbolic links are reported, never followed.";
@@ -52,6 +56,7 @@ fn main() -> ExitCode {
         }
     };
 
+    let mut home = false;
     let root = match command {
         Command::Help => {
             println!("clew {}\n\n{USAGE}", env!("CARGO_PKG_VERSION"));
@@ -62,6 +67,14 @@ fn main() -> ExitCode {
             return ExitCode::SUCCESS;
         }
         Command::Path { root } => root,
+        Command::System => {
+            home = true;
+            let Some(path) = env::home_dir() else {
+                eprintln!("clew: no home directory to scan");
+                return ExitCode::FAILURE;
+            };
+            path.to_string_lossy().into_owned()
+        }
     };
 
     if !Path::new(&root).is_dir() {
@@ -73,7 +86,12 @@ fn main() -> ExitCode {
     let contents = StdFileContents::new(&root);
     let policy =
         ScanPolicy::with_default_pruning(max_depth()).with_max_file_bytes(max_file_bytes());
-    let found = DiscoverSurfaces::new(&tree, &contents, &policy).run();
+    let scan = DiscoverSurfaces::new(&tree, &contents, &policy);
+    let found = if home {
+        scan.in_home().run()
+    } else {
+        scan.run()
+    };
 
     print!("{}", report(&found, &root));
 

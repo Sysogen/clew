@@ -16,6 +16,7 @@ pub mod permission;
 pub mod ports;
 pub mod repo_path;
 pub mod scan_policy;
+pub mod scope;
 pub mod surface;
 
 pub use catalogue::{Catalogue, shipped as catalogue};

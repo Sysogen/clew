@@ -6,6 +6,7 @@
 use clew_domain::extract;
 use clew_domain::ports::file_contents::FileContents;
 use clew_domain::ports::file_tree::{FileTree, FileTreeError};
+use clew_domain::scope::Scope;
 use clew_domain::{Hook, McpServer, Permission, RepoPath, ScanPolicy, Surface, catalogue};
 
 /// An MCP server, and the file that declared it.
@@ -69,6 +70,7 @@ pub struct DiscoverSurfaces<'a, T: FileTree, C: FileContents> {
     tree: &'a T,
     contents: &'a C,
     policy: &'a ScanPolicy,
+    scope: Scope,
 }
 
 impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
@@ -78,7 +80,15 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
             tree,
             contents,
             policy,
+            scope: Scope::Repository,
         }
+    }
+
+    /// Read the home directory instead, against the rows anchored there.
+    #[must_use]
+    pub fn in_home(mut self) -> Self {
+        self.scope = Scope::Home;
+        self
     }
 
     /// Read every surface and collect the hooks it registers.
@@ -87,7 +97,7 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
         for path in paths {
             // A row declaring no extractions is inventory: never opened, which
             // matters when the file may be a compiled binary.
-            let Some(matched) = catalogue().lookup(&path) else {
+            let Some(matched) = catalogue().lookup_in(&path, self.scope) else {
                 continue;
             };
             if matched.extract.is_empty() {
@@ -136,12 +146,32 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
     #[must_use]
     pub fn run(&self) -> DiscoveryReport {
         let mut report = DiscoveryReport::default();
-        let mut queue = vec![RepoPath::root()];
+        // A home scan enters only the directories its rows name. Walking a
+        // whole home directory would cost far more than it finds.
+        let mut queue: Vec<RepoPath> = match self.scope {
+            Scope::Repository => vec![RepoPath::root()],
+            Scope::Home => catalogue()
+                .home_roots()
+                .into_iter()
+                .map(|root| RepoPath::root().join(root))
+                .collect(),
+        };
 
         while let Some(dir) = queue.pop() {
             let entries = match self.tree.read_dir(&dir) {
                 Ok(entries) => entries,
                 Err(error) => {
+                    // A home root that is not there means the tool is not
+                    // installed, which is an answer rather than a gap.
+                    if self.scope == Scope::Home
+                        && matches!(
+                            error,
+                            FileTreeError::NotFound | FileTreeError::NotADirectory
+                        )
+                        && catalogue().home_roots().contains(&dir.as_str())
+                    {
+                        continue;
+                    }
                     report.unreadable.push((dir, error));
                     continue;
                 }
@@ -152,7 +182,7 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
                     queue.push(entry.path);
                     continue;
                 }
-                if let Some(matched) = catalogue().lookup(&entry.path) {
+                if let Some(matched) = catalogue().lookup_in(&entry.path, self.scope) {
                     report.surfaces.push(Surface {
                         path: entry.path,
                         kind: matched.kind,
@@ -597,6 +627,111 @@ mod tests {
             "npx -y server-postgres"
         );
         assert!(report.is_complete());
+    }
+
+    /// A home directory holds a person's whole life. Walking it would cost
+    /// more than it finds and read far more than it should, so the scan enters
+    /// only the directories the rows name.
+    #[test]
+    fn a_home_scan_enters_no_directory_it_was_not_sent_to() {
+        #[derive(Default)]
+        struct SpyTree {
+            inner: FakeTree,
+            visited: std::cell::RefCell<Vec<String>>,
+        }
+        impl FileTree for SpyTree {
+            fn read_dir(&self, path: &RepoPath) -> Result<Vec<DirEntry>, FileTreeError> {
+                self.visited.borrow_mut().push(path.as_str().to_owned());
+                self.inner.read_dir(path)
+            }
+        }
+
+        let tree = SpyTree {
+            inner: FakeTree::default()
+                .dir("", &[("Documents", EntryKind::Directory)])
+                .dir("Documents", &[("taxes", EntryKind::Directory)])
+                .dir(".claude", &[("settings.json", EntryKind::File)]),
+            visited: std::cell::RefCell::new(Vec::new()),
+        };
+
+        let report = DiscoverSurfaces::new(&tree, &FakeContents::default(), &ScanPolicy::default())
+            .in_home()
+            .run();
+
+        let visited = tree.visited.borrow().clone();
+        assert!(
+            !visited.iter().any(|v| v.starts_with("Documents")),
+            "walked outside the rows: {visited:?}"
+        );
+        assert!(
+            !visited.iter().any(String::is_empty),
+            "walked the home directory itself: {visited:?}"
+        );
+        assert_eq!(report.surfaces.len(), 1, "{report:?}");
+    }
+
+    #[test]
+    fn a_home_scan_reads_what_the_home_rows_name() {
+        let tree = FakeTree::default()
+            .dir(".codeium", &[("windsurf", EntryKind::Directory)])
+            .dir(".codeium/windsurf", &[("mcp_config.json", EntryKind::File)]);
+        let contents = FakeContents::default().file(
+            ".codeium/windsurf/mcp_config.json",
+            r#"{"mcpServers":{"pg":{"command":"npx","args":["-y","server-postgres"]}}}"#,
+        );
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &ScanPolicy::default())
+            .in_home()
+            .run();
+
+        assert_eq!(report.surfaces.len(), 1, "{report:?}");
+        assert_eq!(report.servers.len(), 1, "{report:?}");
+        assert!(report.is_complete());
+    }
+
+    /// Nobody has every tool installed. A root that is not there is an answer,
+    /// not a gap, or every scan would report itself incomplete.
+    #[test]
+    fn a_home_root_that_is_absent_leaves_the_scan_complete() {
+        let report = DiscoverSurfaces::new(
+            &FakeTree::default(),
+            &FakeContents::default(),
+            &ScanPolicy::default(),
+        )
+        .in_home()
+        .run();
+
+        assert!(report.surfaces.is_empty());
+        assert!(report.unreadable.is_empty(), "{report:?}");
+        assert!(report.is_complete());
+    }
+
+    /// A root that exists and cannot be read is a gap, and must still be said.
+    #[test]
+    fn a_home_root_that_cannot_be_read_is_reported() {
+        let tree = FakeTree::default().deny(".claude");
+
+        let report = DiscoverSurfaces::new(&tree, &FakeContents::default(), &ScanPolicy::default())
+            .in_home()
+            .run();
+
+        assert_eq!(report.unreadable.len(), 1, "{report:?}");
+        assert!(!report.is_complete());
+    }
+
+    /// The two trees are matched separately, so a repository scan of a home
+    /// layout finds nothing and cannot mislabel it.
+    #[test]
+    fn a_repository_scan_does_not_match_home_rows() {
+        let tree = FakeTree::default()
+            .dir("", &[(".codeium", EntryKind::Directory)])
+            .dir(".codeium", &[("windsurf", EntryKind::Directory)])
+            .dir(".codeium/windsurf", &[("mcp_config.json", EntryKind::File)]);
+
+        let report =
+            DiscoverSurfaces::new(&tree, &FakeContents::default(), &ScanPolicy::default()).run();
+
+        assert!(report.surfaces.is_empty(), "{report:?}");
     }
 
     fn skill_tree() -> FakeTree {
