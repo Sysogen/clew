@@ -454,6 +454,63 @@ mod tests {
         assert!(report.is_complete());
     }
 
+    /// The shape Gemini's own configuration reference shows, kept verbatim so a
+    /// change to it surfaces here rather than as a silent zero.
+    #[test]
+    fn a_gemini_config_reports_its_servers() {
+        let tree = FakeTree::default()
+            .dir("", &[(".gemini", EntryKind::Directory)])
+            .dir(".gemini", &[("settings.json", EntryKind::File)]);
+        let contents = FakeContents::default().file(
+            ".gemini/settings.json",
+            r#"{
+              "mcpServers": {
+                "mainServer": { "command": "bin/mcp_server.py" },
+                "anotherServer": {
+                  "command": "node",
+                  "args": ["mcp_server.js", "--verbose"],
+                  "trust": true
+                }
+              }
+            }"#,
+        );
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &ScanPolicy::default()).run();
+
+        assert_eq!(report.servers.len(), 2, "{report:?}");
+        assert!(
+            report
+                .servers
+                .iter()
+                .any(|s| s.server.invocation() == "node mcp_server.js --verbose")
+        );
+        assert!(report.is_complete());
+    }
+
+    /// Reading a new surface must not open a new way for a credential to reach
+    /// the report, so the guarantee is asserted where the row is added.
+    #[test]
+    fn a_gemini_config_reports_no_credential() {
+        let tree = FakeTree::default()
+            .dir("", &[(".gemini", EntryKind::Directory)])
+            .dir(".gemini", &[("settings.json", EntryKind::File)]);
+        let contents = FakeContents::default().file(
+            ".gemini/settings.json",
+            r#"{"mcpServers":{
+                 "a":{"command":"npx","args":["srv","--api-key","sk-live-SECRET"]},
+                 "b":{"url":"https://u:pw@mcp.example.invalid/sse?token=TOKENV"},
+                 "c":{"command":"x","env":{"API_KEY":"ENVV"}}}}"#,
+        );
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &ScanPolicy::default()).run();
+
+        let rendered = format!("{report:?}");
+        for secret in ["sk-live-SECRET", "TOKENV", "ENVV", "pw@"] {
+            assert!(!rendered.contains(secret), "{secret} reached the report");
+        }
+        assert_eq!(report.servers.len(), 3, "the servers are still reported");
+    }
+
     fn skill_tree() -> FakeTree {
         FakeTree::default()
             .dir("", &[(".claude", EntryKind::Directory)])

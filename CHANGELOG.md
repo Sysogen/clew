@@ -35,6 +35,12 @@ repository.
   permission-denied scan printed a clean result.
 - `--version` and `--help`, and a `path` subcommand naming what the tool does.
 
+### Added
+
+- Find Gemini CLI project settings and report the MCP servers they declare.
+- Find `.vscode/tasks.json`. A task can set `runOn: folderOpen`, which runs it
+  when the folder is opened. Reported, never opened.
+
 ### Fixed
 
 - Five catalogue citations pointed at pages that had moved or gone. Every
