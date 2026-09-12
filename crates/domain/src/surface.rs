@@ -26,6 +26,8 @@ pub enum SurfaceKind {
     Zed,
     /// Windsurf rules.
     Windsurf,
+    /// A file holding environment values.
+    EnvFile,
     /// Continue configuration.
     Continue,
     /// Cline configuration.
@@ -58,6 +60,7 @@ impl SurfaceKind {
             "kiro" => Self::Kiro,
             "zed" => Self::Zed,
             "windsurf" => Self::Windsurf,
+            "env" => Self::EnvFile,
             "continue" => Self::Continue,
             "cline" => Self::Cline,
             "aider" => Self::Aider,
@@ -83,6 +86,7 @@ impl SurfaceKind {
             Self::Kiro => "Kiro",
             Self::Zed => "Zed",
             Self::Windsurf => "Windsurf",
+            Self::EnvFile => "Environment file",
             Self::Continue => "Continue",
             Self::Cline => "Cline",
             Self::Aider => "Aider",
