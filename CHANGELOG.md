@@ -37,6 +37,11 @@ repository.
 
 ### Added
 
+- Find Kiro surfaces: its workspace MCP configuration, reported with the
+  servers it declares, plus steering files and agent hooks as inventory. A
+  steering file setting `inclusion: always` enters every interaction, and a
+  hook there runs a shell command on an event without a prompt.
+
 - Find Gemini CLI project settings and report the MCP servers they declare.
 - Find `.vscode/tasks.json`. A task can set `runOn: folderOpen`, which runs it
   when the folder is opened. Reported, never opened.

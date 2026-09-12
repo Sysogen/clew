@@ -304,6 +304,9 @@ mod tests {
             (".claude/skills/a/SKILL.md", SurfaceKind::Skill),
             ("CLAUDE.md", SurfaceKind::InstructionFile),
             ("AGENTS.md", SurfaceKind::InstructionFile),
+            (".kiro/settings/mcp.json", SurfaceKind::Kiro),
+            (".kiro/steering/product.md", SurfaceKind::Kiro),
+            (".kiro/hooks/lint-on-save.json", SurfaceKind::Kiro),
             (".codex/config.toml", SurfaceKind::Codex),
             (".gemini/settings.json", SurfaceKind::Gemini),
             (".cursor/mcp.json", SurfaceKind::Cursor),
@@ -336,6 +339,7 @@ mod tests {
             (".claude/skills/a/SKILL.md", &[Extraction::Permissions][..]),
             (".mcp.json", servers),
             (".gemini/settings.json", servers),
+            (".kiro/settings/mcp.json", servers),
             (".cursor/mcp.json", servers),
             ("cline_mcp_settings.json", servers),
             (".codex/config.toml", servers),
@@ -481,6 +485,40 @@ mod tests {
         assert!(
             matches!(error, CatalogueError::UnknownExtraction { .. }),
             "{error:?}"
+        );
+    }
+
+    #[test]
+    fn kiro_surfaces_match_below_the_repository_root() {
+        for path in [
+            "packages/api/.kiro/settings/mcp.json",
+            "packages/api/.kiro/steering/nested/rules.md",
+            "packages/api/.kiro/hooks/lint.json",
+        ] {
+            assert_eq!(
+                shipped().lookup(&p(path)).map(|m| m.kind),
+                Some(SurfaceKind::Kiro),
+                "{path}"
+            );
+        }
+    }
+
+    /// AGENTS.md lives inside Kiro's steering directory as well as at a
+    /// repository root, so the two rows overlap and only the order separates
+    /// them. The specific one must win, or the file is filed under the wrong
+    /// tool.
+    #[test]
+    fn a_steering_agents_file_is_kiro_not_the_generic_row() {
+        assert_eq!(
+            shipped()
+                .lookup(&p(".kiro/steering/AGENTS.md"))
+                .map(|m| m.kind),
+            Some(SurfaceKind::Kiro)
+        );
+        assert_eq!(
+            shipped().lookup(&p("AGENTS.md")).map(|m| m.kind),
+            Some(SurfaceKind::InstructionFile),
+            "a root AGENTS.md is still the generic row"
         );
     }
 
