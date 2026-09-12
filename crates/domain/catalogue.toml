@@ -86,6 +86,7 @@ source = "https://kiro.dev/docs/steering/"
 glob = "**/.kiro/hooks/**/*.json"
 tool = "kiro"
 kind = "kiro"
+extract = ["hooks"]
 last_verified = "2026-09-12"
 source = "https://kiro.dev/docs/hooks/"
 

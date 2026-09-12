@@ -37,10 +37,15 @@ repository.
 
 ### Added
 
+- Read Kiro agent hooks, which list entries naming their own trigger rather
+  than keying a map by event. Both shapes are read from the same key.
+  An injected prompt is reported alongside a shell command, since both fire
+  unasked, and a hook switched off is reported as switched off rather than
+  hidden. The report says which: `runs on`, `injects on`, and `(disabled)`.
+
 - Find Kiro surfaces: its workspace MCP configuration, reported with the
-  servers it declares, plus steering files and agent hooks as inventory. A
-  steering file setting `inclusion: always` enters every interaction, and a
-  hook there runs a shell command on an event without a prompt.
+  servers it declares, plus steering files as inventory. A steering file
+  setting `inclusion: always` enters every interaction.
 
 - Find Gemini CLI project settings and report the MCP servers they declare.
 - Find `.vscode/tasks.json`. A task can set `runOn: folderOpen`, which runs it

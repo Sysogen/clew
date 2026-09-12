@@ -40,9 +40,8 @@ pub const REDACTED: &str = "<redacted>";
 impl Transport {
     /// A local server, with any credential in its arguments taken out.
     ///
-    /// Redacting here rather than when printing is what makes the guarantee
-    /// hold: the value is gone before anything can hold it, so no later
-    /// formatter, log line, or serialiser can put it back.
+    /// Redacted on the way in, not on the way out, so no later formatter or
+    /// log can put the value back.
     #[must_use]
     pub fn local(command: String, args: &[String]) -> Self {
         Self::Local {
@@ -74,9 +73,8 @@ impl McpServer {
 
 /// A url as a reference: where it points, not what it carries.
 ///
-/// Userinfo and the query are where a token sits, and neither is needed to
-/// know which server is reached. The query is marked rather than dropped, so
-/// a reader can see that the url carries something.
+/// The query is marked rather than dropped, so a reader can see the url
+/// carries something.
 fn redact_url(url: &str) -> String {
     let head = url.split('#').next().unwrap_or(url);
     let (head, has_query) = head
@@ -103,8 +101,7 @@ fn redact_url(url: &str) -> String {
 /// Arguments with credential values taken out.
 ///
 /// A value cannot be told from a package name by looking at it, so what marks
-/// one is the flag before it, the `key=value` it sits in, or a shape issuers
-/// have made unmistakable.
+/// one is the flag before it, the `key=value` it sits in, or an issuer prefix.
 fn redact_args(args: &[String]) -> Vec<String> {
     let mut out = Vec::with_capacity(args.len());
     let mut redact_next = false;
