@@ -340,6 +340,7 @@ mod tests {
             (".mcp.json", servers),
             (".gemini/settings.json", servers),
             (".kiro/settings/mcp.json", servers),
+            (".kiro/hooks/lint-on-save.json", &[Extraction::Hooks][..]),
             (".cursor/mcp.json", servers),
             ("cline_mcp_settings.json", servers),
             (".codex/config.toml", servers),

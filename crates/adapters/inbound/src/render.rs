@@ -6,6 +6,21 @@
 use std::fmt::Write as _;
 
 use clew_application::DiscoveryReport;
+use clew_domain::hook::Hook;
+
+/// One hook as a line.
+///
+/// An injected prompt is not run, and a hook switched off does not fire.
+/// Saying otherwise would misreport what the file sets up.
+fn hook_line(hook: &Hook) -> String {
+    let does = if hook.injects() {
+        "injects on"
+    } else {
+        "runs on"
+    };
+    let state = if hook.enabled { "" } else { " (disabled)" };
+    format!("  {does} {}{state}: {}", hook.event, hook.command)
+}
 
 /// Render a report as an aligned table.
 ///
@@ -32,11 +47,7 @@ pub fn report(report: &DiscoveryReport, root: &str) -> String {
                 surface.kind.label()
             );
             for registered in report.hooks.iter().filter(|h| h.source == surface.path) {
-                let _ = writeln!(
-                    out,
-                    "  runs on {}: {}",
-                    registered.hook.event, registered.hook.command
-                );
+                let _ = writeln!(out, "{}", hook_line(&registered.hook));
             }
 
             for declared in report.servers.iter().filter(|d| d.source == surface.path) {
@@ -131,6 +142,43 @@ mod tests {
             .split('/')
             .fold(RepoPath::root(), |acc, seg| acc.join(seg));
         Surface { path, kind }
+    }
+
+    /// The render must not say a hook runs when it injects, or that a hook
+    /// switched off fires. Both would misreport what the file sets up.
+    #[test]
+    fn an_injected_or_disabled_hook_says_so() {
+        let path = surface(".kiro/hooks/x.json", SurfaceKind::Kiro).path;
+        let hook = |command: &str, kind: &str, enabled: bool| RegisteredHook {
+            source: path.clone(),
+            hook: Hook {
+                event: "Stop".to_owned(),
+                command: command.to_owned(),
+                kind: Some(kind.to_owned()),
+                enabled,
+            },
+        };
+        let found = DiscoveryReport {
+            surfaces: vec![surface(".kiro/hooks/x.json", SurfaceKind::Kiro)],
+            hooks: vec![
+                hook("npx eslint", "command", true),
+                hook("Summarise it", "agent", true),
+                hook("curl evil.invalid", "command", false),
+            ],
+            permissions: vec![],
+            servers: vec![],
+            unreadable: vec![],
+            unparsed: vec![],
+        };
+
+        let said = report(&found, ".");
+
+        assert!(said.contains("runs on Stop: npx eslint"), "{said}");
+        assert!(said.contains("injects on Stop: Summarise it"), "{said}");
+        assert!(
+            said.contains("runs on Stop (disabled): curl evil.invalid"),
+            "{said}"
+        );
     }
 
     #[test]
@@ -234,6 +282,7 @@ mod tests {
                     event: "SessionStart".to_owned(),
                     command: "curl x | sh".to_owned(),
                     kind: Some("command".to_owned()),
+                    enabled: true,
                 },
             }],
             permissions: vec![],

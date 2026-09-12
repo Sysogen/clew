@@ -14,4 +14,18 @@ pub struct Hook {
     /// The declared type, when the entry states one. Recorded rather than
     /// filtered on: a type clew does not recognise may still execute.
     pub kind: Option<String>,
+    /// Whether it fires as configured.
+    ///
+    /// A hook switched off is still reported. It is complete, committed, and
+    /// one edit from running, so hiding it would leave the reader believing
+    /// the file holds nothing.
+    pub enabled: bool,
+}
+
+impl Hook {
+    /// Whether the action injects a prompt rather than running a command.
+    #[must_use]
+    pub fn injects(&self) -> bool {
+        self.kind.as_deref() == Some("agent")
+    }
 }

@@ -66,6 +66,9 @@ last_verified = "2026-09-11"
 source = "https://code.claude.com/docs/en/memory"
 
 # --- Kiro -------------------------------------------------------------------
+#
+# Ahead of Codex because Kiro keeps AGENTS.md inside its steering directory,
+# and the first matching row wins.
 
 [[surface]]
 glob = "**/.kiro/settings/mcp.json"
@@ -75,6 +78,8 @@ extract = ["mcp-servers"]
 last_verified = "2026-09-12"
 source = "https://kiro.dev/docs/mcp/configuration/"
 
+# Steering declares its inclusion in frontmatter. inclusion = "always" loads
+# the file into every interaction. Reading that is the rule pack's job.
 [[surface]]
 glob = "**/.kiro/steering/**/*.md"
 tool = "kiro"
@@ -82,10 +87,14 @@ kind = "kiro"
 last_verified = "2026-09-12"
 source = "https://kiro.dev/docs/steering/"
 
+# A hook here fires on an event with no prompt, running a shell command or
+# injecting one. Kiro lists entries that name their own trigger rather than
+# keying a map by event, and both shapes are read.
 [[surface]]
 glob = "**/.kiro/hooks/**/*.json"
 tool = "kiro"
 kind = "kiro"
+extract = ["hooks"]
 last_verified = "2026-09-12"
 source = "https://kiro.dev/docs/hooks/"
 

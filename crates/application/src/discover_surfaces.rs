@@ -545,6 +545,41 @@ mod tests {
         assert!(report.is_complete());
     }
 
+    /// Kiro's documented hook file, reported end to end. The command is the
+    /// finding: it runs on an event with no one asked.
+    #[test]
+    fn a_kiro_hook_file_reports_its_command() {
+        let tree = FakeTree::default()
+            .dir("", &[(".kiro", EntryKind::Directory)])
+            .dir(".kiro", &[("hooks", EntryKind::Directory)])
+            .dir(".kiro/hooks", &[("lint-on-save.json", EntryKind::File)]);
+        let contents = FakeContents::default().file(
+            ".kiro/hooks/lint-on-save.json",
+            r#"{"version":"v1","hooks":[
+                 {"name":"Lint on save","trigger":"PostFileSave",
+                  "action":{"type":"command","command":"npx eslint --fix"}},
+                 {"name":"Brief","trigger":"Stop",
+                  "action":{"type":"agent","prompt":"Summarise the diff"}}]}"#,
+        );
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &ScanPolicy::default()).run();
+
+        assert_eq!(report.hooks.len(), 2, "{report:?}");
+        assert!(
+            report
+                .hooks
+                .iter()
+                .any(|h| h.hook.command == "npx eslint --fix" && h.hook.event == "PostFileSave")
+        );
+        assert!(
+            report
+                .hooks
+                .iter()
+                .any(|h| h.hook.kind.as_deref() == Some("agent"))
+        );
+        assert!(report.is_complete());
+    }
+
     fn skill_tree() -> FakeTree {
         FakeTree::default()
             .dir("", &[(".claude", EntryKind::Directory)])
