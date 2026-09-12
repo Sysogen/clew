@@ -3,6 +3,8 @@
 
 //! Walk a repository and report the agent surfaces it configures.
 
+use std::collections::BTreeSet;
+
 use clew_domain::extract;
 use clew_domain::ports::file_contents::FileContents;
 use clew_domain::ports::file_tree::{FileTree, FileTreeError};
@@ -158,7 +160,14 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
                 .collect()
         };
 
+        // A root may sit inside another, and a tree may lead back to one, so a
+        // directory already walked is not walked again.
+        let mut walked: BTreeSet<RepoPath> = BTreeSet::new();
+
         while let Some(dir) = queue.pop() {
+            if !walked.insert(dir.clone()) {
+                continue;
+            }
             let entries = match self.tree.read_dir(&dir) {
                 Ok(entries) => entries,
                 Err(error) => {
@@ -690,6 +699,36 @@ mod tests {
         assert!(report.is_complete());
     }
 
+    /// One root sits inside another, and the inner one is entered either way.
+    #[test]
+    fn a_root_inside_another_is_walked_once() {
+        #[derive(Default)]
+        struct SpyTree(std::cell::RefCell<Vec<String>>, FakeTree);
+        impl FileTree for SpyTree {
+            fn read_dir(&self, path: &RepoPath) -> Result<Vec<DirEntry>, FileTreeError> {
+                self.0.borrow_mut().push(path.as_str().to_owned());
+                self.1.read_dir(path)
+            }
+        }
+
+        let tree = SpyTree(
+            std::cell::RefCell::new(Vec::new()),
+            FakeTree::default()
+                .dir(".agents", &[("skills", EntryKind::Directory)])
+                .dir(".agents/skills", &[("review", EntryKind::Directory)])
+                .dir(".agents/skills/review", &[("SKILL.md", EntryKind::File)]),
+        );
+
+        let report = DiscoverSurfaces::new(&tree, &FakeContents::default(), &ScanPolicy::default())
+            .in_scope(Scope::Home)
+            .run();
+
+        let visited = tree.0.borrow().clone();
+        let twice = visited.iter().filter(|v| *v == ".agents/skills").count();
+        assert_eq!(twice, 1, "walked twice: {visited:?}");
+        assert_eq!(report.surfaces.len(), 1, "{report:?}");
+    }
+
     /// Policy an administrator deployed is in neither tree the engineer owns.
     #[test]
     fn a_system_scan_reads_the_rules_an_administrator_deployed() {
@@ -703,8 +742,7 @@ mod tests {
         assert!(report.is_complete());
     }
 
-    /// A system scan enters the directories the rows name, not the rest of the
-    /// machine. Entering /etc would read a great deal that is nobody's agent.
+    /// Entering /etc would read a great deal that is nobody's agent.
     #[test]
     fn a_system_scan_does_not_enter_the_whole_of_etc() {
         #[derive(Default)]

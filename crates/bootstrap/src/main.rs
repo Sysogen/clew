@@ -36,8 +36,8 @@ clew never reads a credential value, and never executes a hook, script, or
 command it discovers. A symbolic link found during a scan is reported, never
 followed; a directory clew was told to read is read even if it is one.";
 
-/// Where an administrator deploys policy. Nothing below it is entered unless
-/// a system row names it.
+/// Where an administrator deploys policy. Only what a system row names is
+/// entered below it.
 #[cfg(windows)]
 const MACHINE_ROOT: &str = "C:\\";
 #[cfg(not(windows))]

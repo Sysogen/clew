@@ -88,6 +88,9 @@ repository.
 
 ### Fixed
 
+- Report a named directory whose link points nowhere as a gap rather than as a
+  tool that is not installed. Something put the link there.
+
 - Never walk into a directory reached by a symbolic link found while walking.
   A directory clew was told to read is read even when it is a link: `/etc` is
   one on macOS, and a dotfile manager commonly makes `~/.claude` one. The check followed

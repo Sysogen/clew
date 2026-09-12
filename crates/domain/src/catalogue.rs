@@ -224,14 +224,14 @@ impl Catalogue {
                 })?;
             // A home scan enters only the directories its rows name, so the
             // first segment has to be one.
-            if scope != Scope::Repository
-                && rule.glob.split('/').next().is_none_or(|first| {
-                    first.is_empty()
-                        || first == "."
-                        || first == ".."
-                        || first.contains(['*', '?', '[', '{'])
-                })
-            {
+            let mut segments = rule.glob.split('/');
+            let anchored = segments
+                .next()
+                .is_some_and(|first| !first.is_empty() && !first.contains(['*', '?', '[', '{']));
+            // A traversal segment anywhere resolves outside the root the scan
+            // was given, so none is allowed at any position.
+            let walks_out = rule.glob.split('/').any(|s| s == "." || s == "..");
+            if scope != Scope::Repository && (!anchored || walks_out) {
                 return Err(CatalogueError::UnanchoredRow {
                     row,
                     glob: rule.glob.clone(),
@@ -297,8 +297,7 @@ impl Catalogue {
     /// repeats.
     ///
     /// Walking a whole home directory or a whole machine would cost far more
-    /// than it finds, so those rows are anchored and only the directories they
-    /// name are entered.
+    /// than it finds, so only the directories the rows name are entered.
     #[must_use]
     pub fn roots_in(&self, scope: Scope) -> Vec<&str> {
         let mut roots: Vec<&str> = Vec::new();
@@ -311,18 +310,7 @@ impl Catalogue {
                 roots.push(root);
             }
         }
-        // One root inside another would be walked twice, so only the outermost
-        // is kept.
-        let outermost: Vec<&str> = roots
-            .iter()
-            .filter(|root| {
-                !roots
-                    .iter()
-                    .any(|other| *other != **root && root.starts_with(&format!("{other}/")))
-            })
-            .copied()
-            .collect();
-        outermost
+        roots
     }
 
     /// Every row, in declaration order.
@@ -776,6 +764,8 @@ mod tests {
                 ".kiro/settings",
                 ".kiro/steering",
                 ".codeium/windsurf",
+                ".codeium/windsurf/memories",
+                ".agents/skills",
                 ".agents"
             ]
         );
@@ -784,6 +774,30 @@ mod tests {
             vec!["etc/devin/rules", "etc/windsurf/rules"],
             "a system scan reads what the rows name, not the rest of /etc"
         );
+    }
+
+    /// A row must name a directory the scan can enter, and a traversal segment
+    /// anywhere resolves outside the root the scan was given.
+    #[test]
+    fn a_row_outside_a_repository_cannot_reach_past_its_root() {
+        for glob in ["foo/../../outside/**/*.md", "a/./b/**/*.md", "a/../b"] {
+            let error = Catalogue::load(&format!(
+                r#"version = 1
+                   [[surface]]
+                   scope = "home"
+                   glob = "{glob}"
+                   tool = "x"
+                   kind = "skill"
+                   last_verified = "2026-09-12"
+                   source = "https://example.invalid"
+                "#
+            ))
+            .expect_err("must not load");
+            assert!(
+                matches!(error, CatalogueError::UnanchoredRow { .. }),
+                "{glob}: {error:?}"
+            );
+        }
     }
 
     /// Policy an administrator deploys is not in any repository and not in any

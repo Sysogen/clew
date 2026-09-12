@@ -34,10 +34,8 @@ impl StdFileTree {
 
     /// Also follow a link at each of these paths.
     ///
-    /// They were named rather than discovered: `/etc` is a link on macOS, and
-    /// a dotfile manager commonly makes `.claude` one. A link found while
-    /// walking is still refused, which is what keeps a hostile tree from
-    /// steering the scan.
+    /// These were named rather than discovered. A link found while walking is
+    /// still refused, which is what stops a hostile tree steering a scan.
     #[must_use]
     pub fn following(mut self, paths: &[&str]) -> Self {
         self.named = paths.iter().map(|p| (*p).to_owned()).collect();
@@ -78,10 +76,13 @@ impl FileTree for StdFileTree {
         let absolute = self.absolute(path);
         let named = path.as_str().is_empty() || self.named.iter().any(|n| n == path.as_str());
         if named {
-            // metadata follows, and says absent apart from not-a-directory.
-            let found = fs::metadata(&absolute).map_err(|e| map_error(&e))?;
-            if !found.is_dir() {
-                return Err(FileTreeError::NotADirectory);
+            match fs::metadata(&absolute) {
+                Ok(found) if found.is_dir() => {}
+                Ok(_) => return Err(FileTreeError::NotADirectory),
+                Err(_) if fs::symlink_metadata(&absolute).is_ok() => {
+                    return Err(FileTreeError::Unreadable("link points nowhere".to_owned()));
+                }
+                Err(error) => return Err(map_error(&error)),
             }
         } else {
             // symlink_metadata does not follow, so a link found while walking
@@ -294,9 +295,8 @@ mod contents_tests {
         );
     }
 
-    /// A tool that is not installed leaves no directory. That must read as
-    /// absent, not as a directory that could not be inspected, or every scan
-    /// reports itself incomplete.
+    /// A tool that is not installed leaves no directory, and that must read as
+    /// absent or every scan reports itself incomplete.
     #[test]
     fn a_named_root_that_is_absent_reads_as_absent() {
         let dir = scratch("absentroot");
@@ -308,9 +308,25 @@ mod contents_tests {
         assert_eq!(read, Err(FileTreeError::NotFound));
     }
 
-    /// A named root may be a link: /etc is one on macOS, and a dotfile manager
-    /// commonly makes .claude one. Refusing them would report a gap where the
-    /// engineer simply keeps their configuration elsewhere.
+    /// Something put the link there, so calling it absent hides it.
+    #[cfg(unix)]
+    #[test]
+    fn a_named_root_that_points_nowhere_is_not_absent() {
+        let dir = scratch("danglingroot");
+        std::os::unix::fs::symlink(dir.join("gone"), dir.join(".claude")).expect("symlink");
+
+        let read = StdFileTree::new(&dir)
+            .following(&[".claude"])
+            .read_dir(&path(".claude"));
+
+        assert!(
+            matches!(read, Err(FileTreeError::Unreadable(_))),
+            "a broken link must not read as absent: {read:?}"
+        );
+    }
+
+    /// /etc is a link on macOS and a dotfile manager commonly makes .claude
+    /// one, so refusing them would report a gap where there is none.
     #[cfg(unix)]
     #[test]
     fn a_named_root_may_be_a_link() {
