@@ -84,10 +84,10 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
         }
     }
 
-    /// Read the home directory instead, against the rows anchored there.
+    /// Read another tree instead, against the rows anchored there.
     #[must_use]
-    pub fn in_home(mut self) -> Self {
-        self.scope = Scope::Home;
+    pub fn in_scope(mut self, scope: Scope) -> Self {
+        self.scope = scope;
         self
     }
 
@@ -148,13 +148,14 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
         let mut report = DiscoveryReport::default();
         // A home scan enters only the directories its rows name. Walking a
         // whole home directory would cost far more than it finds.
-        let mut queue: Vec<RepoPath> = match self.scope {
-            Scope::Repository => vec![RepoPath::root()],
-            Scope::Home => catalogue()
-                .home_roots()
+        let mut queue: Vec<RepoPath> = if self.scope == Scope::Repository {
+            vec![RepoPath::root()]
+        } else {
+            catalogue()
+                .roots_in(self.scope)
                 .into_iter()
                 .map(|root| RepoPath::root().join(root))
-                .collect(),
+                .collect()
         };
 
         while let Some(dir) = queue.pop() {
@@ -166,9 +167,9 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
                     // Absent means the tool is not installed. A root that is
                     // there and is not a directory, a symlink among them, is
                     // still a gap and still said.
-                    if self.scope == Scope::Home
+                    if self.scope != Scope::Repository
                         && error == FileTreeError::NotFound
-                        && catalogue().home_roots().contains(&dir.as_str())
+                        && catalogue().roots_in(self.scope).contains(&dir.as_str())
                     {
                         continue;
                     }
@@ -655,7 +656,7 @@ mod tests {
         };
 
         let report = DiscoverSurfaces::new(&tree, &FakeContents::default(), &ScanPolicy::default())
-            .in_home()
+            .in_scope(Scope::Home)
             .run();
 
         let visited = tree.visited.borrow().clone();
@@ -681,12 +682,54 @@ mod tests {
         );
 
         let report = DiscoverSurfaces::new(&tree, &contents, &ScanPolicy::default())
-            .in_home()
+            .in_scope(Scope::Home)
             .run();
 
         assert_eq!(report.surfaces.len(), 1, "{report:?}");
         assert_eq!(report.servers.len(), 1, "{report:?}");
         assert!(report.is_complete());
+    }
+
+    /// Policy an administrator deployed is in neither tree the engineer owns.
+    #[test]
+    fn a_system_scan_reads_the_rules_an_administrator_deployed() {
+        let tree = FakeTree::default().dir("etc/devin/rules", &[("policy.md", EntryKind::File)]);
+
+        let report = DiscoverSurfaces::new(&tree, &FakeContents::default(), &ScanPolicy::default())
+            .in_scope(Scope::System)
+            .run();
+
+        assert_eq!(report.surfaces.len(), 1, "{report:?}");
+        assert!(report.is_complete());
+    }
+
+    /// A system scan enters the directories the rows name, not the rest of the
+    /// machine. Entering /etc would read a great deal that is nobody's agent.
+    #[test]
+    fn a_system_scan_does_not_enter_the_whole_of_etc() {
+        #[derive(Default)]
+        struct SpyTree(std::cell::RefCell<Vec<String>>);
+        impl FileTree for SpyTree {
+            fn read_dir(&self, path: &RepoPath) -> Result<Vec<DirEntry>, FileTreeError> {
+                self.0.borrow_mut().push(path.as_str().to_owned());
+                Err(FileTreeError::NotFound)
+            }
+        }
+
+        let tree = SpyTree::default();
+        let _ = DiscoverSurfaces::new(&tree, &FakeContents::default(), &ScanPolicy::default())
+            .in_scope(Scope::System)
+            .run();
+
+        let visited = tree.0.borrow().clone();
+        assert!(
+            !visited.iter().any(|v| v == "etc"),
+            "entered all of etc: {visited:?}"
+        );
+        assert!(
+            visited.iter().any(|v| v == "etc/devin/rules"),
+            "{visited:?}"
+        );
     }
 
     /// Nobody has every tool installed. A root that is not there is an answer,
@@ -698,7 +741,7 @@ mod tests {
             &FakeContents::default(),
             &ScanPolicy::default(),
         )
-        .in_home()
+        .in_scope(Scope::Home)
         .run();
 
         assert!(report.surfaces.is_empty());
@@ -723,7 +766,7 @@ mod tests {
 
         let report =
             DiscoverSurfaces::new(&NotDir, &FakeContents::default(), &ScanPolicy::default())
-                .in_home()
+                .in_scope(Scope::Home)
                 .run();
 
         assert_eq!(report.unreadable.len(), 1, "{report:?}");
@@ -736,7 +779,7 @@ mod tests {
         let tree = FakeTree::default().deny(".claude");
 
         let report = DiscoverSurfaces::new(&tree, &FakeContents::default(), &ScanPolicy::default())
-            .in_home()
+            .in_scope(Scope::Home)
             .run();
 
         assert_eq!(report.unreadable.len(), 1, "{report:?}");

@@ -364,3 +364,24 @@ tool = "cline"
 kind = "instruction"
 last_verified = "2026-09-12"
 source = "https://docs.cline.bot/features/cline-rules"
+
+# --- Deployed by an administrator --------------------------------------------
+#
+# Anchored at the filesystem root. Read-only to the engineer, so nothing here
+# was chosen by whoever is being scanned.
+
+[[surface]]
+scope = "system"
+glob = "etc/devin/rules/**/*.md"
+tool = "windsurf"
+kind = "windsurf"
+last_verified = "2026-09-12"
+source = "https://docs.windsurf.com/windsurf/cascade/memories"
+
+[[surface]]
+scope = "system"
+glob = "etc/windsurf/rules/**/*.md"
+tool = "windsurf"
+kind = "windsurf"
+last_verified = "2026-09-12"
+source = "https://docs.windsurf.com/windsurf/cascade/memories"

@@ -11,14 +11,16 @@ use clew_adapter_cli::{Command, parse, report};
 use clew_adapter_fs::{StdFileContents, StdFileTree};
 use clew_application::DiscoverSurfaces;
 use clew_domain::ScanPolicy;
+use clew_domain::catalogue;
 use clew_domain::scan_policy::{DEFAULT_MAX_DEPTH, DEFAULT_MAX_FILE_BYTES};
+use clew_domain::scope::Scope;
 
 const USAGE: &str = "\
 Discover AI coding agent configuration surfaces.
 
 USAGE:
     clew path [DIR]     List agent surfaces found under DIR (default: .)
-    clew system         List agent surfaces in the home directory
+    clew system         List agent surfaces outside any repository
     clew --version
     clew --help
 
@@ -26,11 +28,20 @@ ENVIRONMENT:
     CLEW_MAX_DEPTH      Directory recursion limit
     CLEW_MAX_FILE_BYTES Largest configuration file read
 
-A repository holds what a team shares. The home directory holds what each
-engineer set up alone, which no code review covers; `system` reads that.
+A repository holds what a team shares. `system` reads the rest: what each
+engineer set up alone under their home directory, and what an administrator
+deployed to the machine. Neither reaches a code review.
 
 clew never reads a credential value, and never executes a hook, script, or
-command it discovers. Symbolic links are reported, never followed.";
+command it discovers. A symbolic link found during a scan is reported, never
+followed; a directory clew was told to read is read even if it is one.";
+
+/// Where an administrator deploys policy. Nothing below it is entered unless
+/// a system row names it.
+#[cfg(windows)]
+const MACHINE_ROOT: &str = "C:\\";
+#[cfg(not(windows))]
+const MACHINE_ROOT: &str = "/";
 
 fn max_depth() -> usize {
     env_or("CLEW_MAX_DEPTH", DEFAULT_MAX_DEPTH)
@@ -56,8 +67,7 @@ fn main() -> ExitCode {
         }
     };
 
-    let mut home = false;
-    let root = match command {
+    let scans: Vec<(String, Scope)> = match command {
         Command::Help => {
             println!("clew {}\n\n{USAGE}", env!("CARGO_PKG_VERSION"));
             return ExitCode::SUCCESS;
@@ -66,36 +76,46 @@ fn main() -> ExitCode {
             println!("clew {}", env!("CARGO_PKG_VERSION"));
             return ExitCode::SUCCESS;
         }
-        Command::Path { root } => root,
+        Command::Path { root } => {
+            if !Path::new(&root).is_dir() {
+                eprintln!("clew: not a directory: {root}");
+                return ExitCode::FAILURE;
+            }
+            vec![(root, Scope::Repository)]
+        }
+        // Two trees, because policy an administrator deployed is not in
+        // anybody's home directory.
         Command::System => {
-            home = true;
-            let Some(path) = env::home_dir() else {
+            let Some(home) = env::home_dir() else {
                 eprintln!("clew: no home directory to scan");
                 return ExitCode::FAILURE;
             };
-            path.to_string_lossy().into_owned()
+            vec![
+                (home.to_string_lossy().into_owned(), Scope::Home),
+                (MACHINE_ROOT.to_owned(), Scope::System),
+            ]
         }
     };
 
-    if !Path::new(&root).is_dir() {
-        eprintln!("clew: not a directory: {root}");
-        return ExitCode::FAILURE;
-    }
-
-    let tree = StdFileTree::new(&root);
-    let contents = StdFileContents::new(&root);
     let policy =
         ScanPolicy::with_default_pruning(max_depth()).with_max_file_bytes(max_file_bytes());
-    let scan = DiscoverSurfaces::new(&tree, &contents, &policy);
-    let found = if home {
-        scan.in_home().run()
-    } else {
-        scan.run()
-    };
+    let mut complete = true;
 
-    print!("{}", report(&found, &root));
+    for (root, scope) in &scans {
+        let tree = StdFileTree::new(root).following(&catalogue::shipped().roots_in(*scope));
+        let contents = StdFileContents::new(root);
+        let found = DiscoverSurfaces::new(&tree, &contents, &policy)
+            .in_scope(*scope)
+            .run();
 
-    if found.is_complete() {
+        if scans.len() > 1 {
+            println!("{root}");
+        }
+        print!("{}", report(&found, root));
+        complete &= found.is_complete();
+    }
+
+    if complete {
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE

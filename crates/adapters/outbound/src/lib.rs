@@ -19,13 +19,29 @@ use clew_domain::ports::file_tree::{DirEntry, EntryKind, FileTree, FileTreeError
 /// A [`FileTree`] backed by the real filesystem, rooted at a directory.
 pub struct StdFileTree {
     root: PathBuf,
+    named: Vec<String>,
 }
 
 impl StdFileTree {
     /// Root the adapter at `root`.
     #[must_use]
     pub fn new(root: impl Into<PathBuf>) -> Self {
-        Self { root: root.into() }
+        Self {
+            root: root.into(),
+            named: Vec::new(),
+        }
+    }
+
+    /// Also follow a link at each of these paths.
+    ///
+    /// They were named rather than discovered: `/etc` is a link on macOS, and
+    /// a dotfile manager commonly makes `.claude` one. A link found while
+    /// walking is still refused, which is what keeps a hostile tree from
+    /// steering the scan.
+    #[must_use]
+    pub fn following(mut self, paths: &[&str]) -> Self {
+        self.named = paths.iter().map(|p| (*p).to_owned()).collect();
+        self
     }
 
     fn absolute(&self, path: &RepoPath) -> PathBuf {
@@ -60,15 +76,16 @@ fn kind_of(path: &Path) -> Result<EntryKind, FileTreeError> {
 impl FileTree for StdFileTree {
     fn read_dir(&self, path: &RepoPath) -> Result<Vec<DirEntry>, FileTreeError> {
         let absolute = self.absolute(path);
-        if path.as_str().is_empty() {
-            // The operator named this one, so it is followed like any path
-            // they type. Everything below it was discovered instead.
-            if !absolute.is_dir() {
+        let named = path.as_str().is_empty() || self.named.iter().any(|n| n == path.as_str());
+        if named {
+            // metadata follows, and says absent apart from not-a-directory.
+            let found = fs::metadata(&absolute).map_err(|e| map_error(&e))?;
+            if !found.is_dir() {
                 return Err(FileTreeError::NotADirectory);
             }
         } else {
-            // symlink_metadata does not follow, so a link to a directory is
-            // refused rather than walked out of the scan root.
+            // symlink_metadata does not follow, so a link found while walking
+            // is refused rather than walked out of the scan root.
             let found = fs::symlink_metadata(&absolute).map_err(|e| map_error(&e))?;
             if !found.is_dir() {
                 return Err(FileTreeError::NotADirectory);
@@ -275,6 +292,42 @@ mod contents_tests {
             Err(FileTreeError::NotADirectory),
             "a linked directory must be refused, not walked"
         );
+    }
+
+    /// A tool that is not installed leaves no directory. That must read as
+    /// absent, not as a directory that could not be inspected, or every scan
+    /// reports itself incomplete.
+    #[test]
+    fn a_named_root_that_is_absent_reads_as_absent() {
+        let dir = scratch("absentroot");
+
+        let read = StdFileTree::new(&dir)
+            .following(&[".gemini"])
+            .read_dir(&path(".gemini"));
+
+        assert_eq!(read, Err(FileTreeError::NotFound));
+    }
+
+    /// A named root may be a link: /etc is one on macOS, and a dotfile manager
+    /// commonly makes .claude one. Refusing them would report a gap where the
+    /// engineer simply keeps their configuration elsewhere.
+    #[cfg(unix)]
+    #[test]
+    fn a_named_root_may_be_a_link() {
+        let dir = scratch("namedlink");
+        let outside = dir.join("elsewhere");
+        fs::create_dir(&outside).expect("mkdir");
+        fs::write(outside.join("settings.json"), "{}").expect("write");
+        let inside = dir.join("root");
+        fs::create_dir(&inside).expect("mkdir");
+        std::os::unix::fs::symlink(&outside, inside.join(".claude")).expect("symlink");
+
+        let entries = StdFileTree::new(&inside)
+            .following(&[".claude"])
+            .read_dir(&path(".claude"))
+            .expect("a named root is read");
+
+        assert_eq!(entries.len(), 1);
     }
 
     /// The operator named the root, so it is followed like any path they type.

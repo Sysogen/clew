@@ -10,6 +10,10 @@ repository.
 
 ### Added
 
+- `clew system` also reads the rules an administrator deploys to the machine,
+  `/etc/devin/rules` and the legacy `/etc/windsurf/rules`. Nobody being scanned
+  chose those, and they are in neither tree that engineer owns.
+
 - `clew system`, which scans the home directory for the agent configuration
   kept outside any repository: user-level MCP servers, global rules, and
   global skills for Claude Code, Gemini CLI, Kiro, Windsurf, Zed, and Cline.
@@ -84,7 +88,9 @@ repository.
 
 ### Fixed
 
-- Never walk into a directory reached by a symbolic link. The check followed
+- Never walk into a directory reached by a symbolic link found while walking.
+  A directory clew was told to read is read even when it is a link: `/etc` is
+  one on macOS, and a dotfile manager commonly makes `~/.claude` one. The check followed
   the link, so a home root such as `~/.claude -> /elsewhere` was traversed and
   reported files outside the tree being scanned. The root the operator names is
   still followed; everything discovered below it is not.
