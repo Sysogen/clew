@@ -26,11 +26,13 @@ repository.
 - The `invisible-unicode` rule, severity high. It flags zero-width,
   bidirectional, tag-block and other non-printing characters in instruction,
   rules and skill files: the Rules File Backdoor, disclosed by Pillar Security
-  on 18 March 2025. A catalogue row names the rules that read it with `check`,
-  so settings a tool keeps beside its rules are never quoted. A run of hidden characters is one finding, so a smuggled
-  instruction does not fill the report. A byte order mark opening a file is
-  left alone, as are emoji variation selectors and non-breaking spaces. The
-  evidence escapes the
+  on 18 March 2025. Non-printing means Unicode's Default_Ignorable_Code_Point,
+  so blank fillers such as U+3164 are caught and visible format marks such as
+  the Arabic number signs are not. A catalogue row names the rules that read
+  it with `check`, so settings a tool keeps beside its rules are never quoted.
+  A run of hidden characters is one finding, so a smuggled instruction does
+  not fill the report. A byte order mark opening a file is left alone, as are
+  variation selectors and non-breaking spaces. The evidence escapes the
   character as `<U+XXXX>` so a report never carries the payload, and quotes at
   most `CLEW_EVIDENCE_WIDTH` characters of the line, never fewer than 12.
 
