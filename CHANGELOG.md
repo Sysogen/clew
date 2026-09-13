@@ -5,6 +5,8 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-13
+
 ### Added
 
 - `--fail-on low|medium|high` on `path` and `system`: exit `2` when a finding
@@ -13,6 +15,10 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   since what it could not read may hold more.
 
 ### Fixed
+
+- Piping the text report into a reader that stops early, such as
+  `clew path . | head`, no longer panics when the pipe closes. The scan finishes
+  and exits with its usual status.
 
 - A release waits for CI to finish on its commit rather than failing because
   it has not. `Tag` starts the release as soon as a version change lands, while
@@ -245,7 +251,8 @@ tagged release.
   devcontainers.
 - `CLEW_MAX_DEPTH` sets the directory recursion limit.
 
-[Unreleased]: https://github.com/sysogen/clew/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/sysogen/clew/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/sysogen/clew/releases/tag/v0.3.0
 [0.2.0]: https://github.com/sysogen/clew/releases/tag/v0.2.0
 [0.1.0]: https://github.com/sysogen/clew/releases/tag/v0.1.0
 [0.0.0]: https://crates.io/crates/clew-cli/0.0.0
