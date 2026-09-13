@@ -8,6 +8,10 @@ use crate::repo_path::RepoPath;
 /// How much of the offending line is kept as evidence, in characters.
 pub const DEFAULT_EVIDENCE_WIDTH: usize = 80;
 
+/// The widest evidence gets when the configured width is smaller: the longest
+/// escape, `<U+10FFFF>`, with an ellipsis either side.
+pub const MIN_EVIDENCE_WIDTH: usize = 12;
+
 /// A rule clew applies. The string is a promise: someone will suppress a
 /// finding by it, so it never changes meaning once published.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -17,7 +21,7 @@ pub enum RuleId {
 }
 
 impl RuleId {
-    /// The identifier, as reported.
+    /// The identifier, as reported and as a catalogue row names it.
     #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
@@ -33,6 +37,15 @@ impl RuleId {
                 "Non-printing Unicode in a file an agent reads as instructions"
             }
         }
+    }
+
+    /// The rule a catalogue row names, if it names one that exists.
+    #[must_use]
+    pub fn from_catalogue(name: &str) -> Option<Self> {
+        Some(match name {
+            "invisible-unicode" => Self::InvisibleUnicode,
+            _ => return None,
+        })
     }
 }
 
@@ -59,15 +72,84 @@ impl Severity {
     }
 }
 
-/// Where in a file something was found. Both counted from one, and the column
-/// counts characters, because a rule about non-ASCII cannot report bytes and
-/// stay readable.
+/// Where in a file something was found, both counted from one. The column
+/// counts characters: a rule about non-ASCII cannot report bytes readably.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Position {
     /// The line.
     pub line: usize,
     /// The character within the line.
     pub column: usize,
+}
+
+/// Quoted text from an offending line, every non-printing character escaped.
+///
+/// [`Evidence::quote`] is the only way to make one, so a finding cannot hold
+/// the raw character and no output format can print it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Evidence(String);
+
+impl Evidence {
+    /// A window of `line` around the character at `at`, counted from zero, no
+    /// wider than `width` once escaped, or [`MIN_EVIDENCE_WIDTH`] if that is
+    /// wider.
+    ///
+    /// The line arrives already split, so a rule reporting many runs on one
+    /// line splits it once rather than once per finding.
+    #[must_use]
+    pub fn quote(line: &[char], at: usize, width: usize) -> Self {
+        if line.is_empty() {
+            return Self::default();
+        }
+        let at = at.min(line.len() - 1);
+
+        // Budgeted on what is written, since one hidden character becomes
+        // eight, with room kept for an ellipsis either side.
+        let mut budget = width
+            .saturating_sub(2)
+            .saturating_sub(written(line[at]).chars().count());
+        let (mut first, mut last) = (at, at + 1);
+        loop {
+            let mut grew = false;
+            if first > 0 {
+                let cost = written(line[first - 1]).chars().count();
+                if cost <= budget {
+                    budget -= cost;
+                    first -= 1;
+                    grew = true;
+                }
+            }
+            if last < line.len() {
+                let cost = written(line[last]).chars().count();
+                if cost <= budget {
+                    budget -= cost;
+                    last += 1;
+                    grew = true;
+                }
+            }
+            if !grew {
+                break;
+            }
+        }
+
+        let mut out = String::new();
+        if first > 0 {
+            out.push('\u{2026}');
+        }
+        for c in &line[first..last] {
+            out.push_str(&written(*c));
+        }
+        if last < line.len() {
+            out.push('\u{2026}');
+        }
+        Self(out)
+    }
+
+    /// The quoted text.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
 /// Something wrong, and where.
@@ -81,63 +163,8 @@ pub struct Finding {
     pub rule: RuleId,
     /// How much it matters.
     pub severity: Severity,
-    /// The offending text, with every non-printing character escaped.
-    pub evidence: String,
-}
-
-/// A window of `line` around `column`, with non-printing characters escaped.
-///
-/// The character never reaches the output. Printing it would carry the payload
-/// into a terminal, a viewer, or whatever the report is pasted into, which is
-/// the attack rather than a report of it. Escaping here rather than in a
-/// renderer is what stops a second output format reintroducing it.
-#[must_use]
-pub fn evidence(line: &str, column: usize, width: usize) -> String {
-    let chars: Vec<char> = line.chars().collect();
-    if chars.is_empty() {
-        return String::new();
-    }
-    let at = column.saturating_sub(1).min(chars.len() - 1);
-
-    // Budgeted on what is written, not on what is read: one hidden character
-    // becomes eight, so a window measured in source characters still lets a
-    // minified line fill the report.
-    let mut budget = width.saturating_sub(written(chars[at]).chars().count());
-    let (mut first, mut last) = (at, at + 1);
-    loop {
-        let mut grew = false;
-        if first > 0 {
-            let cost = written(chars[first - 1]).chars().count();
-            if cost <= budget {
-                budget -= cost;
-                first -= 1;
-                grew = true;
-            }
-        }
-        if last < chars.len() {
-            let cost = written(chars[last]).chars().count();
-            if cost <= budget {
-                budget -= cost;
-                last += 1;
-                grew = true;
-            }
-        }
-        if !grew {
-            break;
-        }
-    }
-
-    let mut out = String::new();
-    if first > 0 {
-        out.push('\u{2026}');
-    }
-    for c in &chars[first..last] {
-        out.push_str(&written(*c));
-    }
-    if last < chars.len() {
-        out.push('\u{2026}');
-    }
-    out
+    /// The offending text.
+    pub evidence: Evidence,
 }
 
 /// One character as it is reported.
@@ -149,8 +176,7 @@ fn written(c: char) -> String {
     }
 }
 
-/// Whether a character shows itself. A tab and a space do; a zero-width joiner
-/// and a bidirectional override do not.
+/// Whether a character shows itself. A tab does; a zero-width joiner does not.
 fn is_printing(c: char) -> bool {
     c == '\t' || (!c.is_control() && !crate::rules::is_hidden(c))
 }
@@ -159,9 +185,14 @@ fn is_printing(c: char) -> bool {
 mod tests {
     use super::*;
 
+    fn quoted(line: &str, at: usize, width: usize) -> String {
+        let chars: Vec<char> = line.chars().collect();
+        Evidence::quote(&chars, at, width).as_str().to_owned()
+    }
+
     #[test]
     fn a_hidden_character_is_written_as_its_codepoint() {
-        let said = evidence("use the\u{202E}project rules", 8, 80);
+        let said = quoted("use the\u{202E}project rules", 7, 80);
 
         assert!(!said.contains('\u{202E}'), "the character escaped: {said}");
         assert!(said.contains("<U+202E>"), "{said}");
@@ -170,15 +201,13 @@ mod tests {
 
     #[test]
     fn a_tag_character_is_written_as_its_codepoint() {
-        let said = evidence("hi\u{E0041}", 3, 80);
-
-        assert_eq!(said, "hi<U+E0041>");
+        assert_eq!(quoted("hi\u{E0041}", 2, 80), "hi<U+E0041>");
     }
 
     #[test]
     fn printable_text_is_left_alone() {
-        assert_eq!(evidence("plain ascii", 1, 80), "plain ascii");
-        assert_eq!(evidence("caf\u{e9} and \u{1F600}", 1, 80), "café and 😀");
+        assert_eq!(quoted("plain ascii", 0, 80), "plain ascii");
+        assert_eq!(quoted("caf\u{e9} and \u{1F600}", 0, 80), "café and 😀");
     }
 
     /// A minified file is one long line, and a report is not the place to
@@ -187,10 +216,10 @@ mod tests {
     fn a_long_line_is_trimmed_around_the_offence() {
         let line = format!("{}\u{200B}{}", "a".repeat(200), "b".repeat(200));
 
-        let said = evidence(&line, 201, 20);
+        let said = quoted(&line, 200, 20);
 
         assert!(
-            said.chars().count() <= 22,
+            said.chars().count() <= 20,
             "{} chars: {said}",
             said.chars().count()
         );
@@ -198,24 +227,36 @@ mod tests {
         assert!(said.starts_with('…') && said.ends_with('…'), "{said}");
     }
 
-    /// A line that is nothing but hidden characters expands eightfold, and the
-    /// bound has to hold against that or the report carries the file.
     #[test]
     fn a_line_of_hidden_characters_is_still_bounded() {
-        let line = "\u{200B}".repeat(500);
+        let said = quoted(&"\u{200B}".repeat(500), 249, 40);
 
-        let said = evidence(&line, 250, 40);
-
-        assert!(said.chars().count() <= 42, "{} chars", said.chars().count());
+        assert!(said.chars().count() <= 40, "{} chars", said.chars().count());
     }
 
     #[test]
-    fn severity_and_rule_read_as_themselves() {
-        assert_eq!(Severity::High.as_str(), "high");
-        assert_eq!(RuleId::InvisibleUnicode.as_str(), "invisible-unicode");
+    fn a_width_below_the_floor_still_shows_the_offence_within_it() {
+        let said = quoted("aaaa\u{E0041}bbbb", 4, 0);
+
+        assert!(said.contains("<U+E0041>"), "{said}");
+        assert!(
+            said.chars().count() <= MIN_EVIDENCE_WIDTH,
+            "{} chars: {said}",
+            said.chars().count()
+        );
     }
 
-    /// Sorting puts a report in file order, then position order.
+    #[test]
+    fn a_rule_reads_as_itself_in_both_directions() {
+        assert_eq!(Severity::High.as_str(), "high");
+        assert_eq!(RuleId::InvisibleUnicode.as_str(), "invisible-unicode");
+        assert_eq!(
+            RuleId::from_catalogue("invisible-unicode"),
+            Some(RuleId::InvisibleUnicode)
+        );
+        assert_eq!(RuleId::from_catalogue("Invisible-Unicode"), None);
+    }
+
     #[test]
     fn findings_sort_by_place() {
         let at = |line, column| Some(Position { line, column });
@@ -224,7 +265,7 @@ mod tests {
             at,
             rule: RuleId::InvisibleUnicode,
             severity: Severity::High,
-            evidence: String::new(),
+            evidence: Evidence::default(),
         };
         let mut all = [
             f("b.md", at(1, 1)),

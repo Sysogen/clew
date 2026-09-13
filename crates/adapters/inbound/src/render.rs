@@ -22,8 +22,6 @@ fn hook_line(hook: &Hook) -> String {
 }
 
 /// One finding as two lines: where and what, then the evidence.
-///
-/// The evidence arrives escaped, so nothing here can put the character back.
 fn finding_line(finding: &Finding) -> String {
     let at = finding.at.map_or_else(
         || finding.path.as_str().to_owned(),
@@ -33,7 +31,7 @@ fn finding_line(finding: &Finding) -> String {
         "  {at}  {}  {}\n    {}",
         finding.rule.as_str(),
         finding.severity.as_str(),
-        finding.evidence
+        finding.evidence.as_str()
     )
 }
 
@@ -175,7 +173,7 @@ mod tests {
             surfaces: vec![surface("CLAUDE.md", SurfaceKind::InstructionFile)],
             findings: clew_domain::rules::run(
                 &path,
-                SurfaceKind::InstructionFile,
+                &[clew_domain::finding::RuleId::InvisibleUnicode],
                 text,
                 clew_domain::finding::DEFAULT_EVIDENCE_WIDTH,
             ),

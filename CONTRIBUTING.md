@@ -65,8 +65,19 @@ Add `extract` when the file should be read:
 extract = ["hooks", "permissions", "mcp-servers"]
 ```
 
-Omit it and the file is inventory only: reported, never opened. That matters
-when it may be a compiled binary, and it is why a hook script is never read.
+Omit it, and `check` below, and the file is inventory only: reported, never
+opened. That matters when it may be a compiled binary, and it is why a hook
+script is never read.
+
+Add `check` when a rule should read the file:
+
+```toml
+check = ["invisible-unicode"]
+```
+
+Declare it on prose an agent reads as instructions, never on settings. The row
+decides rather than the tool, because one tool keeps both side by side and
+evidence quoted from settings would print them.
 
 Add `format` when the file is not JSON:
 
@@ -88,7 +99,7 @@ reads only its own spelling, since reporting the other would invent a grant.
 
 `source` must be the tool's own documentation, not a blog post, and
 `last_verified` is the day you checked it. Loading rejects a row missing either,
-naming an unknown kind, or naming an unknown extraction.
+naming an unknown kind, an unknown extraction, or an unknown check.
 
 The first matching row wins, so put a specific pattern above a general one.
 

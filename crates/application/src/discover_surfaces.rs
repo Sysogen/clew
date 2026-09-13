@@ -99,16 +99,13 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
 
     /// Read every surface and collect the hooks it registers.
     fn read_surfaces(&self, report: &mut DiscoveryReport) {
-        let surfaces: Vec<Surface> = report.surfaces.clone();
-        for Surface { path, kind } in surfaces {
+        let paths: Vec<RepoPath> = report.surfaces.iter().map(|s| s.path.clone()).collect();
+        for path in paths {
             let Some(matched) = catalogue().lookup_in(&path, self.scope) else {
                 continue;
             };
-            // A row declaring no extractions is inventory, and a kind no rule
-            // reads stays closed: a hook script may be a compiled binary and an
-            // env file is nothing but credential values.
-            let ruled = rules::applies_to(kind);
-            if matched.extract.is_empty() && !ruled {
+            // Inventory: never opened.
+            if matched.extract.is_empty() && matched.check.is_empty() {
                 continue;
             }
 
@@ -122,14 +119,12 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
 
             // One read serves both: what the file declares, and what is wrong
             // with it.
-            if ruled {
-                report.findings.extend(rules::run(
-                    &path,
-                    kind,
-                    &text,
-                    self.policy.evidence_width(),
-                ));
-            }
+            report.findings.extend(rules::run(
+                &path,
+                matched.check,
+                &text,
+                self.policy.evidence_width(),
+            ));
             if matched.extract.is_empty() {
                 continue;
             }
@@ -892,8 +887,7 @@ mod tests {
         assert!(!format!("{report:?}").contains('\u{202E}'), "{report:?}");
     }
 
-    /// A finding is a scan that worked. Calling it incomplete would make one
-    /// hidden character read like a directory clew could not open.
+    /// A finding is a scan that worked, not a gap in one.
     #[test]
     fn a_finding_leaves_the_scan_complete() {
         let contents = FakeContents::default().file("AGENTS.md", "a\u{200B}b");
@@ -905,7 +899,6 @@ mod tests {
         assert!(report.is_complete());
     }
 
-    /// Settings files are out of scope for this rule in v1.
     #[test]
     fn a_settings_file_is_not_ruled() {
         let tree = FakeTree::default()
@@ -921,8 +914,7 @@ mod tests {
         assert!(report.findings.is_empty(), "{report:?}");
     }
 
-    /// A hook script may be a compiled binary and an env file is credential
-    /// values. Neither is opened, whatever a rule might want from it.
+    /// A hook script may be a binary, and an env file is credential values.
     #[test]
     fn an_env_file_and_a_hook_script_are_never_opened() {
         let tree = FakeTree::default()
@@ -945,7 +937,49 @@ mod tests {
         assert!(reads.is_empty(), "opened: {reads:?}");
     }
 
-    /// A skill is both read for its grants and ruled. One read serves both.
+    /// Evidence quoted from the settings would print a credential.
+    #[test]
+    fn a_settings_file_beside_a_rules_file_is_not_quoted() {
+        let tree = FakeTree::default()
+            .dir("", &[(".cursor", EntryKind::Directory)])
+            .dir(
+                ".cursor",
+                &[
+                    ("mcp.json", EntryKind::File),
+                    ("rules", EntryKind::Directory),
+                ],
+            )
+            .dir(".cursor/rules", &[("style.mdc", EntryKind::File)]);
+        let contents = FakeContents::default()
+            .file(
+                ".cursor/mcp.json",
+                "{\"mcpServers\":{\"pg\":{\"command\":\"npx\",\"env\":{\"K\":\"sk-live-LEAKME\u{200B}\"}}}}",
+            )
+            .file(".cursor/rules/style.mdc", "Use\u{202E} tabs\n");
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &ScanPolicy::default()).run();
+
+        assert_eq!(report.findings.len(), 1, "{report:?}");
+        assert_eq!(report.findings[0].path.as_str(), ".cursor/rules/style.mdc");
+        assert!(
+            !format!("{report:?}").contains("sk-live-LEAKME"),
+            "{report:?}"
+        );
+    }
+
+    #[test]
+    fn a_cline_rules_file_is_read_by_the_rule() {
+        let tree = FakeTree::default()
+            .dir("", &[(".clinerules", EntryKind::Directory)])
+            .dir(".clinerules", &[("style.md", EntryKind::File)]);
+        let contents = FakeContents::default().file(".clinerules/style.md", "Use\u{202E} tabs\n");
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &ScanPolicy::default()).run();
+
+        assert_eq!(report.findings.len(), 1, "{report:?}");
+    }
+
+    /// A skill is read for its grants and by a rule.
     #[test]
     fn a_file_both_extracted_and_ruled_is_read_once() {
         let contents = SpyContents {
