@@ -43,6 +43,17 @@ goes away, and one entry in `scans` for each tree read: one for `path`, two for
 selectors included, is written as a `\u` escape, so a finding's payload never
 appears raw.
 
+`--format sarif` writes a SARIF 2.1.0 log for code scanning:
+
+```sh
+clew path . --format sarif > clew.sarif
+```
+
+A finding at a place is a result at its line and column, one about a whole file
+names the file, and a scan that could not read everything says so with
+`executionSuccessful: false`. `system` cannot write one: SARIF places a result
+by its path in a repository, and neither tree `system` reads is one.
+
 ## What it does not do
 
 `clew` never reads a credential value, and never executes a hook, script, or

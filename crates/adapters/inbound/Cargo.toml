@@ -10,10 +10,17 @@ repository.workspace = true
 [dependencies]
 clew-application.workspace = true
 clew-domain.workspace = true
-# `--format json`. The adapter, not the domain, owns the wire format.
+# `--format json` and `sarif`. The adapter, not the domain, owns the wire
+# format.
+percent-encoding.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+
+# Validates each SARIF log against the schema, so the tests assert what code
+# scanning accepts rather than a string written by hand.
+[dev-dependencies]
+jsonschema = { version = "0.56", default-features = false }
 
 [lints]
 workspace = true

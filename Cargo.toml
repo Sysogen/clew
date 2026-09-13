@@ -31,6 +31,8 @@ globset = "0.4"
 icu_properties = "2.3"
 # The map type expr-lang values are built from.
 indexmap = "2"
+# A path as a URI, for SARIF: the url crate's own encoder.
+percent-encoding = "2"
 # betterleaks' patterns are RE2, which regex implements.
 regex = "1"
 serde = { version = "1", features = ["derive"] }

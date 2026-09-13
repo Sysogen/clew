@@ -7,7 +7,7 @@ use std::env;
 use std::path::Path;
 use std::process::ExitCode;
 
-use clew_adapter_cli::{Command, Format, Scan, document, parse, report};
+use clew_adapter_cli::{Command, Format, Scan, document, parse, report, sarif};
 use clew_adapter_fs::{StdFileContents, StdFileTree};
 use clew_application::DiscoverSurfaces;
 use clew_domain::ScanPolicy;
@@ -26,7 +26,8 @@ USAGE:
     clew --help
 
 OPTIONS:
-    --format FORMAT     text, the default, or json: one document for tools
+    --format FORMAT     text, the default; json, one document for tools; or
+                        sarif, a code scanning log, for a path only
 
 ENVIRONMENT:
     CLEW_MAX_DEPTH      Directory recursion limit
@@ -135,23 +136,30 @@ fn main() -> ExitCode {
         }
     }
 
-    if format == Format::Json {
-        let scans: Vec<Scan<'_>> = scans
-            .iter()
-            .zip(&found)
-            .map(|((root, scope), report)| Scan {
-                root,
-                scope: *scope,
-                report,
-            })
-            .collect();
-        match document(&scans) {
-            Ok(json) => println!("{json}"),
-            Err(error) => {
-                eprintln!("clew: {error}");
-                return ExitCode::FAILURE;
-            }
+    let written = match format {
+        Format::Text => None,
+        Format::Json => {
+            let scans: Vec<Scan<'_>> = scans
+                .iter()
+                .zip(&found)
+                .map(|((root, scope), report)| Scan {
+                    root,
+                    scope: *scope,
+                    report,
+                })
+                .collect();
+            Some(document(&scans))
         }
+        // `parse` takes SARIF for a path alone, which is one scan.
+        Format::Sarif => found.first().map(sarif),
+    };
+    match written {
+        Some(Ok(text)) => println!("{text}"),
+        Some(Err(error)) => {
+            eprintln!("clew: {error}");
+            return ExitCode::FAILURE;
+        }
+        None => {}
     }
 
     if complete {
