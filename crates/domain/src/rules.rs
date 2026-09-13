@@ -3,21 +3,21 @@
 
 //! What clew says is wrong, as opposed to what a file declares.
 
-use unicode_general_category::{GeneralCategory, get_general_category};
+use icu_properties::CodePointSetData;
+use icu_properties::props::{DefaultIgnorableCodePoint, VariationSelector};
 
 use crate::finding::{Evidence, Finding, Line, Position, RuleId, Severity};
 use crate::repo_path::RepoPath;
 
-/// Blank-rendering characters outside the format category.
-const ALSO_HIDDEN: [char; 1] = ['\u{3164}']; // HANGUL FILLER
-
 /// Whether a character reaches the model without reaching the reader.
 ///
-/// `Cf` covers zero-width, bidirectional and tag characters. A variation
-/// selector (`Mn`) and a non-breaking space (`Zs`) are ordinary text.
+/// Unicode's `Default_Ignorable_Code_Point`: what a renderer shows as nothing,
+/// blank fillers and reserved codepoints included. Variation selectors are in
+/// it, but they style the emoji before them.
 #[must_use]
 pub fn is_hidden(c: char) -> bool {
-    get_general_category(c) == GeneralCategory::Format || ALSO_HIDDEN.contains(&c)
+    CodePointSetData::new::<DefaultIgnorableCodePoint>().contains(c)
+        && !CodePointSetData::new::<VariationSelector>().contains(c)
 }
 
 /// Everything the named rules say about one file.
@@ -151,6 +151,43 @@ mod tests {
         assert_eq!(found_in("hangul\u{3164}filler").len(), 1);
     }
 
+    /// Blank letters and marks outside the format category, and codepoints
+    /// Unicode reserves as ignorable before assigning them.
+    #[test]
+    fn blank_fillers_and_reserved_ignorables_are_found() {
+        for c in [
+            '\u{034F}',
+            '\u{115F}',
+            '\u{1160}',
+            '\u{17B4}',
+            '\u{17B5}',
+            '\u{FFA0}',
+            '\u{2065}',
+            '\u{E0080}',
+        ] {
+            let found = found_in(&format!("a{c}b"));
+            let escaped = format!("<U+{:04X}>", c as u32);
+
+            assert_eq!(found.len(), 1, "{escaped}: {found:?}");
+            assert!(found[0].evidence.as_str().contains(&escaped), "{found:?}");
+        }
+    }
+
+    /// Format characters that print: number and verse marks in Arabic and
+    /// Syriac, and the joiners between Egyptian hieroglyphs.
+    #[test]
+    fn visible_format_characters_are_left_alone() {
+        for text in [
+            "\u{0600}\u{0661}\u{0662}",
+            "\u{06DD}\u{0661}",
+            "\u{070F}\u{0710}",
+            "\u{0890}\u{0661}",
+            "\u{13000}\u{13430}\u{13001}",
+        ] {
+            assert!(found_in(text).is_empty(), "{text:?}");
+        }
+    }
+
     #[test]
     fn a_byte_order_mark_counts_only_away_from_the_start() {
         assert!(found_in("\u{FEFF}# Rules\n").is_empty());
@@ -171,6 +208,11 @@ mod tests {
     fn ordinary_text_is_left_alone() {
         assert!(found_in("# Rules\n\nUse tabs.\n").is_empty());
         assert!(found_in("a \u{1F600}\u{FE0F} b").is_empty(), "emoji");
+        assert!(
+            found_in("\u{845B}\u{E0100}").is_empty(),
+            "ideographic variant"
+        );
+        assert!(found_in("\u{1820}\u{180B}").is_empty(), "Mongolian variant");
         assert!(found_in("a\u{00A0}b").is_empty(), "non-breaking space");
         assert!(found_in("caf\u{e9} na\u{ef}ve \u{4F60}\u{597D}").is_empty());
         assert!(found_in("tab\there").is_empty());

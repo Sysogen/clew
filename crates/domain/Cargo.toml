@@ -11,12 +11,13 @@ repository.workspace = true
 # Compiles the catalogue's globs into one matcher, so matching a path against
 # every row costs one pass rather than one comparison per row.
 globset.workspace = true
-# Parsers, not runtimes: no IO, no async, nothing the domain must not have.
+# Parsers and data, not runtimes: no IO, no async, nothing the domain must not
+# have.
+icu_properties.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 toml.workspace = true
 thiserror.workspace = true
-unicode-general-category.workspace = true
 yaml-rust2.workspace = true
 
 [lints]

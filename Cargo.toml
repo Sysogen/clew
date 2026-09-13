@@ -21,13 +21,13 @@ clew-application = { version = "0.1.0", path = "crates/application" }
 clew-adapter-cli = { version = "0.1.0", path = "crates/adapters/inbound" }
 clew-adapter-fs = { version = "0.1.0", path = "crates/adapters/outbound" }
 globset = "0.4"
+# Default_Ignorable_Code_Point from Unicode's own data. std has no such test,
+# and a hand-kept table goes stale silently, missing characters.
+icu_properties = "2.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = { version = "0.9", default-features = false, features = ["parse", "serde"] }
 thiserror = "2"
-# No general category test in std: char::is_control is Cc only. A hand-rolled
-# table would go stale silently, and stale means a missed character.
-unicode-general-category = "1"
 yaml-rust2 = { version = "0.13", default-features = false }
 
 [workspace.lints.rust]
