@@ -7,10 +7,10 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- A GitHub Action, `Sysogen/clew`, that scans the checkout and uploads the
-  SARIF log to code scanning. It installs the clew release it names for the
-  runner, refusing one that does not match its published checksum, passes
-  `fail-on` through, and ends the step as clew exits, after the upload.
+- A SARIF log tags each rule it lists `security` and gives it a
+  `security-severity` score in GitHub's band for the rule's severity, so code
+  scanning shows its findings as security alerts ranked high or medium, as
+  clew ranks them.
 
 ## [0.3.0] - 2026-09-13
 
