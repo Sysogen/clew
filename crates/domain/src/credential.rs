@@ -139,7 +139,7 @@ fn spans(line: &[char], index: &Index) -> Vec<(usize, usize)> {
     found
 }
 
-/// Secrets gitleaks' rules know by shape, read without hidden characters so
+/// Secrets betterleaks' rules know by shape, read without hidden characters so
 /// one planted inside a token does not break its pattern.
 fn recognised(line: &[char]) -> Vec<(usize, usize)> {
     let mut text = String::with_capacity(line.len());
