@@ -1,0 +1,38 @@
+---
+name: clew
+
+"on":
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    name: Scan this repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      # The version this commit names is not published until its release
+      # finishes, which is after this runs.
+      - name: Newest release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+      # A pull request from a fork gets a read-only token, which cannot upload.
+      - uses: ./
+        with:
+          fail-on: high
+          upload: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
+          version: ${{ steps.release.outputs.version }}
