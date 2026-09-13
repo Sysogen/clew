@@ -9,17 +9,17 @@ members = [
 ]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.98"
 license = "Apache-2.0"
 repository = "https://github.com/sysogen/clew"
 
 [workspace.dependencies]
-clew-domain = { version = "0.2.0", path = "crates/domain" }
-clew-application = { version = "0.2.0", path = "crates/application" }
-clew-adapter-cli = { version = "0.2.0", path = "crates/adapters/inbound" }
-clew-adapter-fs = { version = "0.2.0", path = "crates/adapters/outbound" }
+clew-domain = { version = "0.3.0", path = "crates/domain" }
+clew-application = { version = "0.3.0", path = "crates/application" }
+clew-adapter-cli = { version = "0.3.0", path = "crates/adapters/inbound" }
+clew-adapter-fs = { version = "0.3.0", path = "crates/adapters/outbound" }
 # betterleaks' keyword gate, done the way it does it.
 aho-corasick = "1"
 # betterleaks' rule filters are Expr. Its builtins need no feature, and the
