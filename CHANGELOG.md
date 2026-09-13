@@ -5,6 +5,13 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- A SARIF log tags each rule it lists `security` and gives it a
+  `security-severity` score in GitHub's band for the rule's severity, so code
+  scanning shows its findings as security alerts ranked high or medium, as
+  clew ranks them.
+
 ## [0.3.0] - 2026-09-13
 
 ### Added

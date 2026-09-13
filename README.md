@@ -98,7 +98,9 @@ clew path . --format sarif > clew.sarif
 
 A finding at a place is a result at its line and column, one about a whole file
 names the file, and a scan that could not read everything says so with
-`executionSuccessful: false`. `system` cannot write one: SARIF places a result
+`executionSuccessful: false`. Each rule is tagged `security` with a
+`security-severity` score in GitHub's band for its severity, so code scanning
+ranks an alert as clew does. `system` cannot write one: SARIF places a result
 by its path in a repository, and neither tree `system` reads is one.
 
 ### Exit status
