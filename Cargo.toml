@@ -20,10 +20,14 @@ clew-domain = { version = "0.1.0", path = "crates/domain" }
 clew-application = { version = "0.1.0", path = "crates/application" }
 clew-adapter-cli = { version = "0.1.0", path = "crates/adapters/inbound" }
 clew-adapter-fs = { version = "0.1.0", path = "crates/adapters/outbound" }
+# gitleaks' keyword gate, done the way gitleaks does it.
+aho-corasick = "1"
 globset = "0.4"
 # Default_Ignorable_Code_Point from Unicode's own data. std has no such test,
 # and a hand-kept table goes stale silently, missing characters.
 icu_properties = "2.3"
+# gitleaks' patterns are RE2, which regex implements.
+regex = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = { version = "0.9", default-features = false, features = ["parse", "serde"] }

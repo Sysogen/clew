@@ -4,6 +4,7 @@
 //! Telling a credential value from the text around it.
 
 use crate::rules::is_hidden;
+use crate::secrets;
 
 /// Whether a name marks a credential. Matched by segment, so `--api-key` does
 /// and `--author` does not.
@@ -26,14 +27,6 @@ pub fn names_a_credential(name: &str) -> bool {
                     | "pat"
             )
         })
-}
-
-/// Whether a value carries a prefix an issuer uses for its secrets. Narrow on
-/// purpose: a guess here redacts a package name and hides a real finding.
-#[must_use]
-pub fn looks_issued(value: &str) -> bool {
-    const ISSUED: [&str; 7] = ["sk-", "sk_", "pk_", "ghp_", "gho_", "github_pat_", "xox"];
-    ISSUED.iter().any(|p| value.starts_with(p)) && value.len() > 12
 }
 
 /// The line with every credential value's visible characters replaced by `*`.
@@ -117,7 +110,7 @@ fn spans(line: &[char], index: &Index) -> Vec<(usize, usize)> {
     let mut found = Vec::new();
 
     // A value set against a key: `API_KEY=x`, `password: x`, `"api_key":"x"`,
-    // `?token=x`, or one an issuer's prefix gives away.
+    // `?token=x`.
     for (at, c) in line.iter().enumerate() {
         if *c != '=' && *c != ':' {
             continue;
@@ -125,13 +118,12 @@ fn spans(line: &[char], index: &Index) -> Vec<(usize, usize)> {
         let Some((from, to)) = value_at(line, index, at + 1) else {
             continue;
         };
-        if names_a_credential(&key_before(line, at)) || issued(&line[from..to]) {
+        if names_a_credential(&key_before(line, at)) {
             found.push((from, to));
         }
     }
 
-    // A value after a credential flag or an HTTP scheme, and a token an
-    // issuer's prefix gives away.
+    // A value after a credential flag or an HTTP scheme.
     let mut start = index.solid[0];
     while start < line.len() {
         let end = index.space[start];
@@ -140,12 +132,36 @@ fn spans(line: &[char], index: &Index) -> Vec<(usize, usize)> {
         if flag || is_scheme(word) {
             found.extend(value_at(line, index, end));
         }
-        if issued(word) {
-            found.push((start, end));
-        }
         start = index.solid[end];
     }
+
+    found.extend(recognised(line));
     found
+}
+
+/// Secrets gitleaks' rules know by shape, read without hidden characters so
+/// one planted inside a token does not break its pattern.
+fn recognised(line: &[char]) -> Vec<(usize, usize)> {
+    let mut text = String::with_capacity(line.len());
+    // Each visible character's byte offset in `text` and place in `line`.
+    let mut places: Vec<(usize, usize)> = Vec::new();
+    for (at, c) in line.iter().enumerate() {
+        if !is_hidden(*c) {
+            places.push((text.len(), at));
+            text.push(*c);
+        }
+    }
+    let place = |byte: usize| places.partition_point(|(b, _)| *b < byte);
+    secrets::find(&text)
+        .into_iter()
+        .filter(|found| !found.is_empty())
+        .map(|found| {
+            (
+                places[place(found.start)].1,
+                places[place(found.end) - 1].1 + 1,
+            )
+        })
+        .collect()
 }
 
 /// The value starting at `from`, past spaces and an HTTP scheme: inside its
@@ -186,17 +202,6 @@ fn is_scheme(word: &[char]) -> bool {
         let word: String = word.iter().collect();
         word.eq_ignore_ascii_case("bearer") || word.eq_ignore_ascii_case("basic")
     }
-}
-
-/// Whether a value carries an issuer's prefix. Only its opening characters are
-/// read, so overlapping values on one line stay cheap.
-fn issued(value: &[char]) -> bool {
-    let head: String = value
-        .iter()
-        .filter(|c| !is_hidden(**c) && !QUOTES.contains(**c))
-        .take(16)
-        .collect();
-    looks_issued(&head) && value.len() > 12
 }
 
 /// The visible characters, quotes left out.
@@ -288,12 +293,32 @@ mod tests {
 
     #[test]
     fn an_issued_secret_is_masked_wherever_it_stands() {
-        let said = masked("use sk-live-0123456789abcdef here");
+        let said = masked(concat!(
+            "use ghp_",
+            "aB3dE5gH7jK9mN1pQ3sT5vW7yZ9bC1dF3hJ5",
+            " here"
+        ));
 
-        assert!(!said.contains("0123456789"), "{said}");
+        assert!(!said.contains("aB3dE5"), "{said}");
         assert!(
             said.starts_with("use ") && said.ends_with(" here"),
             "{said}"
+        );
+    }
+
+    #[test]
+    fn a_hidden_character_inside_an_issued_token_does_not_hide_it() {
+        let said = masked(concat!(
+            "use ghp_aB3dE5gH7jK9mN1pQ3",
+            "\u{200B}",
+            "sT5vW7yZ9bC1dF3hJ5 here"
+        ));
+
+        assert!(said.contains('\u{200B}'), "{said:?}");
+        assert!(!said.contains("aB3d") && !said.contains("hJ5"), "{said:?}");
+        assert!(
+            said.starts_with("use ") && said.ends_with(" here"),
+            "{said:?}"
         );
     }
 

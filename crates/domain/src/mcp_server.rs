@@ -3,7 +3,8 @@
 
 //! Model Context Protocol servers an agent can call.
 
-use crate::credential::{looks_issued, names_a_credential};
+use crate::credential::names_a_credential;
+use crate::secrets;
 
 /// How a server is reached.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -103,7 +104,8 @@ fn redact_url(url: &str) -> String {
 /// Arguments with credential values taken out.
 ///
 /// A value cannot be told from a package name by looking at it, so what marks
-/// one is the flag before it, the `key=value` it sits in, or an issuer prefix.
+/// one is the flag before it, the `key=value` it sits in, or a shape gitleaks
+/// knows.
 fn redact_args(args: &[String]) -> Vec<String> {
     let mut out = Vec::with_capacity(args.len());
     let mut redact_next = false;
@@ -116,7 +118,7 @@ fn redact_args(args: &[String]) -> Vec<String> {
         }
         match arg.split_once('=') {
             Some((flag, _)) if names_a_credential(flag) => out.push(format!("{flag}={REDACTED}")),
-            _ if looks_issued(arg) => out.push(REDACTED.to_owned()),
+            _ if !secrets::find(arg).is_empty() => out.push(REDACTED.to_owned()),
             _ => {
                 // Only a flag introduces a value. `-e JIRA_API_TOKEN` passes a
                 // name, and redacting what follows would hide the image run.
@@ -192,7 +194,16 @@ mod tests {
 
     #[test]
     fn a_bare_value_an_issuer_shaped_is_not_printed() {
-        for arg in ["sk-live-0123456789abcdef", "ghp_0123456789abcdefghij"] {
+        for arg in [
+            concat!("ghp_", "aB3dE5gH7jK9mN1pQ3sT5vW7yZ9bC1dF3hJ5"),
+            concat!("sk_", "live_", "Zq9Xw2Lk8Vb4Nm6Tr1Yp3Hs5"),
+            concat!(
+                "xoxb-",
+                "1234567890-",
+                "1234567890123-",
+                "aBcDeFgHiJkLmNoPqRsTuVwX"
+            ),
+        ] {
             let said = local(&[arg]);
             assert!(!said.contains(arg), "{said}");
         }

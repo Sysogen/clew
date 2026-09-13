@@ -64,3 +64,8 @@ This is an early release covering discovery only.
 ## License
 
 Apache-2.0. Copyright (c) 2026 Sysogen Lda.
+
+Secrets are recognised with the default rule set of
+[gitleaks](https://github.com/gitleaks/gitleaks), vendored unedited in
+`crates/domain/vendor/gitleaks` under its MIT licence, Copyright (c) 2019
+Zachary Rice.
