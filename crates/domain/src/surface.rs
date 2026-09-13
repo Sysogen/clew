@@ -73,6 +73,31 @@ impl SurfaceKind {
         })
     }
 
+    /// The name a catalogue row gives this kind, which a JSON report uses too.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::McpServers => "mcp-servers",
+            Self::ClaudeCode => "claude-code",
+            Self::Codex => "codex",
+            Self::Cursor => "cursor",
+            Self::VsCode => "vscode",
+            Self::Gemini => "gemini",
+            Self::Kiro => "kiro",
+            Self::Zed => "zed",
+            Self::Windsurf => "windsurf",
+            Self::EnvFile => "env",
+            Self::Continue => "continue",
+            Self::Cline => "cline",
+            Self::Aider => "aider",
+            Self::Copilot => "copilot",
+            Self::DevContainer => "devcontainer",
+            Self::InstructionFile => "instruction",
+            Self::HookScript => "hook-script",
+            Self::Skill => "skill",
+        }
+    }
+
     /// Short human-readable label.
     #[must_use]
     pub fn label(self) -> &'static str {
@@ -106,4 +131,37 @@ pub struct Surface {
     pub path: RepoPath,
     /// What it configures.
     pub kind: SurfaceKind,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A report names a kind the way its catalogue row does, so the two must
+    /// agree for every kind.
+    #[test]
+    fn every_kind_reads_back_from_its_name() {
+        for kind in [
+            SurfaceKind::McpServers,
+            SurfaceKind::ClaudeCode,
+            SurfaceKind::Codex,
+            SurfaceKind::Cursor,
+            SurfaceKind::VsCode,
+            SurfaceKind::Gemini,
+            SurfaceKind::Kiro,
+            SurfaceKind::Zed,
+            SurfaceKind::Windsurf,
+            SurfaceKind::EnvFile,
+            SurfaceKind::Continue,
+            SurfaceKind::Cline,
+            SurfaceKind::Aider,
+            SurfaceKind::Copilot,
+            SurfaceKind::DevContainer,
+            SurfaceKind::InstructionFile,
+            SurfaceKind::HookScript,
+            SurfaceKind::Skill,
+        ] {
+            assert_eq!(SurfaceKind::from_catalogue(kind.as_str()), Some(kind));
+        }
+    }
 }

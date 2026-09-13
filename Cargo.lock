@@ -79,6 +79,8 @@ version = "0.1.0"
 dependencies = [
  "clew-application",
  "clew-domain",
+ "serde",
+ "serde_json",
  "thiserror",
 ]
 

@@ -10,6 +10,12 @@ repository.
 
 ### Added
 
+- `--format json` on `path` and `system`: the whole report as one JSON document
+  under `"version": 1`, with an entry in `scans` for each tree read. Any control
+  or default-ignorable character, variation selectors included, is written as a
+  `\u` escape, so the document decodes to exactly what was found without
+  carrying the character itself.
+
 - Read hook scripts. A bidirectional character in code is Trojan Source
   (CVE-2021-42574): the script reads one way to a reviewer and runs another,
   so `invisible-unicode` now reads them. A hook that is not text, is larger

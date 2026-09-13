@@ -5,6 +5,16 @@
 
 use thiserror::Error;
 
+/// How a report is written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Format {
+    /// Aligned text, for a person.
+    #[default]
+    Text,
+    /// One JSON document, for a tool.
+    Json,
+}
+
 /// What the operator asked for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
@@ -12,10 +22,15 @@ pub enum Command {
     Path {
         /// The scan root.
         root: String,
+        /// How to write the report.
+        format: Format,
     },
     /// Scan the home directory for agent surfaces kept outside any
     /// repository.
-    System,
+    System {
+        /// How to write the report.
+        format: Format,
+    },
     /// Print usage.
     Help,
     /// Print the version.
@@ -28,14 +43,23 @@ pub enum ParseError {
     /// The first argument is not a known command.
     #[error("unknown command '{0}'")]
     UnknownCommand(String),
+    /// An option the command does not take.
+    #[error("unknown option '{0}'")]
+    UnknownOption(String),
+    /// `--format` with nothing after it.
+    #[error("'--format' needs a value: text or json")]
+    MissingFormat,
+    /// `--format` naming no known format.
+    #[error("unknown format '{0}': expected text or json")]
+    UnknownFormat(String),
 }
 
 /// Parse arguments, excluding the program name.
 ///
 /// # Errors
 ///
-/// Returns [`ParseError::UnknownCommand`] when the first argument names no
-/// known command.
+/// Returns a [`ParseError`] when the first argument names no known command, or
+/// an option is unknown or has no valid value.
 pub fn parse<I, S>(args: I) -> Result<Command, ParseError>
 where
     I: IntoIterator<Item = S>,
@@ -46,22 +70,67 @@ where
     match args.first().map(String::as_str) {
         None | Some("--help" | "-h" | "help") => Ok(Command::Help),
         Some("--version" | "-V") => Ok(Command::Version),
-        Some("path") => Ok(Command::Path {
-            root: args.get(1).cloned().unwrap_or_else(|| ".".to_owned()),
+        Some("path") => {
+            let (positional, format) = options(&args[1..])?;
+            Ok(Command::Path {
+                root: positional
+                    .into_iter()
+                    .next()
+                    .unwrap_or_else(|| ".".to_owned()),
+                format,
+            })
+        }
+        Some("system") => Ok(Command::System {
+            format: options(&args[1..])?.1,
         }),
-        Some("system") => Ok(Command::System),
         Some(other) => Err(ParseError::UnknownCommand(other.to_owned())),
     }
+}
+
+/// The arguments after a command: its positionals, and the format asked for.
+fn options(args: &[String]) -> Result<(Vec<String>, Format), ParseError> {
+    let mut positional = Vec::new();
+    let mut format = Format::default();
+    let mut rest = args.iter();
+    while let Some(arg) = rest.next() {
+        let value = if arg == "--format" {
+            rest.next().ok_or(ParseError::MissingFormat)?.as_str()
+        } else if let Some(value) = arg.strip_prefix("--format=") {
+            value
+        } else if arg.len() > 1 && arg.starts_with('-') {
+            return Err(ParseError::UnknownOption(arg.clone()));
+        } else {
+            positional.push(arg.clone());
+            continue;
+        };
+        format = match value {
+            "text" => Format::Text,
+            "json" => Format::Json,
+            other => return Err(ParseError::UnknownFormat(other.to_owned())),
+        };
+    }
+    Ok((positional, format))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn path(root: &str, format: Format) -> Command {
+        Command::Path {
+            root: root.to_owned(),
+            format,
+        }
+    }
+
     #[test]
     fn system_takes_no_root() {
-        assert_eq!(parse(["system"]), Ok(Command::System));
-        assert_eq!(parse(["system", "/tmp"]), Ok(Command::System));
+        let text = Format::Text;
+        assert_eq!(parse(["system"]), Ok(Command::System { format: text }));
+        assert_eq!(
+            parse(["system", "/tmp"]),
+            Ok(Command::System { format: text })
+        );
     }
 
     #[test]
@@ -71,21 +140,46 @@ mod tests {
 
     #[test]
     fn path_defaults_to_the_current_directory() {
+        assert_eq!(parse(["path"]), Ok(path(".", Format::Text)));
+    }
+
+    #[test]
+    fn path_accepts_an_explicit_root() {
+        assert_eq!(parse(["path", "/tmp/x"]), Ok(path("/tmp/x", Format::Text)));
+    }
+
+    #[test]
+    fn json_is_asked_for_either_way_and_anywhere_after_the_command() {
         assert_eq!(
-            parse(["path"]),
-            Ok(Command::Path {
-                root: ".".to_owned()
+            parse(["path", "/tmp/x", "--format", "json"]),
+            Ok(path("/tmp/x", Format::Json))
+        );
+        assert_eq!(
+            parse(["path", "--format", "json", "/tmp/x"]),
+            Ok(path("/tmp/x", Format::Json))
+        );
+        assert_eq!(
+            parse(["path", "--format=json"]),
+            Ok(path(".", Format::Json))
+        );
+        assert_eq!(
+            parse(["system", "--format", "json"]),
+            Ok(Command::System {
+                format: Format::Json
             })
         );
     }
 
     #[test]
-    fn path_accepts_an_explicit_root() {
+    fn a_bad_option_is_an_error_not_a_silent_default() {
+        assert_eq!(parse(["path", "--format"]), Err(ParseError::MissingFormat));
         assert_eq!(
-            parse(["path", "/tmp/x"]),
-            Ok(Command::Path {
-                root: "/tmp/x".to_owned()
-            })
+            parse(["path", "--format", "xml"]),
+            Err(ParseError::UnknownFormat("xml".to_owned()))
+        );
+        assert_eq!(
+            parse(["system", "--verbose"]),
+            Err(ParseError::UnknownOption("--verbose".to_owned()))
         );
     }
 

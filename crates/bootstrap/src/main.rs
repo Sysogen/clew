@@ -7,7 +7,7 @@ use std::env;
 use std::path::Path;
 use std::process::ExitCode;
 
-use clew_adapter_cli::{Command, parse, report};
+use clew_adapter_cli::{Command, Format, Scan, document, parse, report};
 use clew_adapter_fs::{StdFileContents, StdFileTree};
 use clew_application::DiscoverSurfaces;
 use clew_domain::ScanPolicy;
@@ -24,6 +24,9 @@ USAGE:
     clew system         List agent surfaces outside any repository
     clew --version
     clew --help
+
+OPTIONS:
+    --format FORMAT     text, the default, or json: one document for tools
 
 ENVIRONMENT:
     CLEW_MAX_DEPTH      Directory recursion limit
@@ -73,7 +76,7 @@ fn main() -> ExitCode {
         }
     };
 
-    let scans: Vec<(String, Scope)> = match command {
+    let (scans, format): (Vec<(String, Scope)>, Format) = match command {
         Command::Help => {
             println!("clew {}\n\n{USAGE}", env!("CARGO_PKG_VERSION"));
             return ExitCode::SUCCESS;
@@ -82,24 +85,27 @@ fn main() -> ExitCode {
             println!("clew {}", env!("CARGO_PKG_VERSION"));
             return ExitCode::SUCCESS;
         }
-        Command::Path { root } => {
+        Command::Path { root, format } => {
             if !Path::new(&root).is_dir() {
                 eprintln!("clew: not a directory: {root}");
                 return ExitCode::FAILURE;
             }
-            vec![(root, Scope::Repository)]
+            (vec![(root, Scope::Repository)], format)
         }
         // Two trees, because policy an administrator deployed is not in
         // anybody's home directory.
-        Command::System => {
+        Command::System { format } => {
             let Some(home) = env::home_dir() else {
                 eprintln!("clew: no home directory to scan");
                 return ExitCode::FAILURE;
             };
-            vec![
-                (home.to_string_lossy().into_owned(), Scope::Home),
-                (MACHINE_ROOT.to_owned(), Scope::System),
-            ]
+            (
+                vec![
+                    (home.to_string_lossy().into_owned(), Scope::Home),
+                    (MACHINE_ROOT.to_owned(), Scope::System),
+                ],
+                format,
+            )
         }
     };
 
@@ -107,19 +113,45 @@ fn main() -> ExitCode {
         .with_max_file_bytes(max_file_bytes())
         .with_evidence_width(evidence_width());
     let mut complete = true;
+    let mut found = Vec::new();
 
     for (root, scope) in &scans {
         let tree = StdFileTree::new(root).following(&catalogue::shipped().roots_in(*scope));
         let contents = StdFileContents::new(root);
-        let found = DiscoverSurfaces::new(&tree, &contents, &policy)
+        let scanned = DiscoverSurfaces::new(&tree, &contents, &policy)
             .in_scope(*scope)
             .run();
+        complete &= scanned.is_complete();
 
-        if scans.len() > 1 {
-            println!("{root}");
+        // Text is printed as each scan ends and let go; JSON keeps every scan
+        // to write one document.
+        if format == Format::Text {
+            if scans.len() > 1 {
+                println!("{root}");
+            }
+            print!("{}", report(&scanned, root));
+        } else {
+            found.push(scanned);
         }
-        print!("{}", report(&found, root));
-        complete &= found.is_complete();
+    }
+
+    if format == Format::Json {
+        let scans: Vec<Scan<'_>> = scans
+            .iter()
+            .zip(&found)
+            .map(|((root, scope), report)| Scan {
+                root,
+                scope: *scope,
+                report,
+            })
+            .collect();
+        match document(&scans) {
+            Ok(json) => println!("{json}"),
+            Err(error) => {
+                eprintln!("clew: {error}");
+                return ExitCode::FAILURE;
+            }
+        }
     }
 
     if complete {

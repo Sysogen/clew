@@ -10,6 +10,9 @@ repository.workspace = true
 [dependencies]
 clew-application.workspace = true
 clew-domain.workspace = true
+# `--format json`. The adapter, not the domain, owns the wire format.
+serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 
 [lints]

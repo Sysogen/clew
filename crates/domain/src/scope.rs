@@ -30,6 +30,16 @@ impl Scope {
             _ => return None,
         })
     }
+
+    /// The name a catalogue row gives this scope, which a JSON report uses too.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Repository => "repository",
+            Self::Home => "home",
+            Self::System => "system",
+        }
+    }
 }
 
 #[cfg(test)]
@@ -52,5 +62,12 @@ mod tests {
         assert_eq!(Scope::from_catalogue("system"), Some(Scope::System));
         assert_eq!(Scope::from_catalogue("home"), Some(Scope::Home));
         assert_eq!(Scope::from_catalogue("repository"), Some(Scope::Repository));
+    }
+
+    #[test]
+    fn each_scope_reads_back_from_its_name() {
+        for scope in [Scope::Repository, Scope::Home, Scope::System] {
+            assert_eq!(Scope::from_catalogue(scope.as_str()), Some(scope));
+        }
     }
 }
