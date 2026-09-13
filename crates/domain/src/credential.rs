@@ -15,7 +15,15 @@ pub fn names_a_credential(name: &str) -> bool {
         .any(|part| {
             matches!(
                 part,
-                "key" | "apikey" | "token" | "secret" | "password" | "credential" | "auth" | "pat"
+                "key"
+                    | "apikey"
+                    | "token"
+                    | "secret"
+                    | "password"
+                    | "credential"
+                    | "auth"
+                    | "authorization"
+                    | "pat"
             )
         })
 }
@@ -28,86 +36,175 @@ pub fn looks_issued(value: &str) -> bool {
     ISSUED.iter().any(|p| value.starts_with(p)) && value.len() > 12
 }
 
-/// The line with the visible characters of every credential value replaced
-/// by `*`.
+/// The line with every credential value's visible characters replaced by `*`.
 ///
-/// Done on the whole line rather than the window a finding quotes, so a secret
-/// cut at the window's edge is still known by its prefix or its key. Hidden
-/// characters are kept, being what a finding points at, and so is the length,
-/// so every column still lines up.
+/// The whole line, not the quoted window, so a secret cut at the window's edge
+/// is still recognised. Hidden characters and columns are kept.
 #[must_use]
 pub fn mask(line: &[char]) -> Vec<char> {
+    let index = Index::new(line);
+    // Coverage counts rather than a pass per span, since spans overlap on a
+    // line such as `token=token=token=`.
+    let mut cover = vec![0i32; line.len() + 1];
+    for (from, to) in spans(line, &index) {
+        cover[from] += 1;
+        cover[to] -= 1;
+    }
     let mut out = line.to_vec();
-    let mut previous = String::new();
-
-    for (start, end) in tokens(line) {
-        let visible: String = line[start..end]
-            .iter()
-            .filter(|c| !is_hidden(**c))
-            .collect();
-        let bare: String = visible.chars().filter(|c| !QUOTES.contains(*c)).collect();
-
-        let from = if introduces(&previous) || looks_issued(bare.trim_end_matches([',', ';'])) {
-            Some(start)
-        } else {
-            value_after_key(line, start, end)
-        };
-        if let Some(from) = from {
-            for c in &mut out[from..end] {
-                if !is_hidden(*c) {
-                    *c = '*';
-                }
-            }
+    let mut depth = 0;
+    for (i, c) in out.iter_mut().enumerate() {
+        depth += cover[i];
+        if depth > 0 && !is_hidden(*c) {
+            *c = '*';
         }
-        previous = bare;
     }
     out
 }
 
 const QUOTES: &str = "\"'`";
 
-/// Whether a token says the next one is a credential: a key such as `--token`
-/// or `api_key:`, or an HTTP scheme such as `Bearer`.
-fn introduces(token: &str) -> bool {
-    if token.eq_ignore_ascii_case("bearer") || token.eq_ignore_ascii_case("basic") {
-        return true;
-    }
-    let is_key = token.starts_with('-') || token.ends_with(':') || token.ends_with('=');
-    is_key && names_a_credential(token.trim_end_matches([':', '=']))
+/// Where things end, worked out once from the right so a line of separators
+/// costs its length rather than its square.
+struct Index {
+    /// The next character at or after each position that is not a space.
+    solid: Vec<usize>,
+    /// The next space at or after each position.
+    space: Vec<usize>,
+    /// The next character that ends an unquoted value.
+    stop: Vec<usize>,
+    /// For a quote, where the same quote closes it.
+    close: Vec<usize>,
 }
 
-/// Where the value starts, when a token sets a credential in place:
-/// `API_KEY=...`, or anything set to a value an issuer's prefix gives away.
-fn value_after_key(line: &[char], start: usize, end: usize) -> Option<usize> {
-    let equals = (start..end).find(|&i| line[i] == '=')?;
-    let key: String = line[start..equals]
-        .iter()
-        .filter(|c| !is_hidden(**c) && !QUOTES.contains(**c))
-        .collect();
-    let value: String = line[equals + 1..end]
-        .iter()
-        .filter(|c| !is_hidden(**c) && !QUOTES.contains(**c))
-        .collect();
-    (names_a_credential(&key) || looks_issued(&value)).then_some(equals + 1)
-}
-
-/// The whitespace-separated tokens of a line, as ranges.
-fn tokens(line: &[char]) -> Vec<(usize, usize)> {
-    let mut out = Vec::new();
-    let mut start = None;
-    for (i, c) in line.iter().enumerate() {
-        if c.is_whitespace() {
-            if let Some(s) = start.take() {
-                out.push((s, i));
+impl Index {
+    fn new(line: &[char]) -> Self {
+        let n = line.len();
+        let mut index = Self {
+            solid: vec![n; n + 1],
+            space: vec![n; n + 1],
+            stop: vec![n; n + 1],
+            close: vec![n; n + 1],
+        };
+        let mut next_quote = [n; 3];
+        for i in (0..n).rev() {
+            let c = line[i];
+            index.solid[i] = if c.is_whitespace() {
+                index.solid[i + 1]
+            } else {
+                i
+            };
+            index.space[i] = if c.is_whitespace() {
+                i
+            } else {
+                index.space[i + 1]
+            };
+            index.stop[i] = if ends_value(c) { i } else { index.stop[i + 1] };
+            if let Some(q) = QUOTES.find(c) {
+                index.close[i] = next_quote[q];
+                next_quote[q] = i;
             }
-        } else if start.is_none() {
-            start = Some(i);
+        }
+        index
+    }
+}
+
+fn ends_value(c: char) -> bool {
+    c.is_whitespace() || QUOTES.contains(c) || matches!(c, '&' | ',' | ';' | ')' | '}' | ']')
+}
+
+/// Where the credential values in a line are.
+fn spans(line: &[char], index: &Index) -> Vec<(usize, usize)> {
+    let mut found = Vec::new();
+
+    // A value set against a key: `API_KEY=x`, `password: x`, `"api_key":"x"`,
+    // `?token=x`, or one an issuer's prefix gives away.
+    for (at, c) in line.iter().enumerate() {
+        if *c != '=' && *c != ':' {
+            continue;
+        }
+        let Some((from, to)) = value_at(line, index, at + 1) else {
+            continue;
+        };
+        if names_a_credential(&key_before(line, at)) || issued(&line[from..to]) {
+            found.push((from, to));
         }
     }
-    if let Some(s) = start {
-        out.push((s, line.len()));
+
+    // A value after a credential flag or an HTTP scheme, and a token an
+    // issuer's prefix gives away.
+    let mut start = index.solid[0];
+    while start < line.len() {
+        let end = index.space[start];
+        let word = &line[start..end];
+        let flag = word[0] == '-' && !word.contains(&'=') && names_a_credential(&visible(word));
+        if flag || is_scheme(word) {
+            found.extend(value_at(line, index, end));
+        }
+        if issued(word) {
+            found.push((start, end));
+        }
+        start = index.solid[end];
     }
-    out
+    found
+}
+
+/// The value starting at `from`, past spaces and an HTTP scheme: inside its
+/// quotes if it is quoted, else up to the next space or delimiter.
+fn value_at(line: &[char], index: &Index, from: usize) -> Option<(usize, usize)> {
+    let n = line.len();
+    let mut at = index.solid[from.min(n)];
+    // `Authorization: Bearer x` sets x, not the scheme.
+    if at < n && index.space[at] < n && is_scheme(&line[at..index.space[at]]) {
+        at = index.solid[index.space[at]];
+    }
+    let open = *line.get(at)?;
+    let (from, to) = if QUOTES.contains(open) {
+        (at + 1, index.close[at])
+    } else {
+        (at, index.stop[at])
+    };
+    (from < to).then_some((from, to))
+}
+
+/// The key before a separator at `at`: the name just before it, past a closing
+/// quote, so `"api_key":` gives `api_key` and `?token=` gives `token`.
+fn key_before(line: &[char], at: usize) -> String {
+    let end = if at > 0 && QUOTES.contains(line[at - 1]) {
+        at - 1
+    } else {
+        at
+    };
+    let start = line[..end]
+        .iter()
+        .rposition(|c| !(c.is_alphanumeric() || matches!(c, '_' | '-' | '.') || is_hidden(*c)))
+        .map_or(0, |i| i + 1);
+    visible(&line[start..end])
+}
+
+fn is_scheme(word: &[char]) -> bool {
+    word.len() <= 6 && {
+        let word: String = word.iter().collect();
+        word.eq_ignore_ascii_case("bearer") || word.eq_ignore_ascii_case("basic")
+    }
+}
+
+/// Whether a value carries an issuer's prefix. Only its opening characters are
+/// read, so overlapping values on one line stay cheap.
+fn issued(value: &[char]) -> bool {
+    let head: String = value
+        .iter()
+        .filter(|c| !is_hidden(**c) && !QUOTES.contains(**c))
+        .take(16)
+        .collect();
+    looks_issued(&head) && value.len() > 12
+}
+
+/// The visible characters, quotes left out.
+fn visible(chars: &[char]) -> String {
+    chars
+        .iter()
+        .filter(|c| !is_hidden(**c) && !QUOTES.contains(**c))
+        .collect()
 }
 
 #[cfg(test)]
@@ -137,10 +234,56 @@ mod tests {
             ("password: hunter2", "hunter2"),
             ("Authorization: Bearer abc123def", "abc123def"),
             (r#"-H "Authorization: Basic dXNlcjpw""#, "dXNlcjpw"),
+            ("Authorization: s3cr3tvalue", "s3cr3tvalue"),
         ] {
             let said = masked(line);
             assert!(!said.contains(secret), "{line} -> {said}");
         }
+    }
+
+    #[test]
+    fn a_scheme_is_left_readable_and_its_value_is_not() {
+        assert_eq!(
+            masked("Authorization: Bearer abc123def"),
+            "Authorization: Bearer *********"
+        );
+    }
+
+    #[test]
+    fn a_value_joined_to_its_key_is_masked() {
+        for line in [
+            r#"{"api_key":"s3cr3tvalue"}"#,
+            "api_key:s3cr3tvalue",
+            "--token=s3cr3tvalue",
+        ] {
+            let said = masked(line);
+            assert!(!said.contains("s3cr3tvalue"), "{line} -> {said}");
+        }
+    }
+
+    #[test]
+    fn a_flag_carrying_its_own_value_leaves_the_next_word_alone() {
+        assert_eq!(masked("--auth-token=abc keep"), "--auth-token=*** keep");
+    }
+
+    #[test]
+    fn a_quoted_value_is_masked_whole() {
+        for line in [
+            r#"--token "secret with spaces" x"#,
+            r#"API_KEY="secret with spaces" x"#,
+        ] {
+            let said = masked(line);
+            assert!(!said.contains("with spaces"), "{line} -> {said}");
+            assert!(said.ends_with(" x"), "{line} -> {said}");
+        }
+    }
+
+    #[test]
+    fn a_credential_in_a_query_string_is_masked() {
+        let said = masked("curl https://api.invalid/s?token=SECRETVAL&x=1");
+
+        assert!(!said.contains("SECRETVAL"), "{said}");
+        assert!(said.ends_with("&x=1"), "{said}");
     }
 
     #[test]
@@ -170,6 +313,7 @@ mod tests {
             "-e JIRA_API_TOKEN -e JIRA_URL ghcr.io/org/image:1",
             "keep the token cache warm",
             "--author someone",
+            "see https://example.invalid/docs at 10:30",
         ] {
             assert_eq!(masked(line), line);
         }
@@ -180,5 +324,22 @@ mod tests {
         let line = "a API_KEY=sk-live-xyz\u{202E} Bearer tok b";
 
         assert_eq!(masked(line).chars().count(), line.chars().count());
+    }
+
+    /// Every separator here starts a value running to the end. The bound is
+    /// loose: only a quadratic regression comes near it.
+    #[test]
+    fn a_line_of_overlapping_values_is_masked_in_one_pass() {
+        let line: Vec<char> = "token=".repeat(40_000).chars().collect();
+        let started = std::time::Instant::now();
+
+        let out = mask(&line);
+
+        assert!(out[6..].iter().all(|c| *c == '*'), "every value is masked");
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(10),
+            "took {:?}",
+            started.elapsed()
+        );
     }
 }
