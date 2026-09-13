@@ -49,9 +49,10 @@ appears raw.
 clew path . --format sarif > clew.sarif
 ```
 
-A finding is a result at its line and column, and a scan that could not read
-everything says so with `executionSuccessful: false`. Only `path` writes one:
-SARIF places a result by its path in a repository, and `system` reads none.
+A finding at a place is a result at its line and column, one about a whole file
+names the file, and a scan that could not read everything says so with
+`executionSuccessful: false`. `system` cannot write one: SARIF places a result
+by its path in a repository, and neither tree `system` reads is one.
 
 ## What it does not do
 

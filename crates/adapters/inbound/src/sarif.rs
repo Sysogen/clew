@@ -18,12 +18,14 @@ use crate::json::escaped;
 /// against.
 const SCHEMA: &str = "https://json.schemastore.org/sarif-2.1.0.json";
 
-/// What a URI path cannot hold as it is.
+/// What a URI path cannot hold as it is, and `:`, which in a relative path's
+/// first segment reads as a scheme.
 const NOT_IN_A_PATH: &AsciiSet = &CONTROLS
     .add(b' ')
     .add(b'"')
     .add(b'#')
     .add(b'%')
+    .add(b':')
     .add(b'<')
     .add(b'>')
     .add(b'?')
@@ -434,17 +436,25 @@ mod tests {
         assert!(clean.get("toolExecutionNotifications").is_none(), "{clean}");
     }
 
-    /// A URI cannot hold a space, a `#` or a raw non-ASCII character, and a
-    /// hidden character never appears raw.
+    /// A URI cannot hold a space, a `#`, a raw non-ASCII character or a colon
+    /// that would read as a scheme, and a hidden character never appears raw.
     #[test]
     fn a_path_is_written_as_a_uri() {
         let report = DiscoveryReport {
-            findings: vec![finding(
-                "docs/my rules#1\u{200B}\u{e9}.md",
-                Some((1, 1)),
-                RuleId::InvisibleUnicode,
-                Severity::High,
-            )],
+            findings: vec![
+                finding(
+                    "docs/my rules#1\u{200B}\u{e9}.md",
+                    Some((1, 1)),
+                    RuleId::InvisibleUnicode,
+                    Severity::High,
+                ),
+                finding(
+                    "reports:latest.md",
+                    None,
+                    RuleId::OpaqueHook,
+                    Severity::Medium,
+                ),
+            ],
             ..DiscoveryReport::default()
         };
 
@@ -454,6 +464,10 @@ mod tests {
         assert_eq!(
             log["runs"][0]["results"][0]["locations"][0]["physicalLocation"]["artifactLocation"]["uri"],
             "docs/my%20rules%231%E2%80%8B%C3%A9.md"
+        );
+        assert_eq!(
+            log["runs"][0]["results"][1]["locations"][0]["physicalLocation"]["artifactLocation"]["uri"],
+            "reports%3Alatest.md"
         );
         assert!(!text.contains('\u{200B}'), "{text}");
     }
