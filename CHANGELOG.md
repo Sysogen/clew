@@ -5,7 +5,15 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-14
+
 ### Added
+
+- A GitHub Action, `Sysogen/clew`, that scans the checkout and uploads the
+  SARIF log to code scanning. It installs the clew release it names for the
+  runner, refusing one that does not match its published checksum, prints the
+  report to the job log and the run's summary page, passes `fail-on` through,
+  and ends the step as clew exits, after the upload.
 
 - A SARIF log tags each rule it lists `security` and gives it a
   `security-severity` score in GitHub's band for the rule's severity, so code
@@ -258,7 +266,8 @@ tagged release.
   devcontainers.
 - `CLEW_MAX_DEPTH` sets the directory recursion limit.
 
-[Unreleased]: https://github.com/sysogen/clew/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/sysogen/clew/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/sysogen/clew/releases/tag/v0.4.0
 [0.3.0]: https://github.com/sysogen/clew/releases/tag/v0.3.0
 [0.2.0]: https://github.com/sysogen/clew/releases/tag/v0.2.0
 [0.1.0]: https://github.com/sysogen/clew/releases/tag/v0.1.0
