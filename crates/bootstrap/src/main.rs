@@ -9,7 +9,7 @@ use std::process::ExitCode;
 
 use clew_adapter_cli::{Command, Format, Scan, document, parse, report};
 use clew_adapter_fs::{StdFileContents, StdFileTree};
-use clew_application::{DiscoverSurfaces, DiscoveryReport};
+use clew_application::DiscoverSurfaces;
 use clew_domain::ScanPolicy;
 use clew_domain::catalogue;
 use clew_domain::finding::DEFAULT_EVIDENCE_WIDTH;
@@ -112,7 +112,8 @@ fn main() -> ExitCode {
     let policy = ScanPolicy::with_default_pruning(max_depth())
         .with_max_file_bytes(max_file_bytes())
         .with_evidence_width(evidence_width());
-    let mut found = Vec::with_capacity(scans.len());
+    let mut complete = true;
+    let mut found = Vec::new();
 
     for (root, scope) in &scans {
         let tree = StdFileTree::new(root).following(&catalogue::shipped().roots_in(*scope));
@@ -120,15 +121,18 @@ fn main() -> ExitCode {
         let scanned = DiscoverSurfaces::new(&tree, &contents, &policy)
             .in_scope(*scope)
             .run();
+        complete &= scanned.is_complete();
 
-        // Text is printed as each scan ends; JSON waits to be one document.
+        // Text is printed as each scan ends and let go; JSON keeps every scan
+        // to write one document.
         if format == Format::Text {
             if scans.len() > 1 {
                 println!("{root}");
             }
             print!("{}", report(&scanned, root));
+        } else {
+            found.push(scanned);
         }
-        found.push(scanned);
     }
 
     if format == Format::Json {
@@ -150,7 +154,7 @@ fn main() -> ExitCode {
         }
     }
 
-    if found.iter().all(DiscoveryReport::is_complete) {
+    if complete {
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE

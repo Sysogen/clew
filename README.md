@@ -39,8 +39,9 @@ clew path . --format json | jq '.scans[0].findings'
 
 The document carries a `version`, raised whenever a field changes meaning or
 goes away, and one entry in `scans` for each tree read: one for `path`, two for
-`system`. A hidden or control character in any string is written as a `\u`
-escape, so a finding's payload never appears raw.
+`system`. A control or default-ignorable character in any string, variation
+selectors included, is written as a `\u` escape, so a finding's payload never
+appears raw.
 
 ## What it does not do
 

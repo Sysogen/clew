@@ -9,15 +9,19 @@ use icu_properties::props::{DefaultIgnorableCodePoint, VariationSelector};
 use crate::finding::{Evidence, Finding, Line, Position, RuleId, Severity};
 use crate::repo_path::RepoPath;
 
-/// Whether a character reaches the model without reaching the reader.
-///
-/// Unicode's `Default_Ignorable_Code_Point`: what a renderer shows as nothing,
-/// blank fillers and reserved codepoints included. Variation selectors are in
-/// it, but they style the emoji before them.
+/// Whether Unicode lists a character as `Default_Ignorable_Code_Point`: what a
+/// renderer shows as nothing, blank fillers and reserved codepoints included.
+#[must_use]
+pub fn is_default_ignorable(c: char) -> bool {
+    CodePointSetData::new::<DefaultIgnorableCodePoint>().contains(c)
+}
+
+/// Whether a character reaches the model without reaching the reader: a
+/// default-ignorable one other than a variation selector, which styles the
+/// emoji before it.
 #[must_use]
 pub fn is_hidden(c: char) -> bool {
-    CodePointSetData::new::<DefaultIgnorableCodePoint>().contains(c)
-        && !CodePointSetData::new::<VariationSelector>().contains(c)
+    is_default_ignorable(c) && !CodePointSetData::new::<VariationSelector>().contains(c)
 }
 
 /// Everything the named rules say about one file.
@@ -95,6 +99,12 @@ fn invisible_unicode(path: &RepoPath, text: &str, width: usize) -> Vec<Finding> 
 mod tests {
     use super::*;
     use crate::finding::DEFAULT_EVIDENCE_WIDTH;
+
+    #[test]
+    fn a_variation_selector_is_ignorable_but_not_hidden() {
+        assert!(is_default_ignorable('\u{FE0F}') && !is_hidden('\u{FE0F}'));
+        assert!(is_default_ignorable('\u{200B}') && is_hidden('\u{200B}'));
+    }
 
     fn found_in(text: &str) -> Vec<Finding> {
         run(

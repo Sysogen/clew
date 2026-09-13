@@ -4,16 +4,16 @@
 //! Turning discovery reports into one JSON document.
 //!
 //! Tools read it, so it is a contract: [`VERSION`] is raised when a field
-//! changes meaning or goes away. A hidden or control character in any string is
-//! written as a `\u` escape, so the document decodes to exactly what was found
-//! without carrying the character itself.
+//! changes meaning or goes away. A control or default-ignorable character in
+//! any string is written as a `\u` escape, so the document decodes to exactly
+//! what was found without carrying the character itself.
 
 use std::io;
 
 use clew_application::DiscoveryReport;
 use clew_domain::hook::Action;
 use clew_domain::mcp_server::Transport;
-use clew_domain::rules::is_hidden;
+use clew_domain::rules::is_default_ignorable;
 use clew_domain::scope::Scope;
 use serde::Serialize;
 use serde_json::ser::{Formatter, Serializer};
@@ -44,7 +44,9 @@ pub fn document(scans: &[Scan<'_>]) -> Result<String, serde_json::Error> {
     Ok(String::from_utf8_lossy(&out).into_owned())
 }
 
-/// Compact JSON, with every hidden or control character escaped.
+/// Compact JSON, with every control or default-ignorable character escaped.
+/// Variation selectors too: harmless after an emoji, a run of them can carry
+/// bytes.
 struct Escaping;
 
 impl Formatter for Escaping {
@@ -54,7 +56,7 @@ impl Formatter for Escaping {
     {
         let mut start = 0;
         for (at, c) in fragment.char_indices() {
-            if c.is_control() || is_hidden(c) {
+            if c.is_control() || is_default_ignorable(c) {
                 writer.write_all(&fragment.as_bytes()[start..at])?;
                 for unit in c.encode_utf16(&mut [0; 2]) {
                     write!(writer, "\\u{unit:04x}")?;
@@ -381,17 +383,17 @@ mod tests {
         );
     }
 
-    /// Bidirectional, tag-block and C1 control characters are escaped, and
-    /// decode back to exactly what was found.
+    /// Bidirectional, tag-block, variation-selector and C1 control characters
+    /// are escaped, and decode back to exactly what was found.
     #[test]
     fn a_hidden_or_control_character_is_escaped_not_written() {
-        let found = "ok\u{202E}\u{E0041}\u{9B}";
+        let found = "ok\u{202E}\u{E0041}\u{FE0F}\u{E0100}\u{9B}";
         let mut report = full();
         report.hooks[0].hook.action = Action::Command(found.to_owned());
 
         let text = document(&[repository(&report)]).expect("serialises");
 
-        for c in ['\u{202E}', '\u{E0041}', '\u{9B}'] {
+        for c in ['\u{202E}', '\u{E0041}', '\u{FE0F}', '\u{E0100}', '\u{9B}'] {
             assert!(!text.contains(c), "U+{:04X} in {text}", c as u32);
         }
         let json: Value = serde_json::from_str(&text).expect("parses");
