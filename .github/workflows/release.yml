@@ -54,21 +54,7 @@ jobs:
       - name: CI passed on this commit
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          sha="$(git rev-parse HEAD)"
-          conclusions="$(gh run list --commit "$sha" --workflow CI \
-            --json conclusion --jq '.[].conclusion')"
-          if [ -z "$conclusions" ]; then
-            echo "no CI run found for $sha; release only from a commit CI has checked" >&2
-            exit 1
-          fi
-          if grep -qv '^success$' <<<"$conclusions"; then
-            echo "CI did not succeed on $sha:" >&2
-            echo "$conclusions" >&2
-            exit 1
-          fi
-          echo "CI succeeded on $sha"
+        run: ./scripts/ci-passed.sh "$(git rev-parse HEAD)"
 
   publish:
     name: crates.io
