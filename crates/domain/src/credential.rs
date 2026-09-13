@@ -182,14 +182,16 @@ fn value_at(line: &[char], index: &Index, from: usize) -> Option<(usize, usize)>
     (from < to).then_some((from, to))
 }
 
-/// The key before a separator at `at`: the name just before it, past a closing
-/// quote, so `"api_key":` gives `api_key` and `?token=` gives `token`.
+/// The key before a separator at `at`: the name just before it, past spaces and
+/// a closing quote, so `"api_key" :`, `api_key =` and `?token=` all give it.
 fn key_before(line: &[char], at: usize) -> String {
-    let end = if at > 0 && QUOTES.contains(line[at - 1]) {
-        at - 1
-    } else {
-        at
-    };
+    let mut end = at;
+    while end > 0 && line[end - 1].is_whitespace() {
+        end -= 1;
+    }
+    if end > 0 && QUOTES.contains(line[end - 1]) {
+        end -= 1;
+    }
     let start = line[..end]
         .iter()
         .rposition(|c| !(c.is_alphanumeric() || matches!(c, '_' | '-' | '.') || is_hidden(*c)))
@@ -260,6 +262,20 @@ mod tests {
             r#"{"api_key":"s3cr3tvalue"}"#,
             "api_key:s3cr3tvalue",
             "--token=s3cr3tvalue",
+        ] {
+            let said = masked(line);
+            assert!(!said.contains("s3cr3tvalue"), "{line} -> {said}");
+        }
+    }
+
+    /// TOML, Python and YAML put spaces around the separator.
+    #[test]
+    fn a_value_spaced_from_its_key_is_masked() {
+        assert_eq!(masked("password = hunter2"), "password = *******");
+        for line in [
+            r#"api_key = "s3cr3tvalue""#,
+            r#""api_key" : "s3cr3tvalue""#,
+            "TOKEN\t=\ts3cr3tvalue",
         ] {
             let said = masked(line);
             assert!(!said.contains("s3cr3tvalue"), "{line} -> {said}");
@@ -339,6 +355,7 @@ mod tests {
             "keep the token cache warm",
             "--author someone",
             "see https://example.invalid/docs at 10:30",
+            "timeout = 30",
         ] {
             assert_eq!(masked(line), line);
         }
