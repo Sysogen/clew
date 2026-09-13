@@ -6,7 +6,7 @@
 use std::collections::BTreeSet;
 
 use clew_domain::extract;
-use clew_domain::finding::Finding;
+use clew_domain::finding::{Finding, Severity};
 use clew_domain::ports::file_contents::{FileContents, FileContentsError};
 use clew_domain::ports::file_tree::{EntryKind, FileTree, FileTreeError};
 use clew_domain::rules;
@@ -68,6 +68,12 @@ impl DiscoveryReport {
     #[must_use]
     pub fn is_complete(&self) -> bool {
         self.unreadable.is_empty() && self.unparsed.is_empty()
+    }
+
+    /// Whether a finding is at least as severe as `severity`.
+    #[must_use]
+    pub fn reaches(&self, severity: Severity) -> bool {
+        self.findings.iter().any(|f| f.severity >= severity)
     }
 }
 
@@ -256,6 +262,30 @@ mod tests {
     use clew_domain::ports::file_tree::{DirEntry, EntryKind};
 
     use super::*;
+
+    #[test]
+    fn a_report_reaches_the_severity_of_its_worst_finding() {
+        let finding = |severity| Finding {
+            path: RepoPath::root().join("CLAUDE.md"),
+            at: None,
+            rule: clew_domain::finding::RuleId::InvisibleUnicode,
+            severity,
+            evidence: clew_domain::finding::Evidence::quote(
+                &clew_domain::finding::Line::new("x"),
+                0,
+                80,
+            ),
+        };
+        let report = DiscoveryReport {
+            findings: vec![finding(Severity::Low), finding(Severity::Medium)],
+            ..DiscoveryReport::default()
+        };
+
+        assert!(report.reaches(Severity::Low));
+        assert!(report.reaches(Severity::Medium));
+        assert!(!report.reaches(Severity::High));
+        assert!(!DiscoveryReport::default().reaches(Severity::Low));
+    }
 
     /// An in-memory tree. The whole point of the port is that this exists.
     #[derive(Default)]

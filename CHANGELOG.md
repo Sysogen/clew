@@ -5,6 +5,13 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `--fail-on low|medium|high` on `path` and `system`: exit `2` when a finding
+  is at that severity or worse. Without it a finding still does not change the
+  exit status, and an incomplete scan still exits `1`, even beside a finding,
+  since what it could not read may hold more.
+
 ### Fixed
 
 - A release waits for CI to finish on its commit rather than failing because

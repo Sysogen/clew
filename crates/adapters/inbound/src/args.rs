@@ -3,6 +3,9 @@
 
 //! Turning a command line into a request.
 
+use std::slice::Iter;
+
+use clew_domain::finding::Severity;
 use thiserror::Error;
 
 /// How a report is written.
@@ -26,12 +29,16 @@ pub enum Command {
         root: String,
         /// How to write the report.
         format: Format,
+        /// The severity at which a finding fails the run, if any.
+        fail_on: Option<Severity>,
     },
     /// Scan the home directory for agent surfaces kept outside any
     /// repository.
     System {
         /// How to write the report.
         format: Format,
+        /// The severity at which a finding fails the run, if any.
+        fail_on: Option<Severity>,
     },
     /// Print usage.
     Help,
@@ -57,6 +64,12 @@ pub enum ParseError {
     /// SARIF asked of a scan with no repository to place results in.
     #[error("SARIF places results in a repository: use it with 'clew path'")]
     SarifNeedsRepository,
+    /// `--fail-on` with nothing after it.
+    #[error("'--fail-on' needs a severity: low, medium or high")]
+    MissingSeverity,
+    /// `--fail-on` naming no known severity.
+    #[error("unknown severity '{0}': expected low, medium or high")]
+    UnknownSeverity(String),
 }
 
 /// Parse arguments, excluding the program name.
@@ -76,47 +89,81 @@ where
         None | Some("--help" | "-h" | "help") => Ok(Command::Help),
         Some("--version" | "-V") => Ok(Command::Version),
         Some("path") => {
-            let (positional, format) = options(&args[1..])?;
+            let options = options(&args[1..])?;
             Ok(Command::Path {
-                root: positional
+                root: options
+                    .positional
                     .into_iter()
                     .next()
                     .unwrap_or_else(|| ".".to_owned()),
-                format,
+                format: options.format,
+                fail_on: options.fail_on,
             })
         }
-        Some("system") => match options(&args[1..])?.1 {
-            Format::Sarif => Err(ParseError::SarifNeedsRepository),
-            format => Ok(Command::System { format }),
-        },
+        Some("system") => {
+            let options = options(&args[1..])?;
+            if options.format == Format::Sarif {
+                return Err(ParseError::SarifNeedsRepository);
+            }
+            Ok(Command::System {
+                format: options.format,
+                fail_on: options.fail_on,
+            })
+        }
         Some(other) => Err(ParseError::UnknownCommand(other.to_owned())),
     }
 }
 
-/// The arguments after a command: its positionals, and the format asked for.
-fn options(args: &[String]) -> Result<(Vec<String>, Format), ParseError> {
-    let mut positional = Vec::new();
-    let mut format = Format::default();
+/// What follows a command.
+struct Options {
+    positional: Vec<String>,
+    format: Format,
+    fail_on: Option<Severity>,
+}
+
+fn options(args: &[String]) -> Result<Options, ParseError> {
+    let mut options = Options {
+        positional: Vec::new(),
+        format: Format::default(),
+        fail_on: None,
+    };
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
-        let value = if arg == "--format" {
-            rest.next().ok_or(ParseError::MissingFormat)?.as_str()
-        } else if let Some(value) = arg.strip_prefix("--format=") {
-            value
+        if let Some(value) = value_of("--format", arg, &mut rest, ParseError::MissingFormat)? {
+            options.format = match value {
+                "text" => Format::Text,
+                "json" => Format::Json,
+                "sarif" => Format::Sarif,
+                other => return Err(ParseError::UnknownFormat(other.to_owned())),
+            };
+        } else if let Some(value) =
+            value_of("--fail-on", arg, &mut rest, ParseError::MissingSeverity)?
+        {
+            options.fail_on = Some(
+                Severity::from_name(value)
+                    .ok_or_else(|| ParseError::UnknownSeverity(value.to_owned()))?,
+            );
         } else if arg.len() > 1 && arg.starts_with('-') {
             return Err(ParseError::UnknownOption(arg.clone()));
         } else {
-            positional.push(arg.clone());
-            continue;
-        };
-        format = match value {
-            "text" => Format::Text,
-            "json" => Format::Json,
-            "sarif" => Format::Sarif,
-            other => return Err(ParseError::UnknownFormat(other.to_owned())),
-        };
+            options.positional.push(arg.clone());
+        }
     }
-    Ok((positional, format))
+    Ok(options)
+}
+
+/// The value `arg` gives the option `name`, written `name value` or
+/// `name=value`, or `None` when `arg` is not that option.
+fn value_of<'a>(
+    name: &str,
+    arg: &'a str,
+    rest: &mut Iter<'a, String>,
+    missing: ParseError,
+) -> Result<Option<&'a str>, ParseError> {
+    if arg == name {
+        return rest.next().map(|v| Some(v.as_str())).ok_or(missing);
+    }
+    Ok(arg.strip_prefix(name).and_then(|v| v.strip_prefix('=')))
 }
 
 #[cfg(test)]
@@ -127,17 +174,20 @@ mod tests {
         Command::Path {
             root: root.to_owned(),
             format,
+            fail_on: None,
         }
     }
 
     #[test]
     fn system_takes_no_root() {
-        let text = Format::Text;
-        assert_eq!(parse(["system"]), Ok(Command::System { format: text }));
-        assert_eq!(
-            parse(["system", "/tmp"]),
-            Ok(Command::System { format: text })
-        );
+        let system = || {
+            Ok(Command::System {
+                format: Format::Text,
+                fail_on: None,
+            })
+        };
+        assert_eq!(parse(["system"]), system());
+        assert_eq!(parse(["system", "/tmp"]), system());
     }
 
     #[test]
@@ -172,7 +222,8 @@ mod tests {
         assert_eq!(
             parse(["system", "--format", "json"]),
             Ok(Command::System {
-                format: Format::Json
+                format: Format::Json,
+                fail_on: None
             })
         );
     }
@@ -187,6 +238,41 @@ mod tests {
         assert_eq!(
             parse(["system", "--verbose"]),
             Err(ParseError::UnknownOption("--verbose".to_owned()))
+        );
+        assert_eq!(
+            parse(["path", "--formats=json"]),
+            Err(ParseError::UnknownOption("--formats=json".to_owned()))
+        );
+    }
+
+    #[test]
+    fn fail_on_names_a_severity_either_way() {
+        assert_eq!(
+            parse(["path", "--fail-on", "high"]),
+            Ok(Command::Path {
+                root: ".".to_owned(),
+                format: Format::Text,
+                fail_on: Some(Severity::High),
+            })
+        );
+        assert_eq!(
+            parse(["system", "--format=json", "--fail-on=medium"]),
+            Ok(Command::System {
+                format: Format::Json,
+                fail_on: Some(Severity::Medium),
+            })
+        );
+    }
+
+    #[test]
+    fn a_bad_severity_is_an_error_not_a_silent_default() {
+        assert_eq!(
+            parse(["path", "--fail-on"]),
+            Err(ParseError::MissingSeverity)
+        );
+        assert_eq!(
+            parse(["path", "--fail-on", "critical"]),
+            Err(ParseError::UnknownSeverity("critical".to_owned()))
         );
     }
 
