@@ -5,6 +5,12 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- A release waits for CI to finish on its commit rather than failing because
+  it has not. `Tag` starts the release as soon as a version change lands, while
+  CI on that commit is still running, which stopped the first 0.2.0 attempt.
+
 ## [0.2.0] - 2026-09-13
 
 ### Added

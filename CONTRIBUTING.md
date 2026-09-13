@@ -290,8 +290,9 @@ Workflow files are parsed in CI. An unparseable one is accepted by the push and
 fails only when it runs, reported against its path rather than its name, so it
 is checked before merge.
 
-`Release` refuses to publish unless CI already succeeded on that commit, the
-tag matches the manifest version, and the tag is an ancestor of `main`. It
+`Release` waits for CI to finish on that commit, since `Tag` starts it as soon
+as the change lands, and refuses to publish unless CI succeeded, the tag
+matches the manifest version, and the tag is an ancestor of `main`. It
 builds every binary before publishing, because a crates.io version can be
 yanked but never replaced and a failed target must not leave crates published
 without artifacts.
