@@ -118,6 +118,39 @@ clew path . --fail-on high
 An incomplete scan still exits `1`, even beside a finding: what it could not
 read may hold more.
 
+### GitHub Action
+
+The action scans the checkout and uploads the SARIF log to code scanning, where
+each finding is an alert on the line it was found:
+
+```yaml
+permissions:
+  contents: read
+  security-events: write
+
+steps:
+  - uses: actions/checkout@v6
+  - uses: Sysogen/clew@v0.4.0
+    with:
+      fail-on: high
+```
+
+It downloads the clew release it names for the runner, on Linux, macOS or
+Windows, and refuses the download unless it matches the checksum published
+beside it. Pin the action to a tag or a commit, since that decides which clew
+runs.
+
+| Input | Default | Meaning |
+| --- | --- | --- |
+| `fail-on` | none | Fail on a finding at `low`, `medium` or `high` or worse |
+| `path` | the workspace | Where the repository is checked out, scanned as its root |
+| `upload` | `true` | Upload to code scanning; `false` where it is not enabled |
+| `version` | the action's own | The clew release to run |
+
+The step ends as clew exits, after the upload: it fails on an incomplete scan,
+and on a finding at `fail-on`. A pull request from a fork gets a read-only
+token, so set `upload` to `false` there.
+
 ## What it does not do
 
 `clew` never reads a credential value, and never executes a hook, script, or

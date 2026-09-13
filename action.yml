@@ -1,0 +1,65 @@
+---
+name: clew
+description: >-
+  Find what AI coding agents are configured to read and run in a repository,
+  and report what is wrong with it to code scanning.
+author: Sysogen
+branding:
+  icon: search
+  color: gray-dark
+
+inputs:
+  path:
+    description: Where the repository is checked out. It is scanned as its root.
+    default: ${{ github.workspace }}
+  fail-on:
+    description: >-
+      Fail when a finding is this severity or worse: low, medium or high.
+      Empty, the default, fails only when the scan could not read everything.
+    default: ""
+  upload:
+    description: >-
+      Upload the log to code scanning, which needs the security-events: write
+      permission.
+    default: "true"
+  version:
+    description: The clew release to run. The default is the one this action was released with.
+    default: "0.3.0"
+
+outputs:
+  sarif:
+    description: Where the SARIF log was written.
+    value: ${{ steps.scan.outputs.sarif }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install clew
+      id: install
+      shell: bash
+      env:
+        CLEW_VERSION: ${{ inputs.version }}
+      run: '"$GITHUB_ACTION_PATH/scripts/install-release.sh"'
+
+    - name: Scan
+      id: scan
+      shell: bash
+      env:
+        CLEW: ${{ steps.install.outputs.clew }}
+        SCAN_PATH: ${{ inputs.path }}
+        FAIL_ON: ${{ inputs.fail-on }}
+      run: '"$GITHUB_ACTION_PATH/scripts/action-scan.sh"'
+
+    - name: Upload to code scanning
+      if: inputs.upload == 'true' && steps.scan.outputs.sarif != ''
+      uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63  # v4.38.0
+      with:
+        sarif_file: ${{ steps.scan.outputs.sarif }}
+        checkout_path: ${{ inputs.path }}
+        category: clew
+
+    - name: Exit as clew did
+      shell: bash
+      env:
+        STATUS: ${{ steps.scan.outputs.status }}
+      run: exit "${STATUS:-1}"

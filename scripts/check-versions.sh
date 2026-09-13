@@ -2,11 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Sysogen Lda
 #
-# Every internal dependency must be pinned at the workspace version.
+# Every internal dependency must be pinned at the workspace version, and
+# action.yml must install it.
 #
 # A bump that misses them publishes crates that ask for the previous release of
-# each other, so the five are not a coherent set. cargo accepts it, which is
-# why this has to be checked rather than noticed.
+# each other, so the five are not a coherent set, and an action that runs the
+# previous clew. Nothing else notices, which is why this has to be checked.
 
 set -euo pipefail
 
@@ -25,10 +26,18 @@ import re
 for m in re.finditer(r'^(clew-[a-z-]+) = \{ version = \"([^\"]+)\"', open('Cargo.toml').read(), re.M):
     print(m.group(1), m.group(2))")
 
+action="$(python3 -c "
+import re
+print(re.search(r'^  version:\n(?:    .*\n)*?    default: \"([^\"]+)\"', open('action.yml').read(), re.M).group(1))")"
+if [ "$action" != "$workspace" ]; then
+    printf '  action.yml installs %s, the workspace is at %s\n' "$action" "$workspace" >&2
+    mismatched=$((mismatched + 1))
+fi
+
 if [ "$mismatched" -gt 0 ]; then
-    printf 'version pins: %d internal dependenc(y|ies) do not match the workspace.\n' "$mismatched" >&2
+    printf 'version pins: %d pin(s) do not match the workspace.\n' "$mismatched" >&2
     printf 'Raise them in the same commit as the workspace version.\n' >&2
     exit 1
 fi
 
-printf 'version pins: all internal dependencies at %s\n' "$workspace"
+printf 'version pins: all internal dependencies and action.yml at %s\n' "$workspace"

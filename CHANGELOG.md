@@ -5,6 +5,13 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- A GitHub Action, `Sysogen/clew`, that scans the checkout and uploads the
+  SARIF log to code scanning. It installs the clew release it names for the
+  runner, refusing one that does not match its published checksum, passes
+  `fail-on` through, and ends the step as clew exits, after the upload.
+
 ## [0.3.0] - 2026-09-13
 
 ### Added
