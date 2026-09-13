@@ -31,6 +31,17 @@ Code, Continue, Cline, Aider, Copilot, and devcontainers.
 3 agent surface(s).
 ```
 
+`--format json` writes the same report as one document for tools to read:
+
+```sh
+clew path . --format json | jq '.scans[0].findings'
+```
+
+The document carries a `version`, raised whenever a field changes meaning or
+goes away, and one entry in `scans` for each tree read: one for `path`, two for
+`system`. A hidden or control character in any string is written as a `\u`
+escape, so a finding's payload never appears raw.
+
 ## What it does not do
 
 `clew` never reads a credential value, and never executes a hook, script, or
