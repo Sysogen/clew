@@ -10,6 +10,22 @@ repository.
 
 ### Added
 
+- Findings. A rule says something is wrong, where a row only says what a file
+  declares. Findings sit on the report beside surfaces, sorted by path and
+  position, and a finding does not make a scan incomplete: it is a scan that
+  worked and found something.
+
+- The `invisible-unicode` rule, severity high. It flags zero-width,
+  bidirectional, tag-block and other non-printing characters in instruction,
+  rules and skill files: the Rules File Backdoor, disclosed by Pillar Security
+  on 18 March 2025. A catalogue row names the rules that read it with `check`,
+  so settings a tool keeps beside its rules are never quoted. A run of hidden characters is one finding, so a smuggled
+  instruction does not fill the report. A byte order mark opening a file is
+  left alone, as are emoji variation selectors and non-breaking spaces. The
+  evidence escapes the
+  character as `<U+XXXX>` so a report never carries the payload, and quotes at
+  most `CLEW_EVIDENCE_WIDTH` characters of the line, never fewer than 12.
+
 - `clew system` also reads the rules an administrator deploys to the machine,
   `/etc/devin/rules` and the legacy `/etc/windsurf/rules`. Nobody being scanned
   chose those, and they are in neither tree that engineer owns.

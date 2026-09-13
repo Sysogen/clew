@@ -53,6 +53,7 @@ source = "https://code.claude.com/docs/en/hooks"
 glob = "**/.claude/skills/**/SKILL.md"
 tool = "claude-code"
 kind = "skill"
+check = ["invisible-unicode"]
 format = "markdown"
 extract = ["permissions"]
 last_verified = "2026-09-11"
@@ -62,6 +63,7 @@ source = "https://code.claude.com/docs/en/skills"
 glob = "**/CLAUDE.md"
 tool = "claude-code"
 kind = "instruction"
+check = ["invisible-unicode"]
 last_verified = "2026-09-11"
 source = "https://code.claude.com/docs/en/memory"
 
@@ -79,6 +81,7 @@ source = "https://kiro.dev/docs/mcp/configuration/"
 glob = "**/.kiro/steering/**/*.md"
 tool = "kiro"
 kind = "kiro"
+check = ["invisible-unicode"]
 last_verified = "2026-09-12"
 source = "https://kiro.dev/docs/steering/"
 
@@ -105,6 +108,7 @@ source = "https://github.com/openai/codex/blob/main/docs/config.md"
 glob = "**/AGENTS.md"
 tool = "codex"
 kind = "instruction"
+check = ["invisible-unicode"]
 last_verified = "2026-09-11"
 source = "https://agents.md"
 
@@ -132,6 +136,7 @@ source = "https://cursor.com/docs/mcp"
 glob = "**/.cursor/rules/**/*.mdc"
 tool = "cursor"
 kind = "cursor"
+check = ["invisible-unicode"]
 last_verified = "2026-09-11"
 source = "https://cursor.com/docs/rules"
 
@@ -141,6 +146,7 @@ source = "https://cursor.com/docs/rules"
 glob = "**/.cursorrules"
 tool = "cursor"
 kind = "cursor"
+check = ["invisible-unicode"]
 last_verified = "2026-09-12"
 source = "https://cursor.com/help/customization/rules"
 
@@ -165,6 +171,7 @@ source = "https://code.visualstudio.com/docs/agent-customization/mcp-servers"
 glob = "**/.github/copilot-instructions.md"
 tool = "copilot"
 kind = "copilot"
+check = ["invisible-unicode"]
 last_verified = "2026-09-12"
 source = "https://docs.github.com/en/copilot/how-tos/copilot-on-github/customize-copilot/add-custom-instructions/add-repository-instructions"
 
@@ -185,6 +192,7 @@ source = "https://github.com/zed-industries/zed/blob/main/docs/src/ai/mcp.md"
 glob = "**/.agents/skills/*/SKILL.md"
 tool = "zed"
 kind = "zed"
+check = ["invisible-unicode"]
 last_verified = "2026-09-12"
 source = "https://github.com/zed-industries/zed/blob/main/docs/src/ai/skills.md"
 
@@ -192,6 +200,7 @@ source = "https://github.com/zed-industries/zed/blob/main/docs/src/ai/skills.md"
 glob = "**/.rules"
 tool = "zed"
 kind = "zed"
+check = ["invisible-unicode"]
 last_verified = "2026-09-12"
 source = "https://github.com/zed-industries/zed/blob/main/docs/src/ai/instructions.md"
 
@@ -204,6 +213,7 @@ source = "https://github.com/zed-industries/zed/blob/main/docs/src/ai/instructio
 glob = "**/.devin/rules/**/*.md"
 tool = "windsurf"
 kind = "windsurf"
+check = ["invisible-unicode"]
 last_verified = "2026-09-12"
 source = "https://docs.windsurf.com/windsurf/cascade/memories"
 
@@ -211,6 +221,7 @@ source = "https://docs.windsurf.com/windsurf/cascade/memories"
 glob = "**/.windsurf/rules/**/*.md"
 tool = "windsurf"
 kind = "windsurf"
+check = ["invisible-unicode"]
 last_verified = "2026-09-12"
 source = "https://docs.windsurf.com/windsurf/cascade/memories"
 
@@ -218,6 +229,7 @@ source = "https://docs.windsurf.com/windsurf/cascade/memories"
 glob = "**/.windsurfrules"
 tool = "windsurf"
 kind = "windsurf"
+check = ["invisible-unicode"]
 last_verified = "2026-09-12"
 source = "https://docs.windsurf.com/windsurf/cascade/memories"
 
@@ -235,6 +247,7 @@ source = "https://docs.continue.dev/reference"
 glob = "**/.clinerules/**/*.{md,txt}"
 tool = "cline"
 kind = "cline"
+check = ["invisible-unicode"]
 last_verified = "2026-09-12"
 source = "https://docs.cline.bot/features/cline-rules"
 
@@ -268,6 +281,7 @@ source = "https://containers.dev/implementors/json_reference/"
 glob = "**/GEMINI.md"
 tool = "gemini-cli"
 kind = "instruction"
+check = ["invisible-unicode"]
 last_verified = "2026-09-12"
 source = "https://github.com/google-gemini/gemini-cli/blob/main/docs/reference/configuration.md"
 
@@ -275,6 +289,7 @@ source = "https://github.com/google-gemini/gemini-cli/blob/main/docs/reference/c
 glob = "**/AGENT.md"
 tool = "zed"
 kind = "instruction"
+check = ["invisible-unicode"]
 last_verified = "2026-09-12"
 source = "https://github.com/zed-industries/zed/blob/main/docs/src/ai/rules.md"
 
@@ -329,6 +344,7 @@ scope = "home"
 glob = ".kiro/steering/**/*.md"
 tool = "kiro"
 kind = "kiro"
+check = ["invisible-unicode"]
 last_verified = "2026-09-12"
 source = "https://kiro.dev/docs/steering/"
 
@@ -346,6 +362,7 @@ scope = "home"
 glob = ".codeium/windsurf/memories/global_rules.md"
 tool = "windsurf"
 kind = "windsurf"
+check = ["invisible-unicode"]
 last_verified = "2026-09-12"
 source = "https://docs.windsurf.com/windsurf/cascade/memories"
 
@@ -354,6 +371,7 @@ scope = "home"
 glob = ".agents/skills/*/SKILL.md"
 tool = "zed"
 kind = "zed"
+check = ["invisible-unicode"]
 last_verified = "2026-09-12"
 source = "https://github.com/zed-industries/zed/blob/main/docs/src/ai/skills.md"
 
@@ -362,6 +380,7 @@ scope = "home"
 glob = ".agents/AGENTS.md"
 tool = "cline"
 kind = "instruction"
+check = ["invisible-unicode"]
 last_verified = "2026-09-12"
 source = "https://docs.cline.bot/features/cline-rules"
 
@@ -375,6 +394,7 @@ scope = "system"
 glob = "etc/devin/rules/**/*.md"
 tool = "windsurf"
 kind = "windsurf"
+check = ["invisible-unicode"]
 last_verified = "2026-09-12"
 source = "https://docs.windsurf.com/windsurf/cascade/memories"
 
@@ -383,5 +403,6 @@ scope = "system"
 glob = "etc/windsurf/rules/**/*.md"
 tool = "windsurf"
 kind = "windsurf"
+check = ["invisible-unicode"]
 last_verified = "2026-09-12"
 source = "https://docs.windsurf.com/windsurf/cascade/memories"

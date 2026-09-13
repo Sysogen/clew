@@ -14,6 +14,7 @@ use serde::Deserialize;
 use thiserror::Error;
 
 use crate::extract::{Extraction, Format};
+use crate::finding::RuleId;
 use crate::repo_path::RepoPath;
 use crate::scope::Scope;
 use crate::surface::SurfaceKind;
@@ -52,6 +53,14 @@ pub enum CatalogueError {
         row: usize,
         /// The extraction as written.
         extraction: String,
+    },
+    /// A row names a rule that does not exist.
+    #[error("row {row} names an unknown check {check:?}")]
+    UnknownCheck {
+        /// Which row, counting from zero.
+        row: usize,
+        /// The rule as written.
+        check: String,
     },
     /// A row names a format that does not exist.
     #[error("row {row} names an unknown format {format:?}")]
@@ -96,6 +105,8 @@ pub struct Matched<'a> {
     pub kind: SurfaceKind,
     /// What to read out of it. Empty means inventory only.
     pub extract: &'a [Extraction],
+    /// Which rules read it.
+    pub check: &'a [RuleId],
     /// How the file is written.
     pub format: Format,
     /// Which tree it belongs to.
@@ -114,6 +125,9 @@ pub struct SurfaceRule {
     /// What to read out of it. Empty means inventory only.
     #[serde(default)]
     pub extract: Vec<String>,
+    /// Which rules read it. Empty means none does.
+    #[serde(default)]
+    pub check: Vec<String>,
     /// How the file is written. Omitted means JSON.
     #[serde(default = "default_format")]
     pub format: String,
@@ -147,6 +161,7 @@ pub struct Catalogue {
     rules: Vec<SurfaceRule>,
     kinds: Vec<SurfaceKind>,
     extractions: Vec<Vec<Extraction>>,
+    checks: Vec<Vec<RuleId>>,
     formats: Vec<Format>,
     scopes: Vec<Scope>,
     globs: GlobSet,
@@ -166,6 +181,7 @@ impl Catalogue {
         let mut builder = GlobSetBuilder::new();
         let mut kinds = Vec::with_capacity(file.surface.len());
         let mut extractions = Vec::with_capacity(file.surface.len());
+        let mut checks = Vec::with_capacity(file.surface.len());
         let mut formats = Vec::with_capacity(file.surface.len());
         let mut scopes = Vec::with_capacity(file.surface.len());
 
@@ -198,6 +214,18 @@ impl Catalogue {
                                 row,
                                 extraction: name.clone(),
                             }
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?,
+            );
+
+            checks.push(
+                rule.check
+                    .iter()
+                    .map(|name| {
+                        RuleId::from_catalogue(name).ok_or_else(|| CatalogueError::UnknownCheck {
+                            row,
+                            check: name.clone(),
                         })
                     })
                     .collect::<Result<Vec<_>, _>>()?,
@@ -247,6 +275,7 @@ impl Catalogue {
             rules: file.surface,
             kinds,
             extractions,
+            checks,
             scopes,
             formats,
         })
@@ -277,6 +306,7 @@ impl Catalogue {
             rule: &self.rules[first],
             kind: self.kinds[first],
             extract: &self.extractions[first],
+            check: &self.checks[first],
             format: self.formats[first],
             scope: self.scopes[first],
         })
@@ -603,6 +633,87 @@ mod tests {
             matches!(error, CatalogueError::UnknownFormat { .. }),
             "{error:?}"
         );
+    }
+
+    #[test]
+    fn an_unknown_check_is_rejected_at_load() {
+        let error = Catalogue::load(
+            r#"version = 1
+               [[surface]]
+               glob = "x"
+               tool = "x"
+               kind = "skill"
+               check = ["not-a-rule"]
+               last_verified = "2026-09-11"
+               source = "https://example.invalid"
+            "#,
+        )
+        .expect_err("an unknown check must not load");
+        assert!(
+            matches!(error, CatalogueError::UnknownCheck { .. }),
+            "{error:?}"
+        );
+    }
+
+    /// A rule reads prose, never settings, whichever tool owns the file.
+    #[test]
+    fn only_prose_rows_are_read_by_a_rule() {
+        let prose = [
+            (Scope::Repository, ".claude/skills/a/SKILL.md"),
+            (Scope::Repository, "CLAUDE.md"),
+            (Scope::Repository, ".kiro/steering/product.md"),
+            (Scope::Repository, "AGENTS.md"),
+            (Scope::Repository, ".cursor/rules/react.mdc"),
+            (Scope::Repository, ".cursorrules"),
+            (Scope::Repository, ".github/copilot-instructions.md"),
+            (Scope::Repository, ".agents/skills/review/SKILL.md"),
+            (Scope::Repository, ".rules"),
+            (Scope::Repository, ".devin/rules/a.md"),
+            (Scope::Repository, ".windsurf/rules/a.md"),
+            (Scope::Repository, ".windsurfrules"),
+            (Scope::Repository, ".clinerules/coding.md"),
+            (Scope::Repository, "GEMINI.md"),
+            (Scope::Repository, "AGENT.md"),
+            (Scope::Home, ".kiro/steering/product.md"),
+            (Scope::Home, ".codeium/windsurf/memories/global_rules.md"),
+            (Scope::Home, ".agents/skills/review/SKILL.md"),
+            (Scope::Home, ".agents/AGENTS.md"),
+            (Scope::System, "etc/devin/rules/policy.md"),
+            (Scope::System, "etc/windsurf/rules/policy.md"),
+        ];
+        assert_eq!(
+            prose.len(),
+            shipped()
+                .rules()
+                .iter()
+                .filter(|r| !r.check.is_empty())
+                .count(),
+            "every checked row needs a case here"
+        );
+        for (scope, path) in prose {
+            let m = shipped()
+                .lookup_in(&p(path), scope)
+                .unwrap_or_else(|| panic!("{path} matched no row"));
+            assert_eq!(m.check, &[RuleId::InvisibleUnicode], "{path}");
+        }
+
+        let settings = [
+            (Scope::Repository, ".kiro/settings/mcp.json"),
+            (Scope::Repository, ".kiro/hooks/lint-on-save.json"),
+            (Scope::Repository, ".cursor/mcp.json"),
+            (Scope::Repository, ".zed/settings.json"),
+            (Scope::Repository, ".claude/settings.json"),
+            (Scope::Repository, ".claude/hooks/x.sh"),
+            (Scope::Repository, ".env"),
+            (Scope::Home, ".kiro/settings/mcp.json"),
+            (Scope::Home, ".codeium/windsurf/mcp_config.json"),
+        ];
+        for (scope, path) in settings {
+            let m = shipped()
+                .lookup_in(&p(path), scope)
+                .unwrap_or_else(|| panic!("{path} matched no row"));
+            assert!(m.check.is_empty(), "{path} is not prose");
+        }
     }
 
     #[test]

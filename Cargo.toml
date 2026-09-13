@@ -25,6 +25,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = { version = "0.9", default-features = false, features = ["parse", "serde"] }
 thiserror = "2"
+# No general category test in std: char::is_control is Cc only. A hand-rolled
+# table would go stale silently, and stale means a missed character.
+unicode-general-category = "1"
 yaml-rust2 = { version = "0.13", default-features = false }
 
 [workspace.lints.rust]
