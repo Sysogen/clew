@@ -19,6 +19,8 @@ pub const MIN_EVIDENCE_WIDTH: usize = 12;
 pub enum RuleId {
     /// Non-printing Unicode in a file the model reads as instructions.
     InvisibleUnicode,
+    /// A hook file clew cannot review: binary, too large, or a link.
+    OpaqueHook,
 }
 
 impl RuleId {
@@ -27,6 +29,7 @@ impl RuleId {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::InvisibleUnicode => "invisible-unicode",
+            Self::OpaqueHook => "opaque-hook",
         }
     }
 
@@ -37,6 +40,7 @@ impl RuleId {
             Self::InvisibleUnicode => {
                 "Non-printing Unicode in a file an agent reads as instructions"
             }
+            Self::OpaqueHook => "A hook file clew cannot review as text",
         }
     }
 
@@ -45,6 +49,7 @@ impl RuleId {
     pub fn from_catalogue(name: &str) -> Option<Self> {
         Some(match name {
             "invisible-unicode" => Self::InvisibleUnicode,
+            "opaque-hook" => Self::OpaqueHook,
             _ => return None,
         })
     }
@@ -286,6 +291,10 @@ mod tests {
         assert_eq!(
             RuleId::from_catalogue("invisible-unicode"),
             Some(RuleId::InvisibleUnicode)
+        );
+        assert_eq!(
+            RuleId::from_catalogue("opaque-hook"),
+            Some(RuleId::OpaqueHook)
         );
         assert_eq!(RuleId::from_catalogue("Invisible-Unicode"), None);
     }

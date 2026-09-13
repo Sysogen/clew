@@ -10,9 +10,13 @@ repository.workspace = true
 [dependencies]
 clew-domain.workspace = true
 
-# For O_NOFOLLOW only; std has no portable equivalent.
+# For O_NOFOLLOW and O_NONBLOCK; std has no portable equivalent.
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+# mkfifo without unsafe, for the FIFO test.
+[target.'cfg(unix)'.dev-dependencies]
+nix = { version = "0.31", default-features = false, features = ["fs"] }
 
 [lints]
 workspace = true

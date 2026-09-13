@@ -3,8 +3,7 @@
 
 //! Reading what a configuration file sets up.
 //!
-//! A catalogue row declares which extractions apply to it. A row declaring
-//! none is inventory: the file is reported and never opened.
+//! A catalogue row declares which extractions apply to it.
 
 use thiserror::Error;
 

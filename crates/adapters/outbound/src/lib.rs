@@ -150,7 +150,9 @@ fn open_no_follow(path: &Path) -> io::Result<fs::File> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt as _;
-        options.custom_flags(libc::O_NOFOLLOW);
+        // O_NONBLOCK: a FIFO opens at once, to be refused below, rather than
+        // waiting for a writer.
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
     }
 
     #[cfg(windows)]
@@ -270,6 +272,24 @@ mod contents_tests {
 
         let read = StdFileContents::new(&dir).read(&path("sub"), 1024);
 
+        assert_eq!(read, Err(FileContentsError::NotARegularFile));
+    }
+
+    /// A blocking open of a FIFO waits for a writer, hanging the scan.
+    #[cfg(unix)]
+    #[test]
+    fn refuses_a_fifo_without_waiting_for_a_writer() {
+        let dir = scratch("fifo");
+        nix::unistd::mkfifo(&dir.join("pipe"), nix::sys::stat::Mode::S_IRWXU).expect("mkfifo");
+
+        let (send, receive) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = send.send(StdFileContents::new(&dir).read(&path("pipe"), 1024));
+        });
+
+        let read = receive
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("the open returned");
         assert_eq!(read, Err(FileContentsError::NotARegularFile));
     }
 
