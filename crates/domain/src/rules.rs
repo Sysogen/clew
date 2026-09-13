@@ -5,7 +5,7 @@
 
 use unicode_general_category::{GeneralCategory, get_general_category};
 
-use crate::finding::{Evidence, Finding, Position, RuleId, Severity};
+use crate::finding::{Evidence, Finding, Line, Position, RuleId, Severity};
 use crate::repo_path::RepoPath;
 
 /// Blank-rendering characters outside the format category.
@@ -40,10 +40,10 @@ pub fn run(path: &RepoPath, checks: &[RuleId], text: &str, width: usize) -> Vec<
 fn invisible_unicode(path: &RepoPath, text: &str, width: usize) -> Vec<Finding> {
     let mut found = Vec::new();
 
-    for (index, line) in text.lines().enumerate() {
-        let chars: Vec<char> = line.chars().collect();
+    for (index, raw) in text.lines().enumerate() {
+        let line = Line::new(raw);
         let mut in_run = false;
-        for (column, c) in chars.iter().enumerate() {
+        for (column, c) in line.chars().iter().enumerate() {
             // A byte order mark legitimately opens a file, and only there.
             let opening_mark = index == 0 && column == 0 && *c == '\u{FEFF}';
             let hidden = is_hidden(*c) && !opening_mark;
@@ -61,7 +61,7 @@ fn invisible_unicode(path: &RepoPath, text: &str, width: usize) -> Vec<Finding> 
                 }),
                 rule: RuleId::InvisibleUnicode,
                 severity: Severity::High,
-                evidence: Evidence::quote(&chars, column, width),
+                evidence: Evidence::quote(&line, column, width),
             });
         }
     }
@@ -169,6 +169,17 @@ mod tests {
         assert_eq!(found.len(), 1);
         assert!(!format!("{found:?}").contains('\u{202E}'), "{found:?}");
         assert!(found[0].evidence.as_str().contains("<U+202E>"), "{found:?}");
+    }
+
+    #[test]
+    fn a_secret_beside_a_hidden_character_is_masked() {
+        let found = found_in("Deploy with API_KEY=sk-live-PROSE123 and\u{200B} go.");
+
+        assert_eq!(found.len(), 1);
+        let said = found[0].evidence.as_str();
+        assert!(!said.contains("sk-live-PROSE123"), "{said}");
+        assert!(said.contains("API_KEY="), "{said}");
+        assert!(said.contains("<U+200B>"), "{said}");
     }
 
     #[test]

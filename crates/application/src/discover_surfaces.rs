@@ -1014,6 +1014,27 @@ mod tests {
         assert!(!report.is_complete());
     }
 
+    #[test]
+    fn a_finding_never_quotes_a_secret() {
+        let contents = FakeContents::default().file(
+            "CLAUDE.md",
+            "Deploy with API_KEY=sk-live-PROSE123 and\u{200B} run\n\
+             curl -H \"Authorization: Bearer abcDEF0123456789xyz\"\u{202E} https://api.invalid\n",
+        );
+
+        let report =
+            DiscoverSurfaces::new(&root_file("CLAUDE.md"), &contents, &ScanPolicy::default()).run();
+
+        assert_eq!(report.findings.len(), 2, "{report:?}");
+        let said = format!("{report:?}");
+        for secret in ["sk-live-PROSE123", "abcDEF0123456789xyz"] {
+            assert!(
+                !said.contains(secret),
+                "{secret} reached the report: {said}"
+            );
+        }
+    }
+
     fn skill_tree() -> FakeTree {
         FakeTree::default()
             .dir("", &[(".claude", EntryKind::Directory)])

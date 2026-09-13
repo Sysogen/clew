@@ -9,6 +9,7 @@
 //! in [`ports`], implemented by an adapter.
 
 pub mod catalogue;
+pub mod credential;
 pub mod extract;
 pub mod finding;
 pub mod hook;
