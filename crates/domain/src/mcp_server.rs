@@ -104,7 +104,7 @@ fn redact_url(url: &str) -> String {
 /// Arguments with credential values taken out.
 ///
 /// A value cannot be told from a package name by looking at it, so what marks
-/// one is the flag before it, the `key=value` it sits in, or a shape gitleaks
+/// one is the flag before it, the `key=value` it sits in, or a shape betterleaks
 /// knows.
 fn redact_args(args: &[String]) -> Vec<String> {
     let mut out = Vec::with_capacity(args.len());
