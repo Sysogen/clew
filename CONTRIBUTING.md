@@ -22,8 +22,19 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
-CI runs exactly these on Linux, macOS, and Windows, plus an `MSRV` job that
-builds on the declared minimum and a `Commit messages` job.
+CI runs exactly these on Linux, macOS, and Windows, together with
+`./scripts/check-versions.sh`. Alongside them:
+
+| Job | Checks |
+| --- | --- |
+| `MSRV` | The workspace builds on the declared minimum |
+| `Never executes` | `./scripts/check-no-exec.sh` over the source and the release binary |
+| `Supply chain` | `cargo deny`: advisories, licences, banned crates, and sources |
+| `Workflow files` | Every workflow parses |
+| `Commit messages` | The pull request title and commits follow the convention below |
+
+A test must fail when the code it covers is wrong. Break the line it covers,
+watch the test fail, and restore it: a test never seen failing proves nothing.
 
 ## Architecture
 
@@ -32,10 +43,10 @@ enforces it, because each layer is its own crate.
 
 | Crate | Layer | May depend on |
 | --- | --- | --- |
-| `clew-domain` | Domain: types, rules, ports, the catalogue | parsers and matchers only: no IO, no async, no runtime |
+| `clew-domain` | Domain: types, rules, ports, the catalogue, secret recognition | parsers, matchers and data only: no IO, no async, no runtime |
 | `clew-application` | Use cases | domain |
-| `clew-adapter-cli` | Inbound: parse and render | application, domain |
-| `clew-adapter-fs` | Outbound: `FileTree` over `std::fs` | domain |
+| `clew-adapter-cli` | Inbound: parse arguments; render text, JSON and SARIF | application, domain |
+| `clew-adapter-fs` | Outbound: `FileTree` and `FileContents` over `std::fs` | domain |
 | `clew-cli` | Composition root, the binary | all of the above |
 
 Two rules follow from this and are checked in review:
@@ -83,7 +94,8 @@ Declare `opaque-hook` on a row whose files are run rather than read. A hook that
 is not text, is larger than the file limit, or is a link that clew will not
 follow cannot be reviewed, and says so as a finding rather than a gap.
 
-Add `format` when the file is not JSON:
+Add `format` when the file is not JSON: `jsonc` for JSON with `//` comments,
+`toml`, or `markdown`.
 
 ```toml
 format = "toml"
@@ -93,6 +105,18 @@ format = "toml"
 format parses into the same value, so an extractor never knows which it came
 from and a new format costs one arm rather than a second copy of every
 extractor.
+
+Add `scope` when the file lives outside a repository:
+
+```toml
+scope = "home"
+```
+
+`repository`, the default, is matched against a checkout by `clew path`. `home`
+is matched against the home directory and `system` against the machine root,
+both by `clew system`. Start a `home` or `system` glob with the literal
+directory the tool keeps its files in: `clew system` enters only the
+directories its rows name rather than walking the tree.
 
 Only declare an extraction whose shape you have checked. `mcp-servers` reads the
 `mcpServers` key and Codex's `mcp_servers`; a tool using a third spelling needs
@@ -114,6 +138,23 @@ than `**/hooks/**`.
 
 A `*` stays inside one segment and `**` crosses them, so
 `**/.agents/skills/*/SKILL.md` is one directory deep and no more.
+
+## Vendored data
+
+Three files are other projects' work, kept unedited so that an upgrade is a copy
+and a diff:
+
+| Path | What | Licence |
+| --- | --- | --- |
+| `crates/domain/vendor/betterleaks/betterleaks.toml` | betterleaks' default secret rules | MIT |
+| `crates/domain/vendor/betterleaks/words.txt` | The wordlist its readable-text check uses | MIT |
+| `crates/adapters/inbound/schemas/sarif-2.1.0.json` | SchemaStore's copy of the SARIF 2.1.0 schema, for tests | Apache-2.0 |
+
+To upgrade betterleaks, replace both files from one release, update the version
+named at the top of `crates/domain/src/secrets.rs`, and run the tests.
+`every_rule_and_filter_compiles` fails if a pattern or filter uses anything
+`regex` or `expr-lang` cannot read, so an upgrade cannot drop a rule without a
+word.
 
 ## Two rules that are not style preferences
 
@@ -255,11 +296,11 @@ builds every binary before publishing, because a crates.io version can be
 yanked but never replaced and a failed target must not leave crates published
 without artifacts.
 
-### The first release is manual
+### A release that did not run
 
-`Tag` only fires on a version change, so the current version never gets a tag
-on its own. Push it by hand, or use `Release`'s `Run workflow` button and give
-it the tag. The same applies to retrying a failed release.
+`Tag` fires only when a push changes the version. To retry a failed release, or
+to release a version that never got a tag, push the tag by hand, or use
+`Release`'s `Run workflow` button and give it the tag.
 
 ### Before any release
 
