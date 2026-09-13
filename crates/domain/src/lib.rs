@@ -20,6 +20,7 @@ pub mod repo_path;
 pub mod rules;
 pub mod scan_policy;
 pub mod scope;
+pub mod secrets;
 pub mod surface;
 
 pub use catalogue::{Catalogue, shipped as catalogue};
