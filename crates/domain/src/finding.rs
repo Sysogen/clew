@@ -44,6 +44,15 @@ impl RuleId {
         }
     }
 
+    /// How much a finding under the rule matters.
+    #[must_use]
+    pub fn severity(self) -> Severity {
+        match self {
+            Self::InvisibleUnicode => Severity::High,
+            Self::OpaqueHook => Severity::Medium,
+        }
+    }
+
     /// The rule a catalogue row names, if it names one that exists.
     #[must_use]
     pub fn from_catalogue(name: &str) -> Option<Self> {

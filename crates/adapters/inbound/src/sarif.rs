@@ -87,6 +87,15 @@ struct Rule {
     short_description: Text,
     full_description: Text,
     help: Text,
+    properties: Properties,
+}
+
+/// Code scanning reads a rule's score only when the rule is tagged `security`.
+#[derive(Serialize)]
+struct Properties {
+    tags: [&'static str; 1],
+    #[serde(rename = "security-severity")]
+    security_severity: &'static str,
 }
 
 #[derive(Serialize)]
@@ -276,6 +285,20 @@ fn rule(id: RuleId) -> Rule {
         help: Text {
             text: help.to_owned(),
         },
+        properties: Properties {
+            tags: ["security"],
+            security_severity: security_severity(id.severity()),
+        },
+    }
+}
+
+/// A score inside GitHub's band for the severity: 7.0 to 8.9 is high, 4.0 to
+/// 6.9 medium, and 0.1 to 3.9 low.
+fn security_severity(severity: Severity) -> &'static str {
+    match severity {
+        Severity::High => "8.0",
+        Severity::Medium => "5.5",
+        Severity::Low => "2.0",
     }
 }
 
@@ -389,6 +412,51 @@ mod tests {
         assert_eq!(level(Severity::High), "error");
         assert_eq!(level(Severity::Medium), "warning");
         assert_eq!(level(Severity::Low), "note");
+    }
+
+    /// GitHub's bands, as its SARIF documentation gives them. High ends at 8.9,
+    /// so 9.0 is critical.
+    fn band(score: f64) -> &'static str {
+        match score {
+            s if s >= 9.0 => "critical",
+            s if s >= 7.0 => "high",
+            s if s >= 4.0 => "medium",
+            s if s > 0.0 => "low",
+            _ => "none",
+        }
+    }
+
+    #[test]
+    fn a_score_is_in_the_band_for_its_severity() {
+        for severity in [Severity::Low, Severity::Medium, Severity::High] {
+            let score: f64 = security_severity(severity).parse().expect("a number");
+            assert_eq!(band(score), severity.as_str());
+        }
+    }
+
+    #[test]
+    fn each_rule_is_a_security_rule_ranked_as_clew_ranks_it() {
+        let log = written(&scanned());
+        let rules = log["runs"][0]["tool"]["driver"]["rules"]
+            .as_array()
+            .expect("rules");
+
+        let ranked: Vec<(&str, &str)> = rules
+            .iter()
+            .map(|rule| {
+                assert_eq!(rule["properties"]["tags"], serde_json::json!(["security"]));
+                let score: f64 = rule["properties"]["security-severity"]
+                    .as_str()
+                    .expect("a string")
+                    .parse()
+                    .expect("a number");
+                (rule["id"].as_str().expect("an id"), band(score))
+            })
+            .collect();
+        assert_eq!(
+            ranked,
+            [("invisible-unicode", "high"), ("opaque-hook", "medium")]
+        );
     }
 
     /// Only the rules that found something are listed, once each, and every
