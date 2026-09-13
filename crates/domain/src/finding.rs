@@ -76,6 +76,17 @@ impl Severity {
             Self::High => "high",
         }
     }
+
+    /// The severity a word names, spelt as `as_str` spells it.
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<Self> {
+        Some(match name {
+            "low" => Self::Low,
+            "medium" => Self::Medium,
+            "high" => Self::High,
+            _ => return None,
+        })
+    }
 }
 
 /// Where in a file something was found, both counted from one. The column
@@ -211,6 +222,15 @@ fn is_printing(c: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn each_severity_reads_back_from_its_name() {
+        for severity in [Severity::Low, Severity::Medium, Severity::High] {
+            assert_eq!(Severity::from_name(severity.as_str()), Some(severity));
+        }
+        assert_eq!(Severity::from_name("High"), None);
+        assert_eq!(Severity::from_name("critical"), None);
+    }
 
     fn quoted(line: &str, at: usize, width: usize) -> String {
         Evidence::quote(&Line::new(line), at, width)

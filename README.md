@@ -105,7 +105,18 @@ by its path in a repository, and neither tree `system` reads is one.
 
 `0` when every tree was read and understood, `1` when part of one was not or the
 command line was wrong. An incomplete scan lists what it could not read, so it
-never passes for a clean one. A finding does not change the exit status.
+never passes for a clean one.
+
+A finding changes the exit status only when asked to. `--fail-on` takes `low`,
+`medium` or `high` and exits `2` when a finding is at that severity or worse,
+which is what a CI job wants:
+
+```sh
+clew path . --fail-on high
+```
+
+An incomplete scan still exits `1`, even beside a finding: what it could not
+read may hold more.
 
 ## What it does not do
 

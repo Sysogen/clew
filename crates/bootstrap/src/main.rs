@@ -12,7 +12,7 @@ use clew_adapter_fs::{StdFileContents, StdFileTree};
 use clew_application::DiscoverSurfaces;
 use clew_domain::ScanPolicy;
 use clew_domain::catalogue;
-use clew_domain::finding::DEFAULT_EVIDENCE_WIDTH;
+use clew_domain::finding::{DEFAULT_EVIDENCE_WIDTH, Severity};
 use clew_domain::scan_policy::{DEFAULT_MAX_DEPTH, DEFAULT_MAX_FILE_BYTES};
 use clew_domain::scope::Scope;
 
@@ -28,6 +28,8 @@ USAGE:
 OPTIONS:
     --format FORMAT     text, the default; json, one document for tools; or
                         sarif, a code scanning log, for a path only
+    --fail-on LEVEL     exit 2 when a finding is LEVEL or worse: low, medium,
+                        or high
 
 ENVIRONMENT:
     CLEW_MAX_DEPTH      Directory recursion limit
@@ -77,7 +79,7 @@ fn main() -> ExitCode {
         }
     };
 
-    let (scans, format): (Vec<(String, Scope)>, Format) = match command {
+    let (scans, format, fail_on): (Vec<(String, Scope)>, Format, Option<Severity>) = match command {
         Command::Help => {
             println!("clew {}\n\n{USAGE}", env!("CARGO_PKG_VERSION"));
             return ExitCode::SUCCESS;
@@ -86,16 +88,20 @@ fn main() -> ExitCode {
             println!("clew {}", env!("CARGO_PKG_VERSION"));
             return ExitCode::SUCCESS;
         }
-        Command::Path { root, format } => {
+        Command::Path {
+            root,
+            format,
+            fail_on,
+        } => {
             if !Path::new(&root).is_dir() {
                 eprintln!("clew: not a directory: {root}");
                 return ExitCode::FAILURE;
             }
-            (vec![(root, Scope::Repository)], format)
+            (vec![(root, Scope::Repository)], format, fail_on)
         }
         // Two trees, because policy an administrator deployed is not in
         // anybody's home directory.
-        Command::System { format } => {
+        Command::System { format, fail_on } => {
             let Some(home) = env::home_dir() else {
                 eprintln!("clew: no home directory to scan");
                 return ExitCode::FAILURE;
@@ -106,6 +112,7 @@ fn main() -> ExitCode {
                     (MACHINE_ROOT.to_owned(), Scope::System),
                 ],
                 format,
+                fail_on,
             )
         }
     };
@@ -114,6 +121,7 @@ fn main() -> ExitCode {
         .with_max_file_bytes(max_file_bytes())
         .with_evidence_width(evidence_width());
     let mut complete = true;
+    let mut reached = false;
     let mut found = Vec::new();
 
     for (root, scope) in &scans {
@@ -123,6 +131,7 @@ fn main() -> ExitCode {
             .in_scope(*scope)
             .run();
         complete &= scanned.is_complete();
+        reached |= fail_on.is_some_and(|level| scanned.reaches(level));
 
         // Text is printed as each scan ends and let go; JSON keeps every scan
         // to write one document.
@@ -162,9 +171,34 @@ fn main() -> ExitCode {
         None => {}
     }
 
-    if complete {
-        ExitCode::SUCCESS
-    } else {
-        ExitCode::FAILURE
+    if let Some(level) = fail_on.filter(|_| reached) {
+        eprintln!(
+            "clew: a finding is {} or worse, so this run fails",
+            level.as_str()
+        );
+    }
+    ExitCode::from(status(complete, reached))
+}
+
+/// 1 when a tree was not read in full, which outranks a finding since what
+/// went unread may hold more; 2 when a finding reached `--fail-on`; else 0.
+fn status(complete: bool, reached: bool) -> u8 {
+    match (complete, reached) {
+        (false, _) => 1,
+        (true, true) => 2,
+        (true, false) => 0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_incomplete_scan_outranks_a_finding() {
+        assert_eq!(status(true, false), 0);
+        assert_eq!(status(true, true), 2);
+        assert_eq!(status(false, false), 1);
+        assert_eq!(status(false, true), 1);
     }
 }
