@@ -9,8 +9,12 @@
 //!
 //! A rule's `filter` is Expr, run with `expr-lang`. `validate` is never run: it
 //! sends the credential to its issuer. A `skipReport` rule only supports
-//! another rule, and is not read.
+//! another rule, and is not read. Nor are a rule's `components` required:
+//! masking reads one line, and the companion a composite rule asks for, a
+//! client id beside its secret, usually sits on another, so requiring it would
+//! leave the secret printed.
 
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::sync::{Mutex, OnceLock};
@@ -260,12 +264,13 @@ fn environment() -> &'static Environment<'static> {
         env.add_function("tokenRatio", |call| {
             Ok(Value::Float(token_ratio(text(call.args.first()))))
         });
+        // Case-insensitive, as betterleaks' is.
         env.add_function("containsAny", |call| {
-            let haystack = text(call.args.first());
+            let haystack = text(call.args.first()).to_lowercase();
             Ok(Value::Bool(
                 texts(call.args.get(1))
                     .iter()
-                    .any(|term| haystack.contains(term)),
+                    .any(|term| haystack.contains(&term.to_lowercase())),
             ))
         });
         env.add_function("matchesAny", |call| {
@@ -347,16 +352,17 @@ fn opens_repetition(text: &str) -> bool {
         && high.bytes().all(|b| b.is_ascii_digit())
 }
 
-/// Shannon entropy in bits per character.
+/// Shannon entropy in bits per byte, as betterleaks' filters measure it.
 #[allow(clippy::cast_precision_loss)] // counts far below 2^52
 fn entropy(text: &str) -> f64 {
-    let mut counts: HashMap<char, usize> = HashMap::new();
-    for c in text.chars() {
-        *counts.entry(c).or_default() += 1;
+    let mut counts = [0usize; 256];
+    for byte in text.bytes() {
+        counts[usize::from(byte)] += 1;
     }
-    let length = text.chars().count() as f64;
+    let length = text.len() as f64;
     counts
-        .values()
+        .iter()
+        .filter(|&&n| n > 0)
         .map(|&n| {
             let p = n as f64 / length;
             -p * p.log2()
@@ -364,12 +370,22 @@ fn entropy(text: &str) -> f64 {
         .sum()
 }
 
+/// A candidate as betterleaks measures it: under 20 bytes, without line breaks.
+fn measured(candidate: &str) -> Cow<'_, str> {
+    if candidate.len() < 20 && candidate.contains(['\n', '\r']) {
+        Cow::Owned(candidate.replace(['\n', '\r'], ""))
+    } else {
+        Cow::Borrowed(candidate)
+    }
+}
+
 /// Bytes per cl100k token. Readable text packs into few long tokens; a
 /// generated secret does not.
 #[allow(clippy::cast_precision_loss)] // lengths far below 2^52
 fn token_ratio(text: &str) -> f64 {
+    let text = measured(text);
     let tokens = tiktoken_rs::cl100k_base_singleton()
-        .encode_ordinary(text)
+        .encode_ordinary(&text)
         .len();
     if tokens == 0 {
         0.0
@@ -381,18 +397,19 @@ fn token_ratio(text: &str) -> f64 {
 /// betterleaks' check that a candidate reads as text: it holds a dictionary
 /// word, or packs into tokens too well to have been generated.
 fn reads_as_text(candidate: &str) -> bool {
+    let candidate = measured(candidate);
     if candidate.is_empty() {
         return false;
     }
-    if holds_word(candidate, 5) {
+    if holds_word(&candidate, 5) {
         return true;
     }
-    let threshold = if candidate.len() < 12 && holds_word(candidate, 4) {
+    let threshold = if candidate.len() < 12 && holds_word(&candidate, 4) {
         2.1
     } else {
         2.5
     };
-    token_ratio(candidate) >= threshold
+    token_ratio(&candidate) >= threshold
 }
 
 /// Whether any stretch of at least `shortest` bytes is a dictionary word.
@@ -560,6 +577,30 @@ mod tests {
             corpus("[[rules]]\nregex = 'tok_\\w+'\nkeywords = ['tok_']\nfilter = 'nosuch > 1'\n");
 
         assert_eq!(found_by(&corpus, "tok_keep"), ["tok_keep"]);
+    }
+
+    #[test]
+    fn a_filter_term_matches_in_any_case() {
+        let corpus = corpus(
+            "[[rules]]\nregex = 'tok_\\w+'\nkeywords = ['tok_']\n\
+             filter = 'containsAny(finding[\"secret\"], [\"DROP\"])'\n",
+        );
+
+        assert_eq!(found_by(&corpus, "tok_drop tok_keep"), ["tok_keep"]);
+    }
+
+    /// betterleaks counts bytes, so a two-byte character is two symbols.
+    #[test]
+    fn entropy_is_measured_in_bytes() {
+        assert!((entropy("\u{e9}\u{e9}") - 1.0).abs() < 1e-9);
+        assert!((entropy("abab") - 1.0).abs() < 1e-9);
+    }
+
+    /// Both checks see `horse` once the break is gone.
+    #[test]
+    fn a_short_candidate_is_measured_without_its_line_breaks() {
+        assert!((token_ratio("Hello\nWorld") - token_ratio("HelloWorld")).abs() < 1e-9);
+        assert!(reads_as_text("xQhor\nse7"));
     }
 
     #[test]
