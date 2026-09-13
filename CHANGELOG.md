@@ -5,9 +5,6 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-Everything in this section lands in 0.1.0, the first release cut from the public
-repository.
-
 ### Added
 
 - `--format sarif` on `path`: a SARIF 2.1.0 log for code scanning. A finding at
@@ -50,6 +47,12 @@ repository.
   character as `<U+XXXX>` so a report never carries the payload, and quotes at
   most `CLEW_EVIDENCE_WIDTH` characters of the line, never fewer than 12.
 
+- Recognise a secret by its shape with the default rules of betterleaks,
+  gitleaks' successor by the same author, vendored unedited under its MIT
+  licence. Each rule's Expr filter runs, token efficiency included, so a
+  placeholder or a readable word is not taken for a secret. A rule's
+  `validate` is never run: it would send the credential to its issuer.
+
 - `clew system` also reads the rules an administrator deploys to the machine,
   `/etc/devin/rules` and the legacy `/etc/windsurf/rules`. Nobody being scanned
   chose those, and they are in neither tree that engineer owns.
@@ -62,9 +65,42 @@ repository.
   walking a home directory, and a root that is absent means the tool is not
   installed rather than a gap in the scan.
 
-- Catalogue rows carry a `scope`, `repository` or `home`. The two trees are
-  matched separately, so a path both use is never reported against the wrong
-  one.
+- Catalogue rows carry a `scope`: `repository`, `home` or `system`. Each tree
+  is matched separately, so a path two trees both use is never reported
+  against the wrong one.
+
+- Find `.env` and `.env.*`, reported and never opened: the file is credential
+  values, and clew records none. `.envrc` is a direnv script and not matched.
+
+- Find Cline rules in `.clinerules`, and the `GEMINI.md` and `AGENT.md`
+  instruction files. The shared names are matched last, so a rules directory
+  holding one keeps its own row.
+
+- Find Zed project settings, skills, and `.rules`. Its MCP servers sit under
+  `context_servers`, so that key is read alongside the two common spellings.
+  Zed writes JSON with `//` comments, so that row is read as `jsonc`.
+
+- Find Windsurf rules: `.devin/rules`, the legacy `.windsurf/rules`, and the
+  legacy `.windsurfrules`. Its MCP configuration lives outside a repository,
+  so it is read by `clew system`.
+
+- Read Kiro agent hooks, which list entries naming their own trigger rather
+  than keying a map by event. Both shapes are read from the same key.
+  An injected prompt is reported alongside a shell command, since both fire
+  unasked, and a hook switched off is reported as switched off rather than
+  hidden. The report says which: `runs on`, `injects on`, and `(disabled)`.
+
+- Find Kiro surfaces: its workspace MCP configuration, reported with the
+  servers it declares, plus steering files. A steering file setting
+  `inclusion: always` enters every interaction.
+
+- Find Gemini CLI project settings and report the MCP servers they declare.
+
+- Find `.vscode/tasks.json`. A task can set `runOn: folderOpen`, which runs it
+  when the folder is opened. Reported, never opened.
+
+- Find Cursor project rules under `.cursor/rules`, `.mdc` files only, since
+  Cursor ignores a plain `.md` there.
 
 - Read Markdown frontmatter, so a skill reports the tools it is allowed to use.
   The opening fence must be the first line, as the tools themselves require, and
@@ -72,6 +108,60 @@ repository.
 
 - Read TOML, so Codex `config.toml` reports the MCP servers it declares. Every
   format parses into the same value, so every extractor works on any of them.
+
+- CI proves clew cannot execute what it finds: a source scan for any
+  process-spawning API on every build, and a symbol scan of the Linux and macOS
+  release binaries for any process-spawning import.
+
+### Changed
+
+- A `*` in a catalogue glob now stays inside one path segment. It crossed `/`
+  before, so `.env.*` also took a directory named `.env.local`, and a row had
+  no way to say "one directory deep".
+
+### Fixed
+
+- Report a named directory whose link points nowhere as a gap rather than as a
+  tool that is not installed. Something put the link there.
+
+- Never walk into a directory reached by a symbolic link found while walking.
+  A directory clew was told to read is read even when it is a link: `/etc` is
+  one on macOS, and a dotfile manager commonly makes `~/.claude` one. The check
+  followed the link, so a home root such as `~/.claude -> /elsewhere` was
+  traversed and reported files outside the tree being scanned. The root the
+  operator names is still followed; everything discovered below it is not.
+
+- Stop redacting the argument after a value that merely reads like a
+  credential. `docker run -e JIRA_API_TOKEN ghcr.io/org/image` hid the image,
+  which is what a typosquat check reads. Only a flag introduces a value.
+
+- Five catalogue citations pointed at pages that had moved or gone. Every
+  source now resolves and names the file its row claims, and `.cursorrules`
+  cites the page saying it is legacy, which is why the row stays.
+
+### Security
+
+- Mask credential values in the evidence a finding quotes. A token beside a
+  hidden character in an instruction file was quoted whole. A value is masked
+  when set against a credential key (`API_KEY=`, `password = `, `password:`,
+  `"api_key":`, a `?token=` query), after a credential flag, after `Bearer` or
+  `Basic`, or when one of betterleaks' rules knows its shape; a quoted value is
+  masked whole. The line is masked before any rule can quote it, so a secret
+  cut at the edge of the quoted window is still masked.
+
+- Never record a credential written into an MCP argument or url. A value behind
+  a flag naming a credential, one written as `key=value`, and one whose shape a
+  betterleaks rule knows are replaced by `<redacted>`; a url keeps its host and
+  path and drops its userinfo and query. Only the names of environment
+  variables were held back before, so a token passed as `--api-key` reached the
+  report. The value is dropped as the file is read, so nothing downstream holds
+  one.
+
+## [0.1.0] - 2026-09-11
+
+The first release cut from the public repository.
+
+### Added
 
 - Release automation: a version bump on `main` tags itself, then publishes the
   workspace to crates.io and attaches binaries for five targets.
@@ -90,61 +180,6 @@ repository.
   incomplete. Previously an unreadable directory was skipped in silence, so a
   permission-denied scan printed a clean result.
 - `--version` and `--help`, and a `path` subcommand naming what the tool does.
-
-### Added
-
-- Find `.env` and `.env.*`, reported and never opened: the file is credential
-  values, and clew records none. `.envrc` is a direnv script and not matched.
-
-- Find Cline rules in `.clinerules`, and the `GEMINI.md` and `AGENT.md`
-  instruction files. The shared names are matched last, so a rules directory
-  holding one keeps its own row.
-
-- Find Zed project settings, skills, and `.rules`. Its MCP servers sit under
-  `context_servers`, so that key is read alongside the two common spellings.
-  Zed writes JSON with `//` comments, so that row is read as `jsonc`.
-
-- A `*` in a catalogue glob now stays inside one path segment. It crossed `/`
-  before, so `.env.*` also took a directory named `.env.local`, and a row had
-  no way to say "one directory deep".
-
-- Find Windsurf rules: `.devin/rules`, the legacy `.windsurf/rules`, and the
-  legacy `.windsurfrules`. Its MCP configuration lives outside a repository
-  and so has no row.
-
-- Read Kiro agent hooks, which list entries naming their own trigger rather
-  than keying a map by event. Both shapes are read from the same key.
-  An injected prompt is reported alongside a shell command, since both fire
-  unasked, and a hook switched off is reported as switched off rather than
-  hidden. The report says which: `runs on`, `injects on`, and `(disabled)`.
-
-- Find Kiro surfaces: its workspace MCP configuration, reported with the
-  servers it declares, plus steering files as inventory. A steering file
-  setting `inclusion: always` enters every interaction.
-
-- Find Gemini CLI project settings and report the MCP servers they declare.
-- Find `.vscode/tasks.json`. A task can set `runOn: folderOpen`, which runs it
-  when the folder is opened. Reported, never opened.
-
-### Fixed
-
-- Report a named directory whose link points nowhere as a gap rather than as a
-  tool that is not installed. Something put the link there.
-
-- Never walk into a directory reached by a symbolic link found while walking.
-  A directory clew was told to read is read even when it is a link: `/etc` is
-  one on macOS, and a dotfile manager commonly makes `~/.claude` one. The check followed
-  the link, so a home root such as `~/.claude -> /elsewhere` was traversed and
-  reported files outside the tree being scanned. The root the operator names is
-  still followed; everything discovered below it is not.
-
-- Stop redacting the argument after a value that merely reads like a
-  credential. `docker run -e JIRA_API_TOKEN ghcr.io/org/image` hid the image,
-  which is what a typosquat check reads. Only a flag introduces a value.
-
-- Five catalogue citations pointed at pages that had moved or gone. Every
-  source now resolves and names the file its row claims, and `.cursorrules`
-  cites the page saying it is legacy, which is why the row stays.
 
 ### Changed
 
@@ -178,30 +213,14 @@ repository.
 
 ### Security
 
-- Mask credential values in the evidence a finding quotes. A token beside a
-  hidden character in an instruction file was quoted whole. A value is masked
-  when set against a credential key (`API_KEY=`, `password:`, `"api_key":`, a
-  `?token=` query), after a credential flag, after `Bearer` or `Basic`, or when
-  one of betterleaks' rules knows its shape; a quoted value is masked whole. The
-  line is masked before any rule can quote it, so a secret cut at the edge of
-  the quoted window is still masked.
-
-- Never record a credential written into an MCP argument or url. A value behind
-  a flag naming a credential, one written as `key=value`, and one whose shape a
-  betterleaks rule knows are replaced by `<redacted>`; a url keeps its host and
-  path
-  and drops its userinfo and query. Only the names of environment variables
-  were held back before, so a token passed as `--api-key` reached the report.
-  The value is dropped as the file is read, so nothing downstream holds one.
-
 - Never follow a symbolic link. A link is reported and not traversed, so a scan
   cannot be walked out of its own root.
 
 ## [0.0.0] - 2026-09-10
 
 Published to crates.io before this repository was public. The tree it was built
-from is not in this history and no `v0.0.0` tag exists, so 0.1.0 will be the
-first tagged release.
+from is not in this history and no `v0.0.0` tag exists, so 0.1.0 is the first
+tagged release.
 
 ### Added
 
@@ -211,5 +230,6 @@ first tagged release.
   devcontainers.
 - `CLEW_MAX_DEPTH` sets the directory recursion limit.
 
-[Unreleased]: https://github.com/sysogen/clew/commits/main
+[Unreleased]: https://github.com/sysogen/clew/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/sysogen/clew/releases/tag/v0.1.0
 [0.0.0]: https://crates.io/crates/clew-cli/0.0.0
