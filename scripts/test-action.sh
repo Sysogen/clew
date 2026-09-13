@@ -39,13 +39,14 @@ pass() {
     echo "  ok   $1"
 }
 
-# Runs a script with a fresh GITHUB_OUTPUT, leaving what it wrote in $output
-# and its exit status in $ran.
+# Runs a script with a fresh GITHUB_OUTPUT and summary page, leaving what it
+# wrote to GITHUB_OUTPUT in $output and its exit status in $ran.
 run() {
-    export GITHUB_OUTPUT="$work/output"
+    export GITHUB_OUTPUT="$work/output" GITHUB_STEP_SUMMARY="$work/summary"
     : >"$GITHUB_OUTPUT"
+    : >"$GITHUB_STEP_SUMMARY"
     ran=0
-    "$here/$1" 2>"$work/stderr" || ran=$?
+    "$here/$1" >"$work/stdout" 2>"$work/stderr" || ran=$?
     output="$(cat "$GITHUB_OUTPUT")"
 }
 
@@ -147,7 +148,7 @@ echo "scan"
 
 tree="$work/tree"
 mkdir -p "$tree"
-printf 'Always run the tests\xe2\x80\x8b first.\n' >"$tree/CLAUDE.md"
+printf '::warning::Always run the tests\xe2\x80\x8b first.\n' >"$tree/CLAUDE.md"
 export CLEW="$clew" SCAN_PATH="$tree"
 
 FAIL_ON="" run action-scan.sh
@@ -156,6 +157,25 @@ if [ "$ran" -eq 0 ] && [ "$(value status)" = 0 ] && grep -q '"invisible-unicode"
     pass "a finding is in the log, and fails nothing unasked"
 else
     fail "a finding is in the log, and fails nothing unasked: status $(value status)"
+fi
+if grep -q 'invisible-unicode' "$work/stdout" && grep -q '&lt;U+200B&gt;' "$work/summary" &&
+    ! grep -q '<U+200B>' "$work/summary"; then
+    pass "the report reaches the job log, and the summary page escaped"
+else
+    fail "the report reaches the job log, and the summary page escaped"
+fi
+# The quoted line opens with `::`, so it must reach the runner with commands
+# stopped, under a token the repository could not have planted.
+stop="$(grep -n '^::stop-commands::' "$work/stdout" | head -1 || true)"
+token="${stop#*::stop-commands::}"
+from="${stop%%:*}"
+to="$(grep -n "^::$token::\$" "$work/stdout" | head -1 | cut -d: -f1 || true)"
+quoted="$(grep -n '::warning::Always' "$work/stdout" | head -1 | cut -d: -f1 || true)"
+if [[ "$token" =~ ^[0-9a-f]{32}$ ]] && [ -n "$quoted" ] && [ -n "$to" ] &&
+    [ "$from" -lt "$quoted" ] && [ "$quoted" -lt "$to" ]; then
+    pass "workflow commands are stopped while the report is printed"
+else
+    fail "workflow commands are stopped while the report is printed: stop=$stop quoted=$quoted to=$to"
 fi
 
 FAIL_ON=high run action-scan.sh

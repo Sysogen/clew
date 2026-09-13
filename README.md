@@ -149,9 +149,11 @@ runs.
 | `upload` | `true` | Upload to code scanning; `false` where it is not enabled |
 | `version` | the action's own | The clew release to run |
 
-The step ends as clew exits, after the upload: it fails on an incomplete scan,
-and on a finding at `fail-on`. A pull request from a fork gets a read-only
-token, so set `upload` to `false` there.
+The report is also printed to the job log and the run's summary page, so a
+finding can be read without opening code scanning. The step ends as clew
+exits, after the upload: it fails on an incomplete scan, and on a finding at
+`fail-on`. A pull request from a fork gets a read-only token, so set `upload`
+to `false` there.
 
 ## What it does not do
 
