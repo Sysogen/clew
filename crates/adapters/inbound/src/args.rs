@@ -13,6 +13,8 @@ pub enum Format {
     Text,
     /// One JSON document, for a tool.
     Json,
+    /// A SARIF 2.1.0 log, for code scanning. Repository scans only.
+    Sarif,
 }
 
 /// What the operator asked for.
@@ -47,11 +49,14 @@ pub enum ParseError {
     #[error("unknown option '{0}'")]
     UnknownOption(String),
     /// `--format` with nothing after it.
-    #[error("'--format' needs a value: text or json")]
+    #[error("'--format' needs a value: text, json or sarif")]
     MissingFormat,
     /// `--format` naming no known format.
-    #[error("unknown format '{0}': expected text or json")]
+    #[error("unknown format '{0}': expected text, json or sarif")]
     UnknownFormat(String),
+    /// SARIF asked of a scan with no repository to place results in.
+    #[error("SARIF places results in a repository: use it with 'clew path'")]
+    SarifNeedsRepository,
 }
 
 /// Parse arguments, excluding the program name.
@@ -80,9 +85,10 @@ where
                 format,
             })
         }
-        Some("system") => Ok(Command::System {
-            format: options(&args[1..])?.1,
-        }),
+        Some("system") => match options(&args[1..])?.1 {
+            Format::Sarif => Err(ParseError::SarifNeedsRepository),
+            format => Ok(Command::System { format }),
+        },
         Some(other) => Err(ParseError::UnknownCommand(other.to_owned())),
     }
 }
@@ -106,6 +112,7 @@ fn options(args: &[String]) -> Result<(Vec<String>, Format), ParseError> {
         format = match value {
             "text" => Format::Text,
             "json" => Format::Json,
+            "sarif" => Format::Sarif,
             other => return Err(ParseError::UnknownFormat(other.to_owned())),
         };
     }
@@ -180,6 +187,18 @@ mod tests {
         assert_eq!(
             parse(["system", "--verbose"]),
             Err(ParseError::UnknownOption("--verbose".to_owned()))
+        );
+    }
+
+    #[test]
+    fn sarif_is_for_a_repository_scan_only() {
+        assert_eq!(
+            parse(["path", "--format", "sarif"]),
+            Ok(path(".", Format::Sarif))
+        );
+        assert_eq!(
+            parse(["system", "--format", "sarif"]),
+            Err(ParseError::SarifNeedsRepository)
         );
     }
 

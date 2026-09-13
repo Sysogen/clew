@@ -39,8 +39,13 @@ pub struct Scan<'a> {
 /// Returns the serializer's error, which plain strings, numbers and booleans
 /// should never cause.
 pub fn document(scans: &[Scan<'_>]) -> Result<String, serde_json::Error> {
+    escaped(&Document::of(scans))
+}
+
+/// A value as compact JSON, escaped as this module describes.
+pub(crate) fn escaped<T: Serialize>(value: &T) -> Result<String, serde_json::Error> {
     let mut out = Vec::new();
-    Document::of(scans).serialize(&mut Serializer::with_formatter(&mut out, Escaping))?;
+    value.serialize(&mut Serializer::with_formatter(&mut out, Escaping))?;
     Ok(String::from_utf8_lossy(&out).into_owned())
 }
 

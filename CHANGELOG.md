@@ -10,6 +10,13 @@ repository.
 
 ### Added
 
+- `--format sarif` on `path`: a SARIF 2.1.0 log for code scanning. Each finding
+  is a result at its line and column, severities high, medium and low are
+  `error`, `warning` and `note`, and a scan that could not read everything
+  reports `executionSuccessful: false` with a notification for each path.
+  `system` refuses it: SARIF places a result by its path in a repository, and
+  neither tree `system` reads is one.
+
 - `--format json` on `path` and `system`: the whole report as one JSON document
   under `"version": 1`, with an entry in `scans` for each tree read. Any control
   or default-ignorable character, variation selectors included, is written as a
