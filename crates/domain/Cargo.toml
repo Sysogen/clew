@@ -8,6 +8,9 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+# gitleaks' rules: a keyword gate, then the patterns it lets through.
+aho-corasick.workspace = true
+regex.workspace = true
 # Compiles the catalogue's globs into one matcher, so matching a path against
 # every row costs one pass rather than one comparison per row.
 globset.workspace = true
