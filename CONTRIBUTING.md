@@ -23,10 +23,12 @@ cargo test --workspace
 ```
 
 CI runs exactly these on Linux, macOS, and Windows, together with
-`./scripts/check-versions.sh`. Alongside them:
+`./scripts/check-versions.sh` and `./scripts/test-action.sh`, which tests the
+GitHub Action's scripts against the clew just built. Alongside them:
 
 | Job | Checks |
 | --- | --- |
+| `Action` | The action itself: a hidden character fails it with the finding in its log, and this repository passes |
 | `MSRV` | The workspace builds on the declared minimum |
 | `Never executes` | `./scripts/check-no-exec.sh` over the source and the release binary |
 | `Supply chain` | `cargo deny`: advisories, licences, banned crates, and sources |
@@ -275,8 +277,9 @@ A maintainer can waive the title check for one pull request with the
 Maintainers only.
 
 1. Open a pull request that raises `version` in the root `Cargo.toml`, raises
-   the five `clew-*` entries under `[workspace.dependencies]` to match, and
-   moves `CHANGELOG.md`'s `Unreleased` section under the new number.
+   the five `clew-*` entries under `[workspace.dependencies]` and the
+   `version` default in `action.yml` to match, and moves `CHANGELOG.md`'s
+   `Unreleased` section under the new number.
 2. Merge it.
 
 The internal dependency pins are not optional. Miss them and the published

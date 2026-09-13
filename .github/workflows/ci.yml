@@ -40,6 +40,12 @@ jobs:
       - name: Test
         run: cargo test --all
 
+      - name: Action scripts
+        shell: bash
+        run: |
+          cargo build --locked -p clew-cli
+          ./scripts/test-action.sh target/debug/clew
+
       - name: Package
         run: cargo package --allow-dirty
 
@@ -73,6 +79,57 @@ jobs:
 
       - name: Proof
         run: ./scripts/check-no-exec.sh target/release/clew
+
+  action:
+    name: Action
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      # A release pull request names a release that is not published yet. The
+      # newest published one runs the same steps.
+      - name: Newest release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+      - name: A tree with a hidden character
+        run: |
+          mkdir -p "$RUNNER_TEMP/tree"
+          printf 'Always run the tests\xe2\x80\x8b first.\n' > "$RUNNER_TEMP/tree/CLAUDE.md"
+
+      - name: Scan it
+        id: scan
+        continue-on-error: true
+        uses: ./
+        with:
+          path: ${{ runner.temp }}/tree
+          fail-on: high
+          upload: "false"
+          version: ${{ steps.release.outputs.version }}
+
+      - name: The finding failed the scan, and the log holds it
+        env:
+          OUTCOME: ${{ steps.scan.outcome }}
+          SARIF: ${{ steps.scan.outputs.sarif }}
+        run: |
+          set -euo pipefail
+          if [ "$OUTCOME" != failure ]; then
+            echo "a high finding should fail the scan, which ended: $OUTCOME" >&2
+            exit 1
+          fi
+          grep -q '"invisible-unicode"' "$SARIF"
+
+      - name: Scan this repository
+        uses: ./
+        with:
+          fail-on: high
+          upload: "false"
+          version: ${{ steps.release.outputs.version }}
 
   workflows:
     name: Workflow files
