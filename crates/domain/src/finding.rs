@@ -3,6 +3,7 @@
 
 //! Something a scan found wrong, and where.
 
+use crate::credential;
 use crate::repo_path::RepoPath;
 
 /// How much of the offending line is kept as evidence, in characters.
@@ -82,6 +83,26 @@ pub struct Position {
     pub column: usize,
 }
 
+/// A line as evidence quotes it: split once, with credential values masked.
+///
+/// [`Evidence::quote`] takes only this, so no rule can quote a secret.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Line(Vec<char>);
+
+impl Line {
+    /// Split `text` and mask the credentials in it.
+    #[must_use]
+    pub fn new(text: &str) -> Self {
+        Self(credential::mask(&text.chars().collect::<Vec<_>>()))
+    }
+
+    /// The masked characters.
+    #[must_use]
+    pub fn chars(&self) -> &[char] {
+        &self.0
+    }
+}
+
 /// Quoted text from an offending line, every non-printing character escaped.
 ///
 /// [`Evidence::quote`] is the only way to make one, so a finding cannot hold
@@ -94,10 +115,11 @@ impl Evidence {
     /// wider than `width` once escaped, or [`MIN_EVIDENCE_WIDTH`] if that is
     /// wider.
     ///
-    /// The line arrives already split, so a rule reporting many runs on one
-    /// line splits it once rather than once per finding.
+    /// The line arrives split and masked, so a rule reporting many runs on one
+    /// line does that once rather than once per finding.
     #[must_use]
-    pub fn quote(line: &[char], at: usize, width: usize) -> Self {
+    pub fn quote(line: &Line, at: usize, width: usize) -> Self {
+        let line = line.chars();
         if line.is_empty() {
             return Self::default();
         }
@@ -186,8 +208,19 @@ mod tests {
     use super::*;
 
     fn quoted(line: &str, at: usize, width: usize) -> String {
-        let chars: Vec<char> = line.chars().collect();
-        Evidence::quote(&chars, at, width).as_str().to_owned()
+        Evidence::quote(&Line::new(line), at, width)
+            .as_str()
+            .to_owned()
+    }
+
+    #[test]
+    fn a_secret_cut_at_the_window_edge_is_still_masked() {
+        let line = format!("export API_KEY=sk-live-{}\u{200B}", "S".repeat(60));
+
+        let said = quoted(&line, line.chars().count() - 1, 20);
+
+        assert!(!said.contains('S'), "{said}");
+        assert!(said.contains("<U+200B>"), "{said}");
     }
 
     #[test]

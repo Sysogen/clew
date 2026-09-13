@@ -154,6 +154,14 @@ repository.
 
 ### Security
 
+- Mask credential values in the evidence a finding quotes. A token beside a
+  hidden character in an instruction file was quoted whole. A value is masked
+  when set against a credential key (`API_KEY=`, `password:`, `"api_key":`, a
+  `?token=` query), after a credential flag, after `Bearer` or `Basic`, or when
+  an issuer's prefix gives it away; a quoted value is masked whole. The line is
+  masked before any rule can quote it, so a secret cut at the edge of the
+  quoted window is still masked.
+
 - Never record a credential written into an MCP argument or url. A value behind
   a flag naming a credential, one written as `key=value`, and one carrying an
   issuer's prefix are replaced by `<redacted>`; a url keeps its host and path

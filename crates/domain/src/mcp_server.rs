@@ -3,6 +3,8 @@
 
 //! Model Context Protocol servers an agent can call.
 
+use crate::credential::{looks_issued, names_a_credential};
+
 /// How a server is reached.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Transport {
@@ -124,27 +126,6 @@ fn redact_args(args: &[String]) -> Vec<String> {
         }
     }
     out
-}
-
-/// Whether a flag names a credential. Matched by segment, so `--api-key` does
-/// and `--author` does not.
-fn names_a_credential(flag: &str) -> bool {
-    flag.trim_start_matches('-')
-        .to_ascii_lowercase()
-        .split(['-', '_', '.'])
-        .any(|part| {
-            matches!(
-                part,
-                "key" | "apikey" | "token" | "secret" | "password" | "credential" | "auth" | "pat"
-            )
-        })
-}
-
-/// Whether a value carries a prefix an issuer uses for its secrets. Narrow on
-/// purpose: a guess here redacts a package name and hides a real finding.
-fn looks_issued(value: &str) -> bool {
-    const ISSUED: [&str; 7] = ["sk-", "sk_", "pk_", "ghp_", "gho_", "github_pat_", "xox"];
-    ISSUED.iter().any(|p| value.starts_with(p)) && value.len() > 12
 }
 
 #[cfg(test)]
