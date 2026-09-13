@@ -6,7 +6,7 @@
 use icu_properties::CodePointSetData;
 use icu_properties::props::{DefaultIgnorableCodePoint, VariationSelector};
 
-use crate::finding::{Evidence, Finding, Line, Position, RuleId, Severity};
+use crate::finding::{Evidence, Finding, Line, Position, RuleId};
 use crate::repo_path::RepoPath;
 
 /// Whether Unicode lists a character as `Default_Ignorable_Code_Point`: what a
@@ -57,7 +57,7 @@ pub fn unreviewable(
         path: path.clone(),
         at: None,
         rule: RuleId::OpaqueHook,
-        severity: Severity::Medium,
+        severity: RuleId::OpaqueHook.severity(),
         evidence: Evidence::quote(&Line::new(reason), 0, width),
     })
 }
@@ -87,7 +87,7 @@ fn invisible_unicode(path: &RepoPath, text: &str, width: usize) -> Vec<Finding> 
                     column: column + 1,
                 }),
                 rule: RuleId::InvisibleUnicode,
-                severity: Severity::High,
+                severity: RuleId::InvisibleUnicode.severity(),
                 evidence: Evidence::quote(&line, column, width),
             });
         }
@@ -98,7 +98,7 @@ fn invisible_unicode(path: &RepoPath, text: &str, width: usize) -> Vec<Finding> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::finding::DEFAULT_EVIDENCE_WIDTH;
+    use crate::finding::{DEFAULT_EVIDENCE_WIDTH, Severity};
 
     #[test]
     fn a_variation_selector_is_ignorable_but_not_hidden() {
