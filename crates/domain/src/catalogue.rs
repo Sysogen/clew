@@ -103,7 +103,7 @@ pub struct Matched<'a> {
     pub rule: &'a SurfaceRule,
     /// What the file is.
     pub kind: SurfaceKind,
-    /// What to read out of it. Empty means inventory only.
+    /// What to read out of it.
     pub extract: &'a [Extraction],
     /// Which rules read it.
     pub check: &'a [RuleId],
@@ -122,7 +122,7 @@ pub struct SurfaceRule {
     pub tool: String,
     /// What it is.
     pub kind: String,
-    /// What to read out of it. Empty means inventory only.
+    /// What to read out of it.
     #[serde(default)]
     pub extract: Vec<String>,
     /// Which rules read it. Empty means none does.
@@ -1087,7 +1087,7 @@ mod tests {
     }
 
     #[test]
-    fn a_row_without_extract_is_inventory_only() {
+    fn a_row_extracts_only_what_it_declares() {
         let hook = shipped().lookup(&p(".claude/hooks/x.sh")).expect("match");
         assert!(
             hook.extract.is_empty(),

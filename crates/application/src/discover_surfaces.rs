@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 use clew_domain::extract;
 use clew_domain::finding::Finding;
 use clew_domain::ports::file_contents::{FileContents, FileContentsError};
-use clew_domain::ports::file_tree::{FileTree, FileTreeError};
+use clew_domain::ports::file_tree::{EntryKind, FileTree, FileTreeError};
 use clew_domain::rules;
 use clew_domain::scope::Scope;
 use clew_domain::{Hook, McpServer, Permission, RepoPath, ScanPolicy, Surface, catalogue};
@@ -203,11 +203,8 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
             let entries = match self.tree.read_dir(&dir) {
                 Ok(entries) => entries,
                 Err(error) => {
-                    // A home root that is not there means the tool is not
-                    // installed, which is an answer rather than a gap.
-                    // Absent means the tool is not installed. A root that is
-                    // there and is not a directory, a symlink among them, is
-                    // still a gap and still said.
+                    // An absent root means the tool is not installed, an
+                    // answer rather than a gap. Any other error is a gap.
                     if self.scope != Scope::Repository
                         && error == FileTreeError::NotFound
                         && catalogue().roots_in(self.scope).contains(&dir.as_str())
@@ -222,6 +219,11 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
             for entry in entries {
                 if self.policy.should_descend(&entry) {
                     queue.push(entry.path);
+                    continue;
+                }
+                // A directory left unwalked, a pruned one say, is not a surface
+                // whatever the glob says.
+                if entry.kind == EntryKind::Directory {
                     continue;
                 }
                 if let Some(matched) = catalogue().lookup_in(&entry.path, self.scope) {
@@ -1102,6 +1104,24 @@ mod tests {
             assert_eq!(found.evidence.as_str(), error.to_string());
             assert!(report.is_complete(), "{error:?}: {report:?}");
         }
+    }
+
+    #[test]
+    fn a_pruned_directory_under_hooks_is_not_a_hook() {
+        let tree = FakeTree::default()
+            .dir("", &[(".claude", EntryKind::Directory)])
+            .dir(".claude", &[("hooks", EntryKind::Directory)])
+            .dir(".claude/hooks", &[("node_modules", EntryKind::Directory)]);
+
+        let report = DiscoverSurfaces::new(
+            &tree,
+            &Failing(FileContentsError::NotARegularFile),
+            &ScanPolicy::default(),
+        )
+        .run();
+
+        assert!(report.surfaces.is_empty(), "{report:?}");
+        assert!(report.findings.is_empty(), "{report:?}");
     }
 
     /// The file may be text clew was not allowed to see.

@@ -80,8 +80,8 @@ scripts, never on settings. The row decides rather than the tool, because one
 tool keeps both side by side and evidence quoted from settings would print them.
 
 Declare `opaque-hook` on a row whose files are run rather than read. A hook that
-is not text, is larger than the file limit, or is a link clew will not follow
-cannot be reviewed, and says so as a finding rather than a gap.
+is not text, is larger than the file limit, or is a link that clew will not
+follow cannot be reviewed, and says so as a finding rather than a gap.
 
 Add `format` when the file is not JSON:
 

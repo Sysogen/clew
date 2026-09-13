@@ -7,9 +7,9 @@
 # glob          matched against the repository-relative path, forward slashes
 # tool          which tool owns it
 # format        json, toml, or markdown. Omitted means json.
-# extract       what to read out of it. Omitted means inventory only: the file
-#               is reported and never opened, which matters when it may be a
-#               compiled binary
+# extract       what to read out of it
+# check         which rules read it. A row with neither is inventory: the file
+#               is reported and never opened
 # kind          what it is, for display and for rules
 # last_verified when this row was last checked against primary documentation
 # source        the documentation it was checked against
