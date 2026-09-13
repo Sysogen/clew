@@ -64,3 +64,8 @@ This is an early release covering discovery only.
 ## License
 
 Apache-2.0. Copyright (c) 2026 Sysogen Lda.
+
+Secrets are recognised with the default rule set and wordlist of
+[betterleaks](https://github.com/betterleaks/betterleaks), vendored unedited in
+`crates/domain/vendor/betterleaks` under its MIT licence, Copyright (c) 2026
+Zachary Rice.
