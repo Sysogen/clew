@@ -655,9 +655,10 @@ mod tests {
         );
     }
 
-    /// A rule reads prose, never settings, whichever tool owns the file.
+    /// A rule reads prose and hook scripts, never settings, whichever tool owns
+    /// the file.
     #[test]
-    fn only_prose_rows_are_read_by_a_rule() {
+    fn a_rule_reads_prose_and_hook_scripts_never_settings() {
         let prose = [
             (Scope::Repository, ".claude/skills/a/SKILL.md"),
             (Scope::Repository, "CLAUDE.md"),
@@ -681,8 +682,9 @@ mod tests {
             (Scope::System, "etc/devin/rules/policy.md"),
             (Scope::System, "etc/windsurf/rules/policy.md"),
         ];
+        let hooks = [(Scope::Repository, ".claude/hooks/sync.sh")];
         assert_eq!(
-            prose.len(),
+            prose.len() + hooks.len(),
             shipped()
                 .rules()
                 .iter()
@@ -696,6 +698,16 @@ mod tests {
                 .unwrap_or_else(|| panic!("{path} matched no row"));
             assert_eq!(m.check, &[RuleId::InvisibleUnicode], "{path}");
         }
+        for (scope, path) in hooks {
+            let m = shipped()
+                .lookup_in(&p(path), scope)
+                .unwrap_or_else(|| panic!("{path} matched no row"));
+            assert_eq!(
+                m.check,
+                &[RuleId::InvisibleUnicode, RuleId::OpaqueHook],
+                "{path}"
+            );
+        }
 
         let settings = [
             (Scope::Repository, ".kiro/settings/mcp.json"),
@@ -703,7 +715,6 @@ mod tests {
             (Scope::Repository, ".cursor/mcp.json"),
             (Scope::Repository, ".zed/settings.json"),
             (Scope::Repository, ".claude/settings.json"),
-            (Scope::Repository, ".claude/hooks/x.sh"),
             (Scope::Repository, ".env"),
             (Scope::Home, ".kiro/settings/mcp.json"),
             (Scope::Home, ".codeium/windsurf/mcp_config.json"),
@@ -1080,7 +1091,7 @@ mod tests {
         let hook = shipped().lookup(&p(".claude/hooks/x.sh")).expect("match");
         assert!(
             hook.extract.is_empty(),
-            "a hook script may be a binary and must never be opened"
+            "a hook script declares nothing to extract"
         );
 
         let instruction = shipped().lookup(&p("CLAUDE.md")).expect("match");

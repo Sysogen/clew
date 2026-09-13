@@ -10,6 +10,13 @@ repository.
 
 ### Added
 
+- Read hook scripts. A bidirectional character in code is Trojan Source
+  (CVE-2021-42574): the script reads one way to a reviewer and runs another,
+  so `invisible-unicode` now reads them. A hook that is not text, is larger
+  than the file limit, or is a link clew will not follow is an `opaque-hook`
+  finding, severity medium, rather than a gap in the scan: what it runs cannot
+  be reviewed. A hook clew was not allowed to open is still a gap.
+
 - Findings. A rule says something is wrong, where a row only says what a file
   declares. Findings sit on the report beside surfaces, sorted by path and
   position, and a finding does not make a scan incomplete: it is a scan that

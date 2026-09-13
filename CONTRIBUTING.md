@@ -66,8 +66,8 @@ extract = ["hooks", "permissions", "mcp-servers"]
 ```
 
 Omit it, and `check` below, and the file is inventory only: reported, never
-opened. That matters when it may be a compiled binary, and it is why a hook
-script is never read.
+opened. That is how an env file stays unread: it is nothing but credential
+values.
 
 Add `check` when a rule should read the file:
 
@@ -75,9 +75,13 @@ Add `check` when a rule should read the file:
 check = ["invisible-unicode"]
 ```
 
-Declare it on prose an agent reads as instructions, never on settings. The row
-decides rather than the tool, because one tool keeps both side by side and
-evidence quoted from settings would print them.
+Declare `invisible-unicode` on prose an agent reads as instructions and on hook
+scripts, never on settings. The row decides rather than the tool, because one
+tool keeps both side by side and evidence quoted from settings would print them.
+
+Declare `opaque-hook` on a row whose files are run rather than read. A hook that
+is not text, is larger than the file limit, or is a link clew will not follow
+cannot be reviewed, and says so as a finding rather than a gap.
 
 Add `format` when the file is not JSON:
 

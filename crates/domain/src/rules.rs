@@ -30,9 +30,32 @@ pub fn run(path: &RepoPath, checks: &[RuleId], text: &str, width: usize) -> Vec<
     for check in checks {
         match check {
             RuleId::InvisibleUnicode => found.extend(invisible_unicode(path, text, width)),
+            // Text can be reviewed, so there is nothing to say.
+            RuleId::OpaqueHook => {}
         }
     }
     found
+}
+
+/// What the named rules say about a file that is there but cannot be reviewed.
+///
+/// A hook is run rather than read, so one that cannot be reviewed is worth
+/// saying. Without `opaque-hook` on the row there is none, and the read stays a
+/// gap.
+#[must_use]
+pub fn unreviewable(
+    path: &RepoPath,
+    checks: &[RuleId],
+    reason: &str,
+    width: usize,
+) -> Option<Finding> {
+    checks.contains(&RuleId::OpaqueHook).then(|| Finding {
+        path: path.clone(),
+        at: None,
+        rule: RuleId::OpaqueHook,
+        severity: Severity::Medium,
+        evidence: Evidence::quote(&Line::new(reason), 0, width),
+    })
 }
 
 /// Non-printing Unicode in a file an agent reads as instructions: the Rules
@@ -180,6 +203,38 @@ mod tests {
         assert!(!said.contains("sk-live-PROSE123"), "{said}");
         assert!(said.contains("API_KEY="), "{said}");
         assert!(said.contains("<U+200B>"), "{said}");
+    }
+
+    #[test]
+    fn a_file_that_cannot_be_reviewed_is_a_finding_only_where_named() {
+        let path = RepoPath::root().join(".claude/hooks/tool");
+
+        let found = unreviewable(
+            &path,
+            &[RuleId::InvisibleUnicode, RuleId::OpaqueHook],
+            "not valid UTF-8",
+            DEFAULT_EVIDENCE_WIDTH,
+        )
+        .expect("a hook row names it");
+        assert_eq!(found.rule, RuleId::OpaqueHook);
+        assert_eq!(found.severity, Severity::Medium);
+        assert_eq!(found.at, None);
+        assert_eq!(found.evidence.as_str(), "not valid UTF-8");
+
+        assert!(unreviewable(&path, &[RuleId::InvisibleUnicode], "not valid UTF-8", 80).is_none());
+    }
+
+    #[test]
+    fn text_is_never_opaque() {
+        assert!(
+            run(
+                &RepoPath::root().join(".claude/hooks/x.sh"),
+                &[RuleId::OpaqueHook],
+                "#!/bin/sh\necho ok\n",
+                DEFAULT_EVIDENCE_WIDTH
+            )
+            .is_empty()
+        );
     }
 
     #[test]
