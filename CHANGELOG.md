@@ -28,6 +28,16 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   file is read as commands only when its name or its `#!` line makes it a
   shell script.
 
+- The `unverified-download` rule, severity medium. It flags a hook that
+  downloads a file and later runs it, or unpacks it and later runs something
+  from where it unpacked it, with no checksum or signature checked in between:
+  `curl -o f && ./f`, `curl -O a.tgz; tar xf a.tgz; ./a/bin/a`, and
+  `curl ... | tar -xz -C d; d/bin/tool`. A variable may hold anything the script
+  assigned it earlier, so a download named through one is still followed. A
+  `sha256sum -c`, `shasum -c`, `gpg --verify`, `cosign verify-blob`,
+  `minisign -V` or `gpgv` silences it, and a tool run by name is taken to be
+  the one on `PATH`.
+
 ### Fixed
 
 - A hook written in exec form, with an `args` list, is reported with its

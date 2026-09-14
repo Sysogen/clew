@@ -48,7 +48,7 @@ source = "https://code.claude.com/docs/en/mcp"
 glob = "**/.claude/**/hooks/**"
 tool = "claude-code"
 kind = "hook-script"
-check = ["invisible-unicode", "opaque-hook", "download-and-execute"]
+check = ["invisible-unicode", "opaque-hook", "download-and-execute", "unverified-download"]
 last_verified = "2026-09-11"
 source = "https://code.claude.com/docs/en/hooks"
 
