@@ -717,7 +717,8 @@ mod tests {
                     RuleId::InvisibleUnicode,
                     RuleId::OpaqueHook,
                     RuleId::DownloadAndExecute,
-                    RuleId::UnverifiedDownload
+                    RuleId::UnverifiedDownload,
+                    RuleId::UnpinnedRemotePackage
                 ],
                 "{path}"
             );
@@ -1180,7 +1181,8 @@ mod tests {
                 RuleId::InvisibleUnicode,
                 RuleId::OpaqueHook,
                 RuleId::DownloadAndExecute,
-                RuleId::UnverifiedDownload
+                RuleId::UnverifiedDownload,
+                RuleId::UnpinnedRemotePackage
             ]
         );
         assert!(shipped().checks_for(SurfaceKind::EnvFile).is_empty());

@@ -296,6 +296,17 @@ fn rule(id: RuleId) -> Rule {
              verify-blob), or install the tool through a package manager with a \
              lockfile.",
         ),
+        RuleId::UnpinnedRemotePackage => (
+            "A hook runs a package from a registry at a tag that moves, as npx \
+             claude-flow@latest does, so it runs whichever version was published last, \
+             every time it fires, with the agent's permissions. In the Shai-Hulud \
+             attack (StepSecurity, 15 September 2025), compromised versions of \
+             @ctrl/tinycolor and 40 other npm packages carried a postinstall payload; \
+             a runner fetching the latest release at that moment fetched it.",
+            "Pin the package to an exact version (npx tool@1.4.2), or add it to the \
+             project's dependencies so the lockfile decides the version and checks its \
+             integrity.",
+        ),
     };
     Rule {
         id: id.as_str(),

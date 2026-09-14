@@ -1514,6 +1514,20 @@ mod tests {
         assert_eq!(report.findings[0].rule, RuleId::UnverifiedDownload);
     }
 
+    #[test]
+    fn a_hook_command_that_runs_a_package_at_latest_is_a_finding() {
+        let tree = tree_of(&[(".claude/settings.json", EntryKind::File)]);
+        let contents = FakeContents::default().file(
+            ".claude/settings.json",
+            &hooked("npx claude-flow@latest hooks session-end"),
+        );
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &ScanPolicy::default()).run();
+
+        assert_eq!(report.findings.len(), 1, "{report:?}");
+        assert_eq!(report.findings[0].rule, RuleId::UnpinnedRemotePackage);
+    }
+
     fn hook_tree() -> FakeTree {
         FakeTree::default()
             .dir("", &[(".claude", EntryKind::Directory)])

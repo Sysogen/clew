@@ -38,6 +38,14 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `minisign -V` or `gpgv` silences it, and a tool run by name is taken to be
   the one on `PATH`.
 
+- The `unpinned-remote-package` rule, severity low. It flags a hook that runs a
+  registry package at a tag that moves, `latest`, `next`, `canary`, `beta` and
+  the like, through `npx`, `bunx`, `pnpm dlx`, `yarn dlx`, `npm exec`, `uvx` or
+  `pipx run`: whatever was published last runs, each time the hook fires.
+  Without a version a runner takes what the project installed, and with one it
+  takes that version, so neither is flagged. The rules that read commands now
+  look through `xargs`, whose `-I {}` and other valued flags are skipped.
+
 ### Fixed
 
 - A hook written in exec form, with an `args` list, is reported with its
