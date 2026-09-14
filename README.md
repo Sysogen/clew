@@ -70,6 +70,7 @@ directories the catalogue names rather than walking a home directory.
 | --- | --- | --- |
 | `invisible-unicode` | high | A character that renders as nothing, such as a zero-width, bidirectional or tag character, in a file an agent reads as instructions or in a hook script |
 | `opaque-hook` | medium | A hook that cannot be reviewed as text: binary, larger than the file limit, or a symbolic link |
+| `download-and-execute` | high | A hook script, or a hook command in a settings file, that hands what it downloads straight to a shell or an interpreter, as `curl ... \| bash` does |
 
 `invisible-unicode` is the Rules File Backdoor, disclosed by Pillar Security in
 March 2025: an instruction the model reads and a reviewer cannot see. In a hook
@@ -77,6 +78,12 @@ script it is Trojan Source. A finding quotes its line with the character written
 as `<U+XXXX>` and every credential on it masked, so a report can be pasted into
 a ticket. A credential is recognised by the key or flag in front of it, and by
 its shape with [betterleaks](https://github.com/betterleaks/betterleaks)' rules.
+
+`download-and-execute` reads a hook's shell syntax, never its words: a guard
+whose `grep` pattern names `curl | sh` is not one, a download that goes only to
+`tar` or `jq` is not one, and a README beside the hooks is never read as
+commands. The compromised tj-actions/changed-files action ran
+`curl ... | sudo python3` in March 2025.
 
 ### Output formats
 
