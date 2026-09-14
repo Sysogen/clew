@@ -53,6 +53,7 @@ check = [
   "opaque-hook",
   "download-and-execute",
   "decode-and-execute",
+  "credential-exfiltration",
   "unverified-download",
   "unpinned-remote-package",
 ]

@@ -39,6 +39,17 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   nothing runs is silent, and so are `eval "$(ssh-agent -s)"` and
   `-ExecutionPolicy`.
 
+- The `credential-exfiltration` rule, severity high. It flags a hook that sends
+  a credential over the network: the environment (`env`, `printenv`), a token
+  a tool prints (`gh auth token`, `gcloud auth print-access-token`), a
+  credential file (`~/.aws/credentials`, `~/.npmrc`, a private SSH key, a
+  `.env` sent whole), what a cloud metadata service answers, or a variable
+  assigned one of these. It is followed into what `curl`, `wget` or `nc`
+  sends: piped or redirected in, named as a file with `@` or `-T`, or
+  substituted into the payload or the address. A token in a header or user
+  that authenticates the request is silent, as is anything sent to localhost,
+  a public key, and configuration read out of `.env`.
+
 - The `unverified-download` rule, severity medium. It flags a hook that
   downloads a file and later runs it, or unpacks it and later runs something
   from where it unpacked it, with no checksum or signature checked in between:
