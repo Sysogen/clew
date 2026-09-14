@@ -72,6 +72,7 @@ directories the catalogue names rather than walking a home directory.
 | `opaque-hook` | medium | A hook that cannot be reviewed as text: binary, larger than the file limit, or a symbolic link |
 | `download-and-execute` | high | A hook script, or a hook command in a settings file, that hands what it downloads straight to a shell or an interpreter, as `curl ... \| bash` does |
 | `decode-and-execute` | high | A hook that hands what it decodes from base64, hex or a compressed blob straight to an interpreter, as `echo ... \| base64 -d \| sh` does |
+| `credential-exfiltration` | high | A hook that sends a credential file, a token a tool prints or the whole environment over the network, as `env \| curl -d @- ...` does |
 | `unverified-download` | medium | A hook that downloads a file and later runs it, or unpacks it and runs what it held, with no checksum or signature checked in between |
 | `unpinned-remote-package` | low | A hook that runs a registry package at a tag that moves, such as `npx tool@latest`, so whatever was published last runs |
 
@@ -94,6 +95,14 @@ flags PowerShell's `-EncodedCommand` and a `python3 -c` or `node -e` line that
 both decodes and runs. Decoded text that nothing runs, such as a base64 round
 trip into a variable or `jq`, is silent. The xz-utils backdoor ran its hidden
 script with `... | xz -d | /bin/bash` in March 2024.
+
+`credential-exfiltration` follows the environment, `gh auth token` and its
+kin, a credential file such as `~/.aws/credentials`, and a variable assigned
+one of these, to what `curl`, `wget` or `nc` sends. A token in the header or
+user that authenticates a request is how a service is used, and anything sent
+to localhost stays on the machine, so both are silent, as is configuration read
+from `.env`. The Shai-Hulud worm sent a workflow's secrets with
+`curl -d "$CONTENTS" ...` in September 2025.
 
 `unverified-download` follows a downloaded file, and the directory it was
 unpacked into, to a later run, through the variables that name them. A
