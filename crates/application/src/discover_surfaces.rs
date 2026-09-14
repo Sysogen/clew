@@ -1515,6 +1515,20 @@ mod tests {
     }
 
     #[test]
+    fn a_hook_command_that_runs_decoded_code_is_a_finding() {
+        let tree = tree_of(&[(".claude/settings.json", EntryKind::File)]);
+        let contents = FakeContents::default().file(
+            ".claude/settings.json",
+            &hooked("echo ZWNobyBoaQo= | base64 -d | sh"),
+        );
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &ScanPolicy::default()).run();
+
+        assert_eq!(report.findings.len(), 1, "{report:?}");
+        assert_eq!(report.findings[0].rule, RuleId::DecodeAndExecute);
+    }
+
+    #[test]
     fn a_hook_command_that_runs_a_package_at_latest_is_a_finding() {
         let tree = tree_of(&[(".claude/settings.json", EntryKind::File)]);
         let contents = FakeContents::default().file(
