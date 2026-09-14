@@ -72,6 +72,7 @@ directories the catalogue names rather than walking a home directory.
 | `opaque-hook` | medium | A hook that cannot be reviewed as text: binary, larger than the file limit, or a symbolic link |
 | `download-and-execute` | high | A hook script, or a hook command in a settings file, that hands what it downloads straight to a shell or an interpreter, as `curl ... \| bash` does |
 | `unverified-download` | medium | A hook that downloads a file and later runs it, or unpacks it and runs what it held, with no checksum or signature checked in between |
+| `unpinned-remote-package` | low | A hook that runs a registry package at a tag that moves, such as `npx tool@latest`, so whatever was published last runs |
 
 `invisible-unicode` is the Rules File Backdoor, disclosed by Pillar Security in
 March 2025: an instruction the model reads and a reviewer cannot see. In a hook
@@ -90,6 +91,11 @@ commands. The compromised tj-actions/changed-files action ran
 unpacked into, to a later run, through the variables that name them. A
 `sha256sum -c`, `gpg --verify` or `cosign verify-blob` in between silences it,
 and a tool run by name is the one on `PATH`, not the download.
+
+`unpinned-remote-package` flags `npx`, `bunx`, `pnpm dlx`, `yarn dlx`,
+`npm exec`, `uvx` and `pipx run` given a package at `@latest` or another tag
+that moves, and looks through `xargs` to find them. `npx prettier`, which runs
+what the project installed, and `npx tool@1.4.2` are silent.
 
 ### Output formats
 
