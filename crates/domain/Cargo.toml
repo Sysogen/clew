@@ -27,6 +27,8 @@ shlex.workspace = true
 toml.workspace = true
 thiserror.workspace = true
 yaml-rust2.workspace = true
+tree-sitter.workspace = true
+tree-sitter-bash.workspace = true
 
 [lints]
 workspace = true

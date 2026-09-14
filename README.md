@@ -47,6 +47,8 @@ Copilot and devcontainers, plus `.env` files. From those it reads:
 
 - the hooks each registers, the event each runs on, and whether it runs a
   command or injects a prompt, a hook switched off included;
+- the scripts those hooks run, read as hook scripts wherever they sit in the
+  repository;
 - the operations a Claude Code settings file pre-approves, naming any grant
   that covers a whole tool;
 - the MCP servers each declares, how each is reached, and the names, never the

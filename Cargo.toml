@@ -40,6 +40,9 @@ serde_json = "1"
 # Quotes an exec-form hook's arguments into one line.
 shlex = "2"
 toml = { version = "0.9", default-features = false, features = ["parse", "serde"] }
+# Parses the shell a hook runs, broken lines included.
+tree-sitter = "0.27"
+tree-sitter-bash = "0.25.1"
 thiserror = "2"
 # betterleaks measures token efficiency in cl100k tokens.
 tiktoken-rs = "0.12"
