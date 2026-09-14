@@ -21,6 +21,8 @@ pub enum RuleId {
     InvisibleUnicode,
     /// A hook file clew cannot review: binary, too large, or a link.
     OpaqueHook,
+    /// A hook that hands what it downloads straight to an interpreter.
+    DownloadAndExecute,
 }
 
 impl RuleId {
@@ -30,6 +32,7 @@ impl RuleId {
         match self {
             Self::InvisibleUnicode => "invisible-unicode",
             Self::OpaqueHook => "opaque-hook",
+            Self::DownloadAndExecute => "download-and-execute",
         }
     }
 
@@ -41,6 +44,9 @@ impl RuleId {
                 "Non-printing Unicode in a file an agent reads as instructions"
             }
             Self::OpaqueHook => "A hook file clew cannot review as text",
+            Self::DownloadAndExecute => {
+                "Code fetched from the network and handed straight to an interpreter"
+            }
         }
     }
 
@@ -48,7 +54,7 @@ impl RuleId {
     #[must_use]
     pub fn severity(self) -> Severity {
         match self {
-            Self::InvisibleUnicode => Severity::High,
+            Self::InvisibleUnicode | Self::DownloadAndExecute => Severity::High,
             Self::OpaqueHook => Severity::Medium,
         }
     }
@@ -59,6 +65,7 @@ impl RuleId {
         Some(match name {
             "invisible-unicode" => Self::InvisibleUnicode,
             "opaque-hook" => Self::OpaqueHook,
+            "download-and-execute" => Self::DownloadAndExecute,
             _ => return None,
         })
     }
