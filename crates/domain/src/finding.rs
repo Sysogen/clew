@@ -23,6 +23,8 @@ pub enum RuleId {
     OpaqueHook,
     /// A hook that hands what it downloads straight to an interpreter.
     DownloadAndExecute,
+    /// A hook that runs a file it downloaded, with nothing checked first.
+    UnverifiedDownload,
 }
 
 impl RuleId {
@@ -33,6 +35,7 @@ impl RuleId {
             Self::InvisibleUnicode => "invisible-unicode",
             Self::OpaqueHook => "opaque-hook",
             Self::DownloadAndExecute => "download-and-execute",
+            Self::UnverifiedDownload => "unverified-download",
         }
     }
 
@@ -47,6 +50,9 @@ impl RuleId {
             Self::DownloadAndExecute => {
                 "Code fetched from the network and handed straight to an interpreter"
             }
+            Self::UnverifiedDownload => {
+                "A downloaded file run with no checksum or signature checked first"
+            }
         }
     }
 
@@ -55,7 +61,7 @@ impl RuleId {
     pub fn severity(self) -> Severity {
         match self {
             Self::InvisibleUnicode | Self::DownloadAndExecute => Severity::High,
-            Self::OpaqueHook => Severity::Medium,
+            Self::OpaqueHook | Self::UnverifiedDownload => Severity::Medium,
         }
     }
 
@@ -66,6 +72,7 @@ impl RuleId {
             "invisible-unicode" => Self::InvisibleUnicode,
             "opaque-hook" => Self::OpaqueHook,
             "download-and-execute" => Self::DownloadAndExecute,
+            "unverified-download" => Self::UnverifiedDownload,
             _ => return None,
         })
     }

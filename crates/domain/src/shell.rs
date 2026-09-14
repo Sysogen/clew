@@ -682,6 +682,407 @@ fn unquoted(code: &str) -> String {
     out
 }
 
+/// A file a script downloads, and the directories it unpacked it into.
+struct Download {
+    /// Where the command that downloads it starts.
+    at: usize,
+    /// The file, as written and as each variable in it may hold.
+    files: Vec<String>,
+    /// Where it was unpacked, the same way.
+    unpacked: Vec<String>,
+}
+
+impl Download {
+    /// Whether running `path` runs this download, or something it unpacked.
+    fn runs(&self, path: &str) -> bool {
+        let run = bare(path);
+        self.files.iter().any(|file| bare(file) == run)
+            || self.unpacked.iter().any(|dir| match bare(dir) {
+                "" | "." => !run.starts_with(['/', '~', '$']) && !run.starts_with(".."),
+                dir => run
+                    .strip_prefix(dir)
+                    .is_some_and(|inside| inside.starts_with('/')),
+            })
+    }
+}
+
+/// A path without a leading `./` or a trailing `/`.
+fn bare(path: &str) -> &str {
+    path.strip_prefix("./")
+        .unwrap_or(path)
+        .trim_end_matches('/')
+}
+
+/// Where `text` downloads a file, or unpacks one, and later runs it with no
+/// checksum or signature checked in between: where each download is.
+#[must_use]
+pub fn downloads_run_later(text: &str) -> Vec<usize> {
+    let mut found = run_later(text, DEPTH);
+    found.sort_unstable();
+    found
+}
+
+fn run_later(text: &str, depth: usize) -> Vec<usize> {
+    let Some(tree) = parser().parse(text, None) else {
+        return Vec::new();
+    };
+    let mut assigned: Vec<(&str, Option<String>)> = Vec::new();
+    let mut downloads: Vec<Download> = Vec::new();
+    let mut found: Vec<usize> = Vec::new();
+    let mut stack = vec![tree.root_node()];
+    while let Some(node) = stack.pop() {
+        match node.kind() {
+            "variable_assignment" if node.parent().is_none_or(|p| p.kind() != "command") => {
+                if let Some(name) = node
+                    .child_by_field_name("name")
+                    .and_then(|name| text.get(name.byte_range()))
+                {
+                    let value = node
+                        .child_by_field_name("value")
+                        .and_then(|value| literal(value, text));
+                    assigned.push((name, value));
+                }
+            }
+            "pipeline" => downloads.extend(unpacked_as_downloaded(node, text, &assigned)),
+            "redirected_statement" => downloads.extend(saved_by_redirect(node, text, &assigned)),
+            "command" => {
+                let words = words(node, text);
+                if let Some(line) = shell_line(&words)
+                    && depth > 0
+                    && !run_later(line, depth - 1).is_empty()
+                    && !found.contains(&node.start_byte())
+                {
+                    found.push(node.start_byte());
+                }
+                if verifies(&words) {
+                    downloads.clear();
+                }
+                let files = download_files(&words, &assigned);
+                if !files.is_empty() {
+                    downloads.push(Download {
+                        at: node.start_byte(),
+                        files: files
+                            .iter()
+                            .flat_map(|file| forms(file, &assigned))
+                            .collect(),
+                        unpacked: Vec::new(),
+                    });
+                }
+                if let Some((Some(archive), into)) = unpacks(&words) {
+                    let archive = forms(&archive, &assigned);
+                    for download in &mut downloads {
+                        if download
+                            .files
+                            .iter()
+                            .any(|file| archive.iter().any(|a| bare(a) == bare(file)))
+                        {
+                            download.unpacked.extend(forms(&into, &assigned));
+                        }
+                    }
+                }
+                for (run, by_name) in runs(&words) {
+                    // A bare name is looked up on `PATH`, not in the checkout.
+                    for form in forms(&run, &assigned)
+                        .into_iter()
+                        .filter(|form| !by_name || form.contains('/'))
+                    {
+                        for download in downloads.iter().filter(|d| d.runs(&form)) {
+                            if !found.contains(&download.at) {
+                                found.push(download.at);
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+        let mut cursor = node.walk();
+        let children: Vec<Node> = node.named_children(&mut cursor).collect();
+        stack.extend(children.into_iter().rev());
+    }
+    found
+}
+
+/// The line a shell is handed with `-c`.
+fn shell_line(words: &[Option<String>]) -> Option<&str> {
+    let (program, rest) = program_of(words)?;
+    if !SHELLS.contains(&program) {
+        return None;
+    }
+    let at = rest.iter().position(|w| {
+        w.as_deref()
+            .is_some_and(|w| w.starts_with('-') && !w.starts_with("--") && w.contains('c'))
+    })?;
+    rest.get(at + 1)?.as_deref()
+}
+
+/// A word, and every value it may hold when it is only a variable.
+fn forms(word: &str, assigned: &[(&str, Option<String>)]) -> Vec<String> {
+    let mut all = vec![word.to_owned()];
+    let mut next = 0;
+    while let Some(current) = all.get(next).cloned() {
+        next += 1;
+        let Some(name) = variable_name(&current) else {
+            continue;
+        };
+        for value in assigned
+            .iter()
+            .filter(|(n, _)| *n == name)
+            .filter_map(|(_, value)| value.as_ref())
+        {
+            if !all.contains(value) && all.len() < 32 {
+                all.push(value.clone());
+            }
+        }
+    }
+    all
+}
+
+/// The name a word is, when the word is only `$NAME` or `${NAME}`.
+fn variable_name(word: &str) -> Option<&str> {
+    word.strip_prefix("${")
+        .and_then(|rest| rest.strip_suffix('}'))
+        .or_else(|| word.strip_prefix('$'))
+        .filter(|name| {
+            !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        })
+}
+
+/// What a command runs, each with whether it is the command's own name.
+fn runs(words: &[Option<String>]) -> Vec<(String, bool)> {
+    let mut handed = Vec::new();
+    ran(words, 0, &mut handed);
+    let mut all: Vec<(String, bool)> = handed.into_iter().map(|run| (run, false)).collect();
+    if let Some(Some(name)) = words.first() {
+        all.push((name.clone(), true));
+    }
+    all
+}
+
+/// The files a command downloads to; none when it writes to standard output.
+fn download_files(words: &[Option<String>], assigned: &[(&str, Option<String>)]) -> Vec<String> {
+    let Some((program, rest)) = program_of(words) else {
+        return Vec::new();
+    };
+    let args: Vec<&str> = rest.iter().filter_map(|w| w.as_deref()).collect();
+    let named = |file: Option<&str>| {
+        file.filter(|f| *f != "-")
+            .map(|f| vec![f.to_owned()])
+            .unwrap_or_default()
+    };
+    let from_urls = || {
+        args.iter()
+            .flat_map(|arg| forms(arg, assigned))
+            .filter_map(|form| url_file(&form))
+            .collect::<Vec<_>>()
+    };
+    let short = |a: &str| a.starts_with('-') && !a.starts_with("--");
+    let mut words = args.iter().copied();
+    match program {
+        "curl" => {
+            while let Some(arg) = words.next() {
+                if matches!(arg, "-o" | "--output") || (short(arg) && arg.ends_with('o')) {
+                    return named(words.next());
+                }
+                if let Some(file) = arg.strip_prefix("--output=") {
+                    return named(Some(file));
+                }
+                if matches!(arg, "-O" | "--remote-name") || (short(arg) && arg.contains('O')) {
+                    return from_urls();
+                }
+            }
+            Vec::new()
+        }
+        "wget" => {
+            while let Some(arg) = words.next() {
+                if short(arg) && arg.ends_with("O-") {
+                    return Vec::new();
+                }
+                if matches!(arg, "-O" | "--output-document") || (short(arg) && arg.ends_with('O')) {
+                    return named(words.next());
+                }
+                if let Some(file) = arg.strip_prefix("--output-document=") {
+                    return named(Some(file));
+                }
+            }
+            from_urls()
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// The file name a URL ends in, which `curl -O` and wget save it as.
+fn url_file(url: &str) -> Option<String> {
+    let (_, after) = url.split_once("://")?;
+    let path = after.split(['?', '#']).next()?;
+    let (_, name) = path.rsplit_once('/')?;
+    (!name.is_empty()).then(|| name.to_owned())
+}
+
+/// A download sent to a file by `>`, as `curl url > file` does.
+fn saved_by_redirect(
+    statement: Node,
+    text: &str,
+    assigned: &[(&str, Option<String>)],
+) -> Option<Download> {
+    let body = statement
+        .child_by_field_name("body")
+        .filter(|body| body.kind() == "command")?;
+    if !downloads(&words(body, text)) {
+        return None;
+    }
+    let mut cursor = statement.walk();
+    let file = statement
+        .children_by_field_name("redirect", &mut cursor)
+        .filter(|redirect| redirect.kind() == "file_redirect")
+        .filter(|redirect| {
+            redirect
+                .child_by_field_name("descriptor")
+                .is_none_or(|d| text.get(d.byte_range()) == Some("1"))
+        })
+        .filter(|redirect| {
+            text.get(redirect.byte_range()).is_some_and(|written| {
+                let written = written.trim_start_matches(|c: char| c.is_ascii_digit());
+                written.starts_with('>') && !written.starts_with(">&")
+            })
+        })
+        .find_map(|redirect| literal(redirect.child_by_field_name("destination")?, text))?;
+    Some(Download {
+        at: body.start_byte(),
+        files: forms(&file, assigned),
+        unpacked: Vec::new(),
+    })
+}
+
+/// A download piped straight into an unpacker, as `curl url | tar -xz -C dir`.
+fn unpacked_as_downloaded(
+    pipeline: Node,
+    text: &str,
+    assigned: &[(&str, Option<String>)],
+) -> Option<Download> {
+    let mut cursor = pipeline.walk();
+    let stages: Vec<(Node, Node)> = pipeline
+        .named_children(&mut cursor)
+        .filter_map(|stage| Some((stage, command_of(stage)?)))
+        .collect();
+    let first = stages.iter().position(|(stage, command)| {
+        downloads(&words(*command, text)) && !redirected(*stage, text, '>')
+    })?;
+    let into = stages[first + 1..].iter().find_map(|(_, command)| {
+        match unpacks(&words(*command, text)) {
+            Some((None, into)) => Some(into),
+            _ => None,
+        }
+    })?;
+    Some(Download {
+        at: stages[first].1.start_byte(),
+        files: Vec::new(),
+        unpacked: forms(&into, assigned),
+    })
+}
+
+/// What an unpacker unpacks, `None` for standard input, and where to: tar and
+/// bsdtar extracting, unzip, and 7-Zip's `x` and `e`.
+fn unpacks(words: &[Option<String>]) -> Option<(Option<String>, String)> {
+    let (program, rest) = program_of(words)?;
+    let args: Vec<&str> = rest.iter().filter_map(|w| w.as_deref()).collect();
+    let after = |flags: &[&str]| {
+        args.windows(2)
+            .find(|pair| flags.contains(&pair[0]))
+            .map(|pair| pair[1].to_owned())
+    };
+    let joined = |prefix: &str| {
+        args.iter()
+            .find_map(|arg| arg.strip_prefix(prefix))
+            .map(ToOwned::to_owned)
+    };
+    match program {
+        "tar" | "bsdtar" => {
+            // Letters may lead without a dash, as in `tar zxf a.tgz`.
+            let clusters: Vec<(usize, &str)> = args
+                .iter()
+                .enumerate()
+                .filter_map(|(i, arg)| {
+                    let letters = if arg.starts_with("--") {
+                        None
+                    } else if let Some(letters) = arg.strip_prefix('-') {
+                        Some(letters)
+                    } else {
+                        (i == 0).then_some(*arg)
+                    }?;
+                    (!letters.is_empty() && letters.chars().all(|c| c.is_ascii_alphabetic()))
+                        .then_some((i, letters))
+                })
+                .collect();
+            let extracting = args.contains(&"--extract")
+                || args.contains(&"--get")
+                || clusters.iter().any(|(_, letters)| letters.contains('x'));
+            if !extracting {
+                return None;
+            }
+            let archive = clusters
+                .iter()
+                .find(|(_, letters)| letters.contains('f'))
+                .and_then(|(i, _)| args.get(i + 1))
+                .map(|arg| (*arg).to_owned())
+                .or_else(|| after(&["--file"]))
+                .or_else(|| joined("--file="))
+                .filter(|archive| archive != "-");
+            let into = after(&["-C", "--directory"])
+                .or_else(|| joined("--directory="))
+                .unwrap_or_else(|| ".".to_owned());
+            Some((archive, into))
+        }
+        "unzip" => {
+            let mut words = args.iter();
+            let (mut archive, mut into) = (None, ".".to_owned());
+            while let Some(arg) = words.next() {
+                if *arg == "-d" {
+                    if let Some(dir) = words.next() {
+                        (*dir).clone_into(&mut into);
+                    }
+                } else if !arg.starts_with('-') && archive.is_none() {
+                    archive = Some((*arg).to_owned());
+                }
+            }
+            Some((Some(archive?), into))
+        }
+        "7z" | "7za" | "7zz" => {
+            let mut operands = args.iter().filter(|arg| !arg.starts_with('-'));
+            if !matches!(operands.next(), Some(&("x" | "e"))) {
+                return None;
+            }
+            let archive = operands.next()?;
+            let into = joined("-o").filter(|dir| !dir.is_empty());
+            Some((
+                Some((*archive).to_owned()),
+                into.unwrap_or_else(|| ".".to_owned()),
+            ))
+        }
+        _ => None,
+    }
+}
+
+/// Whether a command checks a checksum or a signature.
+fn verifies(words: &[Option<String>]) -> bool {
+    let Some((program, rest)) = program_of(words) else {
+        return false;
+    };
+    let has = |flag: &str| rest.iter().any(|w| w.as_deref() == Some(flag));
+    match program {
+        "gpg" | "gpg2" => has("--verify"),
+        "gpgv" | "gpgv2" | "slsa-verifier" => true,
+        "cosign" => rest
+            .first()
+            .and_then(|w| w.as_deref())
+            .is_some_and(|sub| sub.starts_with("verify")),
+        "minisign" | "signify" => has("-V"),
+        "openssl" => has("-verify") || has("-signature"),
+        program if program.ends_with("sum") => has("-c") || has("--check"),
+        _ => false,
+    }
+}
+
 /// PowerShell handing a download to `Invoke-Expression`, either way round.
 // A fixed pattern, compiled once; a test proves it compiles.
 #[allow(clippy::expect_used)]
@@ -933,6 +1334,101 @@ mod tests {
         let text = "set -e\ncurl -s https://example.invalid | bash\n";
 
         assert_eq!(downloads_run(text), [text.find("curl").unwrap_or(0)]);
+    }
+
+    fn place(text: &str, needle: &str) -> usize {
+        text.find(needle).unwrap_or(usize::MAX)
+    }
+
+    #[test]
+    fn a_download_run_later_is_flagged_at_the_download() {
+        for (text, download) in [
+            (
+                "curl -fLo ~/.local/share/coursier/cs https://github.com/coursier/launchers/raw/master/cs-x86_64-pc-linux || return 1\nchmod +x ~/.local/share/coursier/cs\n~/.local/share/coursier/cs install sbt --dir ~/.local/bin\n",
+                "curl",
+            ),
+            (
+                "tmpTar=\"$(mktemp --suffix=.tar.xz)\"\ncurl -sSL -o \"${tmpTar}\" \"https://nodejs.org/dist/v24.1.0/node-v24.1.0-linux-x64.tar.xz\"\ntar xf \"${tmpTar}\" -C \"${installDir}\" --strip-components=1\n\"${installDir}/bin/node\" --version\n",
+                "curl",
+            ),
+            (
+                "curl -fsSL -o \"$tmp_zip\" \"$CMDLINE_TOOLS_URL\"\nunzip -q \"$tmp_zip\" -d \"$ANDROID_SDK_ROOT/cmdline-tools\"\n\"$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager\" --licenses\n",
+                "curl",
+            ),
+            (
+                "curl -fsSLO \"https://download.swift.org/swiftly/linux/swiftly-$(uname -m).tar.gz\"\ntar zxf \"swiftly-$(uname -m).tar.gz\"\n./swiftly init -y --skip-install\n",
+                "curl",
+            ),
+            (
+                "JQ_CMD=\"jq\"\nJQ_FALLBACK=\"$DIR/tools/jq\"\ncurl -fsSL -o \"$JQ_FALLBACK\" https://example.invalid/jq-linux64 && chmod +x \"$JQ_FALLBACK\"\nif [ -x \"$JQ_FALLBACK\" ]; then\n  JQ_CMD=\"$JQ_FALLBACK\"\nelse\n  JQ_CMD=\"$(command -v jq)\"\nfi\n\"$JQ_CMD\" -r .x config.json\n",
+                "curl",
+            ),
+            (
+                "curl -s https://example.invalid/i.sh > /tmp/i.sh\nsh /tmp/i.sh\n",
+                "curl",
+            ),
+            (
+                "wget -q https://example.invalid/tool.sh && bash tool.sh\n",
+                "wget",
+            ),
+            (
+                "curl -fsSL \"$url\" | tar -xz -C \"$tmp\"\n\"$tmp/bin/tool\" --version\n",
+                "curl",
+            ),
+            (
+                "curl -fsSLO https://example.invalid/t.tar.gz\ntar xf t.tar.gz\nbin/tool --version\n",
+                "curl",
+            ),
+            (
+                "curl -o a.tgz https://example.invalid/a.tgz\ntar xf ./a.tgz -C out\nout/bin/tool\n",
+                "curl",
+            ),
+            (
+                "curl -o a.tgz https://example.invalid/a.tgz\ntar -x -f a.tgz -C out\nout/bin/tool\n",
+                "curl",
+            ),
+            (
+                "URL=https://example.invalid/tool.sh\nwget \"$URL\"\nbash tool.sh\n",
+                "wget",
+            ),
+            (
+                "wget https://example.invalid/a.sh https://example.invalid/b.sh\nbash a.sh\n",
+                "wget",
+            ),
+            (
+                "bash -c 'curl -fsSLo /tmp/t https://example.invalid/t; /tmp/t'\n",
+                "bash",
+            ),
+        ] {
+            assert_eq!(downloads_run_later(text), [place(text, download)], "{text}");
+        }
+    }
+
+    #[test]
+    fn a_download_checked_before_it_runs_is_not() {
+        for text in [
+            "curl -fsSLo /tmp/jq https://example.invalid/jq\necho \"abc123  /tmp/jq\" | sha256sum -c -\n/tmp/jq --version\n",
+            "curl -fsSLO https://example.invalid/t.tgz\nshasum -a 256 -c t.tgz.sha256\ntar xf t.tgz\n./t/bin/t\n",
+            "curl -o a.tgz https://example.invalid/a.tgz\ngpg --verify a.tgz.asc a.tgz\ntar xf a.tgz -C out\nout/bin/a\n",
+        ] {
+            assert!(downloads_run_later(text).is_empty(), "{text}");
+        }
+    }
+
+    #[test]
+    fn a_download_that_is_never_run_is_not() {
+        for text in [
+            "curl -fsSL https://example.invalid/a.tgz > a.tgz | tar -xz -C out\nout/bin/tool\n",
+            "curl -fsSLO https://example.invalid/t.tgz\ntar xf t.tgz\n../bin/tool\n",
+            "curl -o /tmp/data.json https://example.invalid/d.json && jq . /tmp/data.json\n",
+            "curl -o a.tgz https://example.invalid/a.tgz && tar xf a.tgz -C out && cat out/README\n",
+            "curl -fsSL \"$url\" | tar -xz -C \"$tmp\"\ninstall -m 0755 \"${tmp}/golangci-lint\" \"${BIN}/golangci-lint\"\n",
+            "wget https://example.invalid/jq\njq . config.json\n",
+            "/tmp/jq --version\ncurl -o /tmp/jq https://example.invalid/jq\n",
+            "curl -s https://example.invalid/x | bash\n",
+        ] {
+            assert!(downloads_run_later(text).is_empty(), "{text}");
+        }
     }
 
     #[test]
