@@ -717,6 +717,7 @@ mod tests {
                     RuleId::InvisibleUnicode,
                     RuleId::OpaqueHook,
                     RuleId::DownloadAndExecute,
+                    RuleId::DecodeAndExecute,
                     RuleId::UnverifiedDownload,
                     RuleId::UnpinnedRemotePackage
                 ],
@@ -1181,6 +1182,7 @@ mod tests {
                 RuleId::InvisibleUnicode,
                 RuleId::OpaqueHook,
                 RuleId::DownloadAndExecute,
+                RuleId::DecodeAndExecute,
                 RuleId::UnverifiedDownload,
                 RuleId::UnpinnedRemotePackage
             ]
