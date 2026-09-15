@@ -49,6 +49,15 @@ pub fn run(path: &RepoPath, checks: &[RuleId], text: &str, width: usize) -> Vec<
                     );
                 }
             }
+            RuleId::UnverifiedDownload => {
+                if is_shell(path, text) {
+                    found.extend(
+                        shell::downloads_run_later(text)
+                            .into_iter()
+                            .filter_map(|at| found_at(path, *check, text, at, width)),
+                    );
+                }
+            }
         }
     }
     found
@@ -65,7 +74,18 @@ pub fn hook_command(
     occurrence: usize,
     width: usize,
 ) -> Vec<Finding> {
-    if !checks.contains(&RuleId::DownloadAndExecute) {
+    let sites: Vec<(RuleId, usize)> = checks
+        .iter()
+        .flat_map(|check| {
+            let at = match check {
+                RuleId::DownloadAndExecute => shell::downloads_run(command),
+                RuleId::UnverifiedDownload => shell::downloads_run_later(command),
+                RuleId::InvisibleUnicode | RuleId::OpaqueHook => Vec::new(),
+            };
+            at.into_iter().map(move |at| (*check, at))
+        })
+        .collect();
+    if sites.is_empty() {
         return Vec::new();
     }
     // Placed by its JSON form; one written otherwise is about the whole file.
@@ -79,9 +99,9 @@ pub fn hook_command(
         })
         .and_then(|at| found_at(path, RuleId::DownloadAndExecute, source, at + 1, width))
         .and_then(|found| found.at);
-    shell::downloads_run(command)
+    sites
         .into_iter()
-        .filter_map(|at| found_at(path, RuleId::DownloadAndExecute, command, at, width))
+        .filter_map(|(rule, at)| found_at(path, rule, command, at, width))
         .map(|found| Finding { at: place, ..found })
         .collect()
 }
@@ -519,6 +539,38 @@ mod tests {
         );
 
         assert!(found.is_empty(), "{found:?}");
+    }
+
+    #[test]
+    fn a_hook_that_runs_what_it_downloaded_is_a_medium_finding_at_the_download() {
+        let text = "#!/bin/sh\ncurl -fsSLo /tmp/jq https://example.invalid/jq\n/tmp/jq --version\n";
+
+        let found = run(
+            &hook("setup.sh"),
+            &[RuleId::UnverifiedDownload],
+            text,
+            DEFAULT_EVIDENCE_WIDTH,
+        );
+
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].rule, RuleId::UnverifiedDownload);
+        assert_eq!(found[0].severity, Severity::Medium);
+        assert_eq!(found[0].at.map(|p| (p.line, p.column)), Some((2, 1)));
+    }
+
+    #[test]
+    fn a_hook_command_is_ruled_by_each_rule_named() {
+        let found = hook_command(
+            &settings(),
+            &[RuleId::DownloadAndExecute, RuleId::UnverifiedDownload],
+            "curl -fsSLo /tmp/x https://example.invalid/x && /tmp/x",
+            "{}",
+            0,
+            DEFAULT_EVIDENCE_WIDTH,
+        );
+
+        let rules: Vec<RuleId> = found.iter().map(|f| f.rule).collect();
+        assert_eq!(rules, [RuleId::UnverifiedDownload], "{found:?}");
     }
 
     /// Splitting the line again per finding made a line of many runs

