@@ -40,19 +40,12 @@ pub fn run(path: &RepoPath, checks: &[RuleId], text: &str, width: usize) -> Vec<
             RuleId::InvisibleUnicode => found.extend(invisible_unicode(path, text, width)),
             // Text can be reviewed, so there is nothing to say.
             RuleId::OpaqueHook => {}
-            RuleId::DownloadAndExecute => {
-                if is_shell(path, text) {
+            RuleId::DownloadAndExecute
+            | RuleId::UnverifiedDownload
+            | RuleId::UnpinnedRemotePackage => {
+                if let Some(sites) = in_shell(*check).filter(|_| is_shell(path, text)) {
                     found.extend(
-                        shell::downloads_run(text)
-                            .into_iter()
-                            .filter_map(|at| found_at(path, *check, text, at, width)),
-                    );
-                }
-            }
-            RuleId::UnverifiedDownload => {
-                if is_shell(path, text) {
-                    found.extend(
-                        shell::downloads_run_later(text)
+                        sites(text)
                             .into_iter()
                             .filter_map(|at| found_at(path, *check, text, at, width)),
                     );
@@ -61,6 +54,16 @@ pub fn run(path: &RepoPath, checks: &[RuleId], text: &str, width: usize) -> Vec<
         }
     }
     found
+}
+
+/// How a rule that reads shell commands finds its sites in them.
+fn in_shell(rule: RuleId) -> Option<fn(&str) -> Vec<usize>> {
+    match rule {
+        RuleId::DownloadAndExecute => Some(shell::downloads_run),
+        RuleId::UnverifiedDownload => Some(shell::downloads_run_later),
+        RuleId::UnpinnedRemotePackage => Some(shell::unpinned_packages),
+        RuleId::InvisibleUnicode | RuleId::OpaqueHook => None,
+    }
 }
 
 /// What the named rules say about a hook command in a settings file, placed
@@ -77,11 +80,7 @@ pub fn hook_command(
     let sites: Vec<(RuleId, usize)> = checks
         .iter()
         .flat_map(|check| {
-            let at = match check {
-                RuleId::DownloadAndExecute => shell::downloads_run(command),
-                RuleId::UnverifiedDownload => shell::downloads_run_later(command),
-                RuleId::InvisibleUnicode | RuleId::OpaqueHook => Vec::new(),
-            };
+            let at = in_shell(*check).map_or_else(Vec::new, |sites| sites(command));
             at.into_iter().map(move |at| (*check, at))
         })
         .collect();
@@ -571,6 +570,38 @@ mod tests {
 
         let rules: Vec<RuleId> = found.iter().map(|f| f.rule).collect();
         assert_eq!(rules, [RuleId::UnverifiedDownload], "{found:?}");
+    }
+
+    #[test]
+    fn a_hook_that_runs_a_package_at_latest_is_a_low_finding() {
+        let text = "#!/bin/sh\nnpx claude-flow@latest hooks session-end\n";
+
+        let found = run(
+            &hook("end.sh"),
+            &[RuleId::UnpinnedRemotePackage],
+            text,
+            DEFAULT_EVIDENCE_WIDTH,
+        );
+
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].rule, RuleId::UnpinnedRemotePackage);
+        assert_eq!(found[0].severity, Severity::Low);
+        assert_eq!(found[0].at.map(|p| (p.line, p.column)), Some((2, 1)));
+    }
+
+    #[test]
+    fn a_hook_command_running_a_package_at_latest_is_a_finding() {
+        let found = hook_command(
+            &settings(),
+            &[RuleId::UnpinnedRemotePackage],
+            "npx claude-flow@latest hooks pre-edit",
+            "{}",
+            0,
+            DEFAULT_EVIDENCE_WIDTH,
+        );
+
+        let rules: Vec<RuleId> = found.iter().map(|f| f.rule).collect();
+        assert_eq!(rules, [RuleId::UnpinnedRemotePackage], "{found:?}");
     }
 
     /// Splitting the line again per finding made a line of many runs
