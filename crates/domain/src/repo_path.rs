@@ -53,6 +53,19 @@ impl RepoPath {
         }
     }
 
+    /// The directory holding this path, or `None` for the root.
+    #[must_use]
+    pub fn parent(&self) -> Option<Self> {
+        if self.0.is_empty() {
+            return None;
+        }
+        Some(Self(
+            self.0
+                .rsplit_once('/')
+                .map_or_else(String::new, |(dir, _)| dir.to_owned()),
+        ))
+    }
+
     /// The path's segments, in order.
     pub fn segments(&self) -> impl Iterator<Item = &str> {
         self.0.split('/').filter(|s| !s.is_empty())
@@ -93,6 +106,14 @@ mod tests {
         assert_eq!(p.as_str(), "a/b");
         assert_eq!(p.depth(), 2);
         assert_eq!(p.file_name(), "b");
+    }
+
+    #[test]
+    fn a_parent_is_one_segment_up_and_the_root_has_none() {
+        let a = RepoPath::root().join("a");
+        assert_eq!(a.join("b").parent(), Some(a.clone()));
+        assert_eq!(a.parent(), Some(RepoPath::root()));
+        assert_eq!(RepoPath::root().parent(), None);
     }
 
     #[test]

@@ -6,12 +6,15 @@
 use std::collections::BTreeSet;
 
 use clew_domain::extract;
-use clew_domain::finding::{Finding, Severity};
+use clew_domain::finding::{Finding, RuleId, Severity};
+use clew_domain::hook::project_of;
 use clew_domain::ports::file_contents::{FileContents, FileContentsError};
 use clew_domain::ports::file_tree::{EntryKind, FileTree, FileTreeError};
 use clew_domain::rules;
 use clew_domain::scope::Scope;
-use clew_domain::{Hook, McpServer, Permission, RepoPath, ScanPolicy, Surface, catalogue};
+use clew_domain::{
+    Hook, McpServer, Permission, RepoPath, ScanPolicy, Surface, SurfaceKind, catalogue,
+};
 
 /// An MCP server, and the file that declared it.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -115,39 +118,9 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
                 continue;
             }
 
-            let text = match self.contents.read(&path, self.policy.max_file_bytes()) {
-                Ok(text) => text,
-                Err(error) => {
-                    // Not text, too large, or a link: there but not reviewable,
-                    // which a row may count as a finding. Anything else is a gap.
-                    let there = matches!(
-                        error,
-                        FileContentsError::NotUtf8
-                            | FileContentsError::TooLarge { .. }
-                            | FileContentsError::NotARegularFile
-                    );
-                    let reason = error.to_string();
-                    match rules::unreviewable(
-                        &path,
-                        matched.check,
-                        &reason,
-                        self.policy.evidence_width(),
-                    ) {
-                        Some(finding) if there => report.findings.push(finding),
-                        _ => report.unparsed.push((path, reason)),
-                    }
-                    continue;
-                }
+            let Some(text) = self.read_checked(&path, matched.check, report) else {
+                continue;
             };
-
-            // One read serves both: what the file declares, and what is wrong
-            // with it.
-            report.findings.extend(rules::run(
-                &path,
-                matched.check,
-                &text,
-                self.policy.evidence_width(),
-            ));
             if matched.extract.is_empty() {
                 continue;
             }
@@ -179,6 +152,86 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
                     server,
                 });
             }
+        }
+    }
+
+    /// Read `path` and run `checks` on it, returning the text.
+    fn read_checked(
+        &self,
+        path: &RepoPath,
+        checks: &[RuleId],
+        report: &mut DiscoveryReport,
+    ) -> Option<String> {
+        let text = match self.contents.read(path, self.policy.max_file_bytes()) {
+            Ok(text) => text,
+            Err(error) => {
+                // There but not reviewable is a finding where the row names
+                // one; anything else is a gap.
+                let there = matches!(
+                    error,
+                    FileContentsError::NotUtf8
+                        | FileContentsError::TooLarge { .. }
+                        | FileContentsError::NotARegularFile
+                );
+                let reason = error.to_string();
+                match rules::unreviewable(path, checks, &reason, self.policy.evidence_width()) {
+                    Some(finding) if there => report.findings.push(finding),
+                    _ => report.unparsed.push((path.clone(), reason)),
+                }
+                return None;
+            }
+        };
+
+        report.findings.extend(rules::run(
+            path,
+            checks,
+            &text,
+            self.policy.evidence_width(),
+        ));
+        Some(text)
+    }
+
+    /// Read the scripts hook commands run that no row's glob matched. Only a
+    /// repository scan has a project to resolve a relative path against.
+    fn follow_scripts(&self, report: &mut DiscoveryReport) {
+        if self.scope != Scope::Repository {
+            return;
+        }
+        let known: BTreeSet<RepoPath> = report.surfaces.iter().map(|s| s.path.clone()).collect();
+        let named: BTreeSet<RepoPath> = report
+            .hooks
+            .iter()
+            .flat_map(|h| h.hook.action.scripts(&project_of(&h.source)))
+            .filter(|path| !known.contains(path))
+            .collect();
+        let checks = catalogue().checks_for(SurfaceKind::HookScript);
+        for path in named {
+            let Some(dir) = path.parent() else {
+                continue;
+            };
+            let entries = match self.tree.read_dir(&dir) {
+                Ok(entries) => entries,
+                Err(FileTreeError::NotFound | FileTreeError::NotADirectory) => continue,
+                Err(error) => {
+                    if !report.unreadable.iter().any(|(p, _)| *p == dir) {
+                        report.unreadable.push((dir, error));
+                    }
+                    continue;
+                }
+            };
+            // Anything but a file or a link only looked like a script.
+            let kind = entries
+                .into_iter()
+                .find(|entry| entry.path == path)
+                .map(|entry| entry.kind);
+            if !matches!(kind, Some(EntryKind::File | EntryKind::Symlink)) {
+                continue;
+            }
+            report.surfaces.push(Surface {
+                path: path.clone(),
+                kind: SurfaceKind::HookScript,
+            });
+            self.read_checked(&path, checks, report);
         }
     }
 
@@ -243,6 +296,8 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
 
         report.surfaces.sort();
         self.read_surfaces(&mut report);
+        self.follow_scripts(&mut report);
+        report.surfaces.sort();
         report.hooks.sort();
         report.permissions.sort();
         report.servers.sort();
@@ -331,6 +386,7 @@ mod tests {
     struct FakeContents {
         files: BTreeMap<String, String>,
         denied: Vec<String>,
+        errors: BTreeMap<String, FileContentsError>,
     }
 
     impl FakeContents {
@@ -343,6 +399,11 @@ mod tests {
             self.denied.push(at.to_owned());
             self
         }
+
+        fn error(mut self, at: &str, error: FileContentsError) -> Self {
+            self.errors.insert(at.to_owned(), error);
+            self
+        }
     }
 
     impl FileContents for FakeContents {
@@ -350,6 +411,9 @@ mod tests {
             let key = path.as_str().to_owned();
             if self.denied.contains(&key) {
                 return Err(FileContentsError::PermissionDenied);
+            }
+            if let Some(error) = self.errors.get(&key) {
+                return Err(error.clone());
             }
             Ok(self
                 .files
@@ -1089,6 +1153,269 @@ mod tests {
         fn read(&self, _: &RepoPath, _: u64) -> Result<String, FileContentsError> {
             Err(self.0.clone())
         }
+    }
+
+    /// A tree of `entries`, listing every directory on the way.
+    fn tree_of(entries: &[(&str, EntryKind)]) -> FakeTree {
+        let mut listings: BTreeMap<String, Vec<(String, EntryKind)>> = BTreeMap::new();
+        for (at, kind) in entries {
+            let segments: Vec<&str> = at.split('/').collect();
+            for (depth, name) in segments.iter().enumerate() {
+                let dir = segments[..depth].join("/");
+                let kind = if depth + 1 == segments.len() {
+                    *kind
+                } else {
+                    EntryKind::Directory
+                };
+                let listing = listings.entry(dir).or_default();
+                if !listing.iter().any(|(n, _)| n == name) {
+                    listing.push(((*name).to_owned(), kind));
+                }
+            }
+            if *kind == EntryKind::Directory {
+                listings.entry((*at).to_owned()).or_default();
+            }
+        }
+        listings
+            .iter()
+            .fold(FakeTree::default(), |tree, (dir, listing)| {
+                let entries: Vec<(&str, EntryKind)> =
+                    listing.iter().map(|(n, k)| (n.as_str(), *k)).collect();
+                tree.dir(dir, &entries)
+            })
+    }
+
+    /// Settings whose one hook runs `command`.
+    fn hooked(command: &str) -> String {
+        let quoted = command.replace('\\', "\\\\").replace('"', "\\\"");
+        format!(
+            r#"{{"hooks":{{"PostToolUse":[{{"hooks":[{{"type":"command","command":"{quoted}"}}]}}]}}}}"#
+        )
+    }
+
+    fn hook_scripts(report: &DiscoveryReport) -> Vec<&str> {
+        report
+            .surfaces
+            .iter()
+            .filter(|s| s.kind == SurfaceKind::HookScript)
+            .map(|s| s.path.as_str())
+            .collect()
+    }
+
+    fn spy(contents: FakeContents) -> SpyContents {
+        SpyContents {
+            inner: contents,
+            reads: std::cell::RefCell::default(),
+        }
+    }
+
+    #[test]
+    fn a_script_a_hook_runs_from_outside_hooks_is_read_by_the_hook_rules() {
+        let tree = tree_of(&[
+            (".claude/settings.json", EntryKind::File),
+            ("scripts/lint.sh", EntryKind::File),
+        ]);
+        let contents = FakeContents::default()
+            .file(
+                ".claude/settings.json",
+                &hooked("bash scripts/lint.sh --fast"),
+            )
+            .file("scripts/lint.sh", "#!/bin/sh\necho ok\u{202E}\n");
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &ScanPolicy::default()).run();
+
+        assert_eq!(hook_scripts(&report), ["scripts/lint.sh"], "{report:?}");
+        assert_eq!(report.findings.len(), 1, "{report:?}");
+        assert_eq!(report.findings[0].path.as_str(), "scripts/lint.sh");
+        assert_eq!(report.findings[0].rule, RuleId::InvisibleUnicode);
+        assert!(report.is_complete(), "{report:?}");
+    }
+
+    #[test]
+    fn a_nested_project_runs_its_own_scripts() {
+        let tree = tree_of(&[
+            ("pkg/.claude/settings.json", EntryKind::File),
+            ("pkg/tools/x.py", EntryKind::File),
+            ("tools/x.py", EntryKind::File),
+        ]);
+        let contents = FakeContents::default().file(
+            "pkg/.claude/settings.json",
+            &hooked(r#""$CLAUDE_PROJECT_DIR"/tools/x.py"#),
+        );
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &ScanPolicy::default()).run();
+
+        assert_eq!(hook_scripts(&report), ["pkg/tools/x.py"], "{report:?}");
+    }
+
+    #[test]
+    fn a_word_that_names_no_file_is_left_alone() {
+        let tree = tree_of(&[
+            (".claude/settings.json", EntryKind::File),
+            ("tools/lint", EntryKind::Directory),
+        ]);
+        let contents = spy(FakeContents::default().file(
+            ".claude/settings.json",
+            &hooked("./tools/lint && ./missing.sh && bash nope/x.sh"),
+        ));
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &ScanPolicy::default()).run();
+
+        assert_eq!(
+            contents.reads.borrow().as_slice(),
+            [".claude/settings.json"]
+        );
+        assert!(hook_scripts(&report).is_empty(), "{report:?}");
+        assert!(report.findings.is_empty(), "{report:?}");
+        assert!(report.is_complete(), "{report:?}");
+    }
+
+    #[test]
+    fn a_path_through_a_file_names_no_script() {
+        struct FileInTheWay(FakeTree);
+        impl FileTree for FileInTheWay {
+            fn read_dir(&self, path: &RepoPath) -> Result<Vec<DirEntry>, FileTreeError> {
+                if path.as_str() == "README.md" {
+                    return Err(FileTreeError::NotADirectory);
+                }
+                self.0.read_dir(path)
+            }
+        }
+        let tree = FileInTheWay(tree_of(&[
+            (".claude/settings.json", EntryKind::File),
+            ("README.md", EntryKind::File),
+        ]));
+        let contents =
+            FakeContents::default().file(".claude/settings.json", &hooked("bash README.md/x.sh"));
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &ScanPolicy::default()).run();
+
+        assert!(report.is_complete(), "{report:?}");
+    }
+
+    #[test]
+    fn a_script_that_is_a_link_cannot_be_reviewed() {
+        let tree = tree_of(&[
+            (".claude/settings.json", EntryKind::File),
+            ("scripts/run.sh", EntryKind::Symlink),
+        ]);
+        let contents = FakeContents::default()
+            .file(".claude/settings.json", &hooked("scripts/run.sh"))
+            .error("scripts/run.sh", FileContentsError::NotARegularFile);
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &ScanPolicy::default()).run();
+
+        assert_eq!(hook_scripts(&report), ["scripts/run.sh"], "{report:?}");
+        assert_eq!(report.findings.len(), 1, "{report:?}");
+        assert_eq!(report.findings[0].rule, RuleId::OpaqueHook);
+    }
+
+    #[test]
+    fn a_script_already_found_is_read_once() {
+        let tree = tree_of(&[
+            (".claude/settings.json", EntryKind::File),
+            (".claude/hooks/sync.sh", EntryKind::File),
+        ]);
+        let contents = spy(FakeContents::default().file(
+            ".claude/settings.json",
+            &hooked(r#""$CLAUDE_PROJECT_DIR"/.claude/hooks/sync.sh"#),
+        ));
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &ScanPolicy::default()).run();
+
+        let reads = contents.reads.borrow();
+        let times = reads
+            .iter()
+            .filter(|r| *r == ".claude/hooks/sync.sh")
+            .count();
+        assert_eq!(times, 1, "{reads:?}");
+        assert_eq!(hook_scripts(&report), [".claude/hooks/sync.sh"]);
+    }
+
+    #[test]
+    fn a_script_two_hooks_run_is_one_surface() {
+        let tree = tree_of(&[
+            (".claude/settings.json", EntryKind::File),
+            ("scripts/a.sh", EntryKind::File),
+        ]);
+        let contents = FakeContents::default().file(
+            ".claude/settings.json",
+            r#"{"hooks":{"Stop":[{"hooks":[{"command":"bash scripts/a.sh"},{"command":"./scripts/a.sh"}]}]}}"#,
+        );
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &ScanPolicy::default()).run();
+
+        assert_eq!(hook_scripts(&report), ["scripts/a.sh"], "{report:?}");
+    }
+
+    #[test]
+    fn a_home_scan_follows_no_script() {
+        let tree = tree_of(&[
+            (".claude/settings.json", EntryKind::File),
+            ("scripts/x.sh", EntryKind::File),
+        ]);
+        let contents = spy(
+            FakeContents::default().file(".claude/settings.json", &hooked("bash scripts/x.sh"))
+        );
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &ScanPolicy::default())
+            .in_scope(Scope::Home)
+            .run();
+
+        assert_eq!(report.hooks.len(), 1, "the settings were read: {report:?}");
+        let reads = contents.reads.borrow();
+        assert!(!reads.iter().any(|r| r == "scripts/x.sh"), "{reads:?}");
+    }
+
+    #[test]
+    fn a_script_in_a_directory_that_cannot_be_listed_is_a_gap() {
+        let tree = tree_of(&[
+            (".claude/settings.json", EntryKind::File),
+            ("node_modules/tool/hook.sh", EntryKind::File),
+        ])
+        .deny("node_modules/tool");
+        let contents = FakeContents::default().file(
+            ".claude/settings.json",
+            &hooked("bash node_modules/tool/hook.sh"),
+        );
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &ScanPolicy::default()).run();
+
+        let unreadable: Vec<&str> = report.unreadable.iter().map(|(p, _)| p.as_str()).collect();
+        assert_eq!(unreadable, ["node_modules/tool"], "{report:?}");
+    }
+
+    #[test]
+    fn a_directory_the_walk_could_not_list_is_reported_once() {
+        let tree = tree_of(&[
+            (".claude/settings.json", EntryKind::File),
+            ("scripts/x.sh", EntryKind::File),
+        ])
+        .deny("scripts");
+        let contents =
+            FakeContents::default().file(".claude/settings.json", &hooked("bash scripts/x.sh"));
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &ScanPolicy::default()).run();
+
+        let unreadable: Vec<&str> = report.unreadable.iter().map(|(p, _)| p.as_str()).collect();
+        assert_eq!(unreadable, ["scripts"], "{report:?}");
+    }
+
+    #[test]
+    fn no_script_is_looked_for_outside_the_checkout() {
+        let tree = tree_of(&[(".claude/settings.json", EntryKind::File)]);
+        let contents = spy(FakeContents::default().file(
+            ".claude/settings.json",
+            &hooked("bash ../outside.sh; /etc/x.sh; bash ~/x.sh"),
+        ));
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &ScanPolicy::default()).run();
+
+        assert_eq!(
+            contents.reads.borrow().as_slice(),
+            [".claude/settings.json"]
+        );
+        assert!(hook_scripts(&report).is_empty(), "{report:?}");
     }
 
     fn hook_tree() -> FakeTree {
