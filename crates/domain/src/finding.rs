@@ -25,6 +25,8 @@ pub enum RuleId {
     DownloadAndExecute,
     /// A hook that hands what it decodes straight to an interpreter.
     DecodeAndExecute,
+    /// A hook that sends a credential over the network.
+    CredentialExfiltration,
     /// A hook that runs a file it downloaded, with nothing checked first.
     UnverifiedDownload,
     /// A hook that runs a registry package at a tag that moves.
@@ -40,6 +42,7 @@ impl RuleId {
             Self::OpaqueHook => "opaque-hook",
             Self::DownloadAndExecute => "download-and-execute",
             Self::DecodeAndExecute => "decode-and-execute",
+            Self::CredentialExfiltration => "credential-exfiltration",
             Self::UnverifiedDownload => "unverified-download",
             Self::UnpinnedRemotePackage => "unpinned-remote-package",
         }
@@ -59,6 +62,9 @@ impl RuleId {
             Self::DecodeAndExecute => {
                 "Code decoded from base64, hex or a compressed blob and handed straight to an interpreter"
             }
+            Self::CredentialExfiltration => {
+                "A credential file, a token or the whole environment sent over the network"
+            }
             Self::UnverifiedDownload => {
                 "A downloaded file run with no checksum or signature checked first"
             }
@@ -72,9 +78,10 @@ impl RuleId {
     #[must_use]
     pub fn severity(self) -> Severity {
         match self {
-            Self::InvisibleUnicode | Self::DownloadAndExecute | Self::DecodeAndExecute => {
-                Severity::High
-            }
+            Self::InvisibleUnicode
+            | Self::DownloadAndExecute
+            | Self::DecodeAndExecute
+            | Self::CredentialExfiltration => Severity::High,
             Self::OpaqueHook | Self::UnverifiedDownload => Severity::Medium,
             Self::UnpinnedRemotePackage => Severity::Low,
         }
@@ -88,6 +95,7 @@ impl RuleId {
             "opaque-hook" => Self::OpaqueHook,
             "download-and-execute" => Self::DownloadAndExecute,
             "decode-and-execute" => Self::DecodeAndExecute,
+            "credential-exfiltration" => Self::CredentialExfiltration,
             "unverified-download" => Self::UnverifiedDownload,
             "unpinned-remote-package" => Self::UnpinnedRemotePackage,
             _ => return None,

