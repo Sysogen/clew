@@ -713,7 +713,11 @@ mod tests {
                 .unwrap_or_else(|| panic!("{path} matched no row"));
             assert_eq!(
                 m.check,
-                &[RuleId::InvisibleUnicode, RuleId::OpaqueHook],
+                &[
+                    RuleId::InvisibleUnicode,
+                    RuleId::OpaqueHook,
+                    RuleId::DownloadAndExecute
+                ],
                 "{path}"
             );
         }
@@ -1171,7 +1175,11 @@ mod tests {
     fn a_kind_is_read_for_what_its_row_names() {
         assert_eq!(
             shipped().checks_for(SurfaceKind::HookScript),
-            [RuleId::InvisibleUnicode, RuleId::OpaqueHook]
+            [
+                RuleId::InvisibleUnicode,
+                RuleId::OpaqueHook,
+                RuleId::DownloadAndExecute
+            ]
         );
         assert!(shipped().checks_for(SurfaceKind::EnvFile).is_empty());
     }
