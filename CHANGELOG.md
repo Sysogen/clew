@@ -5,6 +5,13 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- A hook written in exec form, with an `args` list, is reported with its
+  arguments. Only `command` was read, so a script named in `args`, or the
+  payload handed to `bash -c`, never reached the report. The arguments are
+  quoted into one line that splits back into them.
+
 ## [0.4.0] - 2026-09-14
 
 ### Added
