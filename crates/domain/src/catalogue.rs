@@ -348,6 +348,15 @@ impl Catalogue {
     pub fn rules(&self) -> &[SurfaceRule] {
         &self.rules
     }
+
+    /// The rules the first row of `kind` names, for a file no glob matched.
+    #[must_use]
+    pub fn checks_for(&self, kind: SurfaceKind) -> &[RuleId] {
+        self.kinds
+            .iter()
+            .position(|k| *k == kind)
+            .map_or(&[][..], |row| self.checks[row].as_slice())
+    }
 }
 
 /// Whether `value` is a calendar day written `YYYY-MM-DD`.
@@ -1156,5 +1165,14 @@ mod tests {
         )
         .expect_err("a row without a date or source must not load");
         assert!(matches!(error, CatalogueError::Invalid(_)), "{error:?}");
+    }
+
+    #[test]
+    fn a_kind_is_read_for_what_its_row_names() {
+        assert_eq!(
+            shipped().checks_for(SurfaceKind::HookScript),
+            [RuleId::InvisibleUnicode, RuleId::OpaqueHook]
+        );
+        assert!(shipped().checks_for(SurfaceKind::EnvFile).is_empty());
     }
 }
