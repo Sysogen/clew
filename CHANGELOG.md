@@ -5,19 +5,6 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-### Added
-
-- A script a hook runs is read as a hook script wherever it sits in the
-  repository. Only files under a `hooks` directory were read, so
-  `bash scripts/check.sh` or `"$CLAUDE_PROJECT_DIR"/tools/hook.py` ran code no
-  rule saw. What runs comes from the command's shell syntax, parsed with
-  tree-sitter and never executed: a path in command position, or the file
-  handed to an interpreter such as `bash`, `python3`, `node` or `uv run`, never
-  a file a command only reads or writes. A path that might leave the checkout,
-  absolute, under `~`, through another variable or `..`, is never followed,
-  and only a repository scan follows at all: anywhere else a relative path
-  belongs to whichever project the agent was started in.
-
 ### Fixed
 
 - A hook written in exec form, with an `args` list, is reported with its
