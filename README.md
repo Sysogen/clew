@@ -71,6 +71,7 @@ directories the catalogue names rather than walking a home directory.
 | `invisible-unicode` | high | A character that renders as nothing, such as a zero-width, bidirectional or tag character, in a file an agent reads as instructions or in a hook script |
 | `opaque-hook` | medium | A hook that cannot be reviewed as text: binary, larger than the file limit, or a symbolic link |
 | `download-and-execute` | high | A hook script, or a hook command in a settings file, that hands what it downloads straight to a shell or an interpreter, as `curl ... \| bash` does |
+| `unverified-download` | medium | A hook that downloads a file and later runs it, or unpacks it and runs what it held, with no checksum or signature checked in between |
 
 `invisible-unicode` is the Rules File Backdoor, disclosed by Pillar Security in
 March 2025: an instruction the model reads and a reviewer cannot see. In a hook
@@ -84,6 +85,11 @@ whose `grep` pattern names `curl | sh` is not one, a download that goes only to
 `tar` or `jq` is not one, and a README beside the hooks is never read as
 commands. The compromised tj-actions/changed-files action ran
 `curl ... | sudo python3` in March 2025.
+
+`unverified-download` follows a downloaded file, and the directory it was
+unpacked into, to a later run, through the variables that name them. A
+`sha256sum -c`, `gpg --verify` or `cosign verify-blob` in between silences it,
+and a tool run by name is the one on `PATH`, not the download.
 
 ### Output formats
 
