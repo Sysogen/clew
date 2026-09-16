@@ -18,6 +18,16 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and only a repository scan follows at all: anywhere else a relative path
   belongs to whichever project the agent was started in.
 
+- The `download-and-execute` rule, severity high. It flags a hook script, or a
+  hook command in a settings file, that hands what it downloads straight to a
+  shell or an interpreter: `curl ... | bash`, `wget -qO- ... | sh`,
+  `curl ... | sudo python3`, `bash <(curl ...)`, `eval "$(curl ...)"`, a
+  `bash -c` line doing the same, and PowerShell's `irm ... | iex`. It reads
+  shell syntax, never words, so a guard whose `grep` pattern names `curl | sh`
+  is silent, a download that goes only to `tar` or `jq` is silent, and a hook
+  file is read as commands only when its name or its `#!` line makes it a
+  shell script.
+
 ### Fixed
 
 - A hook written in exec form, with an `args` list, is reported with its
