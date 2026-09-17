@@ -76,6 +76,7 @@ directories the catalogue names rather than walking a home directory.
 | `unverified-download` | medium | A hook that downloads a file and later runs it, or unpacks it and runs what it held, with no checksum or signature checked in between |
 | `unpinned-remote-package` | low | A hook that runs a registry package at a tag that moves, such as `npx tool@latest`, so whatever was published last runs |
 | `bypass-permissions` | high | A configuration file that starts an agent with nothing asking first and nothing bounding what happens: Claude Code's `permissions.defaultMode` set to `bypassPermissions`, Codex's `sandbox_mode` set to `danger-full-access`, VS Code's `chat.tools.global.autoApprove` set to `true`, or Zed's `agent.tool_permissions.default` set to `allow` |
+| `unrestricted-shell` | medium | A settings file or skill that pre-approves the shell with nothing restricting it: `Bash`, `Bash()` or `Bash(*)` in `permissions.allow` or `allowed-tools` |
 
 `invisible-unicode` is the Rules File Backdoor, disclosed by Pillar Security in
 March 2025: an instruction the model reads and a reviewer cannot see. In a hook
@@ -123,6 +124,14 @@ there the prompt was the only control. Two limits are worth knowing: Claude Code
 stopped honouring `bypassPermissions` from project and local settings in
 v2.1.257, so a repository setting it reaches only an older client, and Zed's
 built-in security rules still prompt for a few actions.
+
+`unrestricted-shell` flags the grant the other permission entries exist to avoid
+needing: every command the agent picks runs without being shown to anyone. Only
+the shell is flagged. A bare `WebSearch` or `mcp__server__tool` is unscoped too,
+but neither takes an argument restriction, so a bare entry is the only way to
+write that grant and flagging it would say nothing. `Bash(cargo test:*)` and
+every other scoped entry are silent, as are the `deny` and `ask` lists, which
+clew does not read as grants.
 
 ### Output formats
 
