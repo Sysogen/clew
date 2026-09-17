@@ -474,6 +474,7 @@ mod tests {
             (".cursor/mcp.json", SurfaceKind::Cursor),
             (".cursor/rules/react.mdc", SurfaceKind::Cursor),
             (".cursorrules", SurfaceKind::Cursor),
+            (".vscode/settings.json", SurfaceKind::VsCode),
             (".vscode/mcp.json", SurfaceKind::VsCode),
             (".vscode/tasks.json", SurfaceKind::VsCode),
             (".github/copilot-instructions.md", SurfaceKind::Copilot),
@@ -514,7 +515,11 @@ mod tests {
             (".mcp.json", servers),
             (".gemini/settings.json", servers),
             (".kiro/settings/mcp.json", servers),
-            (".zed/settings.json", servers),
+            (
+                ".zed/settings.json",
+                &[Extraction::McpServers, Extraction::Autonomy][..],
+            ),
+            (".vscode/settings.json", &[Extraction::Autonomy][..]),
             (".kiro/hooks/lint-on-save.json", &[Extraction::Hooks][..]),
             (".cursor/mcp.json", servers),
             ("cline_mcp_settings.json", servers),
@@ -526,6 +531,7 @@ mod tests {
         let formats = [
             (".codex/config.toml", Format::Toml),
             (".zed/settings.json", Format::Jsonc),
+            (".vscode/settings.json", Format::Jsonc),
             (".claude/skills/a/SKILL.md", Format::Markdown),
         ];
 
@@ -668,9 +674,8 @@ mod tests {
         );
     }
 
-    /// A rule reads prose, hook scripts, and the mode a settings file starts an
-    /// agent in. Nothing else in a settings file is checked, whichever tool
-    /// owns it.
+    /// A rule reads prose, hook scripts, and the mode a file starts an agent
+    /// in. Nothing else in a configuration file is checked.
     #[test]
     fn a_rule_reads_prose_hook_scripts_and_the_mode_settings_set() {
         let prose = [
@@ -701,6 +706,8 @@ mod tests {
             (Scope::Repository, ".claude/settings.json"),
             (Scope::Repository, ".claude/settings.local.json"),
             (Scope::Repository, ".codex/config.toml"),
+            (Scope::Repository, ".vscode/settings.json"),
+            (Scope::Repository, ".zed/settings.json"),
             (Scope::Home, ".claude/settings.json"),
         ];
         assert_eq!(
@@ -748,7 +755,6 @@ mod tests {
             (Scope::Repository, ".kiro/settings/mcp.json"),
             (Scope::Repository, ".kiro/hooks/lint-on-save.json"),
             (Scope::Repository, ".cursor/mcp.json"),
-            (Scope::Repository, ".zed/settings.json"),
             (Scope::Repository, ".env"),
             (Scope::Home, ".kiro/settings/mcp.json"),
             (Scope::Home, ".codeium/windsurf/mcp_config.json"),

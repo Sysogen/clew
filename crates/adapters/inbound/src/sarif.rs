@@ -249,8 +249,8 @@ fn notification(path: &RepoPath, text: String) -> Notification {
     }
 }
 
-/// What a rule means, and what to do about it. Kept apart from [`rule`] so the
-/// prose can grow with the rule pack without the shape growing with it.
+/// What a rule means, and what to do about it. Apart from [`rule`] so the
+/// prose can grow without the shape growing with it.
 fn explained(id: RuleId) -> (&'static str, &'static str) {
     match id {
         RuleId::InvisibleUnicode => (
@@ -333,20 +333,22 @@ fn explained(id: RuleId) -> (&'static str, &'static str) {
              integrity.",
         ),
         RuleId::BypassPermissions => (
-            "A configuration file starts an agent in a mode that neither asks before it \
-             acts nor keeps a sandbox around what it does: Claude Code's \
-             permissions.defaultMode set to bypassPermissions, or Codex's sandbox_mode \
-             set to danger-full-access. Every prompt and every boundary a later setting \
-             relies on is gone, so any instruction the agent reads, including one \
-             smuggled into a file it is given, runs unattended. Claude Code stopped \
-             honouring bypassPermissions from project and local settings in v2.1.257: a \
-             project file setting it reaches only an older client, though the file asks \
-             for it either way.",
+            "A configuration file starts an agent with nothing asking before it acts and \
+             nothing bounding what it does: Claude Code's permissions.defaultMode set to \
+             bypassPermissions, Codex's sandbox_mode set to danger-full-access, VS \
+             Code's chat.tools.global.autoApprove set to true, or Zed's \
+             agent.tool_permissions.default set to allow. Any instruction the agent \
+             reads, including one smuggled into a file it is given, then runs \
+             unattended. Two limits belong on the finding: Claude Code stopped \
+             honouring bypassPermissions from project and local settings in v2.1.257, so \
+             a repository setting it reaches only an older client, and Zed's built-in \
+             security rules still prompt for a few actions.",
             "Remove the mode and let the agent ask, or narrow what may happen without \
-             asking through permissions.allow, which is read per operation rather than \
-             wholesale. Where a machine genuinely runs unattended, set the mode in that \
-             machine's user or managed settings rather than in a file the repository \
-             ships, so it goes no further than the machine that meant it.",
+             asking: permissions.allow in Claude Code, chat.tools.terminal.autoApprove \
+             in VS Code and a per-tool always_allow in Zed each pre-approve named \
+             operations rather than every one. Where a machine genuinely runs \
+             unattended, setting the mode in that machine's own user settings rather \
+             than in a file the repository ships keeps it to the machine that meant it.",
         ),
     }
 }
@@ -540,8 +542,7 @@ mod tests {
         );
     }
 
-    /// The rule reaches code scanning as a ranked alert carrying what a reader
-    /// needs to act on it, remediation included.
+    /// The rule reaches code scanning as a ranked alert with its remediation.
     #[test]
     fn a_mode_finding_is_an_error_with_its_remediation() {
         let report = DiscoveryReport {

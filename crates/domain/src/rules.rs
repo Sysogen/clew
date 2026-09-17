@@ -39,9 +39,8 @@ pub fn run(path: &RepoPath, checks: &[RuleId], text: &str, width: usize) -> Vec<
     for check in checks {
         match check {
             RuleId::InvisibleUnicode => found.extend(invisible_unicode(path, text, width)),
-            // Neither reads text here: a file that can be read as text is not
-            // an opaque hook, and a mode is read from the parsed value by
-            // `autonomy`.
+            // Neither reads the text: an opaque hook has none to read, and a
+            // mode is read from the parsed value by `autonomy`.
             RuleId::OpaqueHook | RuleId::BypassPermissions => {}
             RuleId::DownloadAndExecute
             | RuleId::DecodeAndExecute
@@ -113,11 +112,6 @@ pub fn hook_command(
 }
 
 /// What the named rules say about the mode a file starts an agent in.
-///
-/// Placed at the value, which both JSON and TOML quote, so a settings file and
-/// a Codex configuration are located the same way. A value the text does not
-/// hold verbatim, because the format escaped it, yields a finding about the
-/// file rather than a wrong line.
 #[must_use]
 pub fn autonomy(
     path: &RepoPath,
@@ -129,18 +123,77 @@ pub fn autonomy(
     if !checks.contains(&RuleId::BypassPermissions) || !mode.is_unchecked() {
         return None;
     }
+    Some(
+        after_key(source, &mode.key, &mode.value, 0)
+            .and_then(|at| found_at(path, RuleId::BypassPermissions, source, at, width))
+            .unwrap_or_else(|| about_file(path, RuleId::BypassPermissions, &mode.value, width)),
+    )
+}
 
-    let quoted = format!("\"{}\"", mode.value);
-    let placed = source
-        .find(&quoted)
-        .and_then(|at| found_at(path, RuleId::BypassPermissions, source, at + 1, width));
-    Some(placed.unwrap_or_else(|| Finding {
+/// Where `source` writes the `occurrence`th `value` belonging to `key`.
+///
+/// Anchored to the key: the same word often appears elsewhere in a file, and a
+/// finding there would name a line nothing is wrong with. `None` when either
+/// is written in a form the text does not hold, which leaves the finding about
+/// the file rather than at a wrong place.
+fn after_key(source: &str, key: &str, value: &str, occurrence: usize) -> Option<usize> {
+    // A file writes the whole key, as VS Code does, or only its last segment,
+    // as one nesting `defaultMode` under `permissions` does.
+    let leaf = key.rsplit('.').next().unwrap_or(key);
+    let from = key_end(source, key).or_else(|| key_end(source, leaf))?;
+    let rest = source.get(from..)?;
+    let quoted = format!("\"{value}\"");
+    let at = match rest.match_indices(&quoted).nth(occurrence) {
+        // Past the opening quote, so the finding points at the value.
+        Some((at, _)) => at + 1,
+        // Frontmatter writes a list unquoted.
+        None => whole_word(rest, value).nth(occurrence)?,
+    };
+    Some(from + at)
+}
+
+/// Just past `key` where `source` writes it as a key: quoted, as JSON does, or
+/// bare before its separator, as TOML and YAML do.
+fn key_end(source: &str, key: &str) -> Option<usize> {
+    let quoted = format!("\"{key}\"");
+    if let Some(at) = source.find(&quoted) {
+        return Some(at + quoted.len());
+    }
+    source
+        .match_indices(key)
+        .find(|(at, _)| {
+            let before_is_word = source[..*at]
+                .chars()
+                .next_back()
+                .is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '-');
+            let after = source[at + key.len()..].trim_start();
+            !before_is_word && (after.starts_with('=') || after.starts_with(':'))
+        })
+        .map(|(at, _)| at + key.len())
+}
+
+/// Where `text` holds `word` whole: no identifier character runs into it, and
+/// nothing opens a longer form after it.
+fn whole_word<'a>(text: &'a str, word: &'a str) -> impl Iterator<Item = usize> + 'a {
+    text.match_indices(word)
+        .filter(|(at, _)| {
+            let before = text[..*at].chars().next_back();
+            let after = text[at + word.len()..].chars().next();
+            !before.is_some_and(|c| c.is_alphanumeric() || c == '_')
+                && !after.is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '(')
+        })
+        .map(|(at, _)| at)
+}
+
+/// A finding about a whole file, for when its place cannot be told.
+fn about_file(path: &RepoPath, rule: RuleId, said: &str, width: usize) -> Finding {
+    Finding {
         path: path.clone(),
         at: None,
-        rule: RuleId::BypassPermissions,
-        severity: RuleId::BypassPermissions.severity(),
-        evidence: Evidence::quote(&Line::new(&mode.value), 0, width),
-    }))
+        rule,
+        severity: rule.severity(),
+        evidence: Evidence::quote(&Line::new(said), 0, width),
+    }
 }
 
 /// Whether `text` is a shell script, by its extension or its `#!` line.
@@ -275,8 +328,7 @@ mod tests {
         assert!(found.evidence.as_str().contains("bypassPermissions"));
     }
 
-    /// Both formats quote the value, so a Codex configuration is placed the
-    /// same way a settings file is.
+    /// Both formats quote the value, so both place the same way.
     #[test]
     fn a_codex_configuration_is_placed_at_its_value() {
         let source = "model = \"o3\"\nsandbox_mode = \"danger-full-access\"\n";
@@ -307,8 +359,7 @@ mod tests {
         }
     }
 
-    /// The row decides which rules read a file. Without this one named, the
-    /// mode is inventory and nothing more.
+    /// The row decides which rules read a file.
     #[test]
     fn a_row_that_does_not_name_the_rule_is_silent() {
         let source = r#"{"permissions":{"defaultMode":"bypassPermissions"}}"#;
@@ -325,8 +376,7 @@ mod tests {
         );
     }
 
-    /// A value the text does not hold verbatim is still worth saying, about
-    /// the file rather than at a line that would be wrong.
+    /// A value the text does not hold is still worth saying, about the file.
     #[test]
     fn a_value_the_text_escaped_is_reported_about_the_file() {
         let source = r#"{"permissions":{"defaultMode":"bypass\u0050ermissions"}}"#;
@@ -344,8 +394,7 @@ mod tests {
 
     #[test]
     fn evidence_beside_a_secret_is_masked() {
-        // Beside the mode, so the window certainly reaches it: a test whose
-        // secret falls outside the quoted window proves nothing.
+        // Beside the mode: a secret outside the window proves nothing.
         let source = concat!(
             "{\"permissions\":{\"defaultMode\":\"bypassPermissions\"},",
             "\"env\":{\"API_KEY\":\"sk-live-SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS\"}}"
@@ -366,24 +415,57 @@ mod tests {
         assert!(!said.contains("sk-live-S"), "{said}");
     }
 
+    /// The character sits beside an exact value, so the rule fires and the
+    /// evidence has to escape it.
     #[test]
-    fn a_hidden_character_in_the_value_is_escaped() {
-        let value = "bypassPermissions\u{200B}";
-        let source = format!("{{\"permissions\":{{\"defaultMode\":\"{value}\"}}}}");
+    fn a_hidden_character_beside_the_mode_is_escaped() {
+        let source =
+            "{\"permissions\":{\"defaultMode\":\"bypassPermissions\",\"note\":\"ok\u{200B}\"}}";
 
         let found = mode_found_in(
             ".claude/settings.json",
-            &mode("permissions.defaultMode", value),
-            &source,
-        );
+            &mode("permissions.defaultMode", "bypassPermissions"),
+            source,
+        )
+        .expect("a finding");
 
-        // The value is not the one that fires, so the rule says nothing about
-        // it; `invisible-unicode` is what reads the character.
-        assert!(found.is_none());
+        let said = found.evidence.as_str();
+        assert!(!said.contains('\u{200B}'), "the character escaped: {said}");
+        assert!(said.contains("<U+200B>"), "{said}");
     }
 
-    /// A minified settings file is one long line, and a report is not the
-    /// place to reproduce it.
+    /// A value repeated elsewhere is not this setting. Unanchored, the finding
+    /// lands on the first copy.
+    #[test]
+    fn a_value_repeated_elsewhere_does_not_move_the_finding() {
+        let source = "{\n  \"note\": \"bypassPermissions\",\n  \"permissions\": {\n    \"defaultMode\": \"bypassPermissions\"\n  }\n}\n";
+
+        let found = mode_found_in(
+            ".claude/settings.json",
+            &mode("permissions.defaultMode", "bypassPermissions"),
+            source,
+        )
+        .expect("a finding");
+
+        assert_eq!(found.at.map(|p| p.line), Some(4), "{found:?}");
+    }
+
+    /// The same where the key is not quoted.
+    #[test]
+    fn a_toml_value_repeated_elsewhere_does_not_move_the_finding() {
+        let source = "note = \"danger-full-access\"\nsandbox_mode = \"danger-full-access\"\n";
+
+        let found = mode_found_in(
+            ".codex/config.toml",
+            &mode("sandbox_mode", "danger-full-access"),
+            source,
+        )
+        .expect("a finding");
+
+        assert_eq!(found.at.map(|p| p.line), Some(2), "{found:?}");
+    }
+
+    /// A minified file is one long line; a report does not reproduce it.
     #[test]
     fn evidence_from_a_minified_file_is_bounded() {
         let filler = "\"x\":\"".to_owned() + &"y".repeat(400) + "\",";

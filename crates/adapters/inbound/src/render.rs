@@ -57,8 +57,8 @@ fn declared(out: &mut String, report: &DiscoveryReport, surface: &Surface) {
     for declared in report.autonomy.iter().filter(|d| d.source == surface.path) {
         let _ = writeln!(
             out,
-            "  starts in {} ({})",
-            declared.autonomy.value, declared.autonomy.key
+            "  sets {} to {}",
+            declared.autonomy.key, declared.autonomy.value
         );
     }
 
@@ -288,7 +288,7 @@ mod tests {
         let said = report(&found, ".");
 
         assert!(
-            said.contains("starts in bypassPermissions (permissions.defaultMode)"),
+            said.contains("sets permissions.defaultMode to bypassPermissions"),
             "{said}"
         );
     }

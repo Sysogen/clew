@@ -371,34 +371,61 @@ fn permissions(root: &serde_json::Value, format: Format) -> Vec<Permission> {
     found
 }
 
-/// The mode a file starts an agent in.
+/// The format a mode is written in, the key its documentation names, and the
+/// path a file writes it at.
 ///
-/// Each tool spells this its own way and honours only its own spelling, so the
-/// format decides which key is read. A blank value selects no mode, so it is a
-/// defect rather than a declaration and is not reported as one.
+/// Each is read from any file of its format, not only its own tool's rows,
+/// because these names do not collide: `sandbox_mode` is the only bare one and
+/// TOML is Codex's alone. A generic name such as `allow` would, which is why
+/// grants are not read this way.
+const MODES: &[(Format, &str, &[&str])] = &[
+    (
+        Format::Json,
+        "permissions.defaultMode",
+        &["permissions", "defaultMode"],
+    ),
+    (Format::Toml, "sandbox_mode", &["sandbox_mode"]),
+    (
+        Format::Json,
+        "chat.tools.global.autoApprove",
+        &["chat.tools.global.autoApprove"],
+    ),
+    (
+        Format::Json,
+        "agent.tool_permissions.default",
+        &["agent", "tool_permissions", "default"],
+    ),
+];
+
+/// The modes a file starts an agent in. A blank value selects none, so it is
+/// a defect rather than a declaration.
 fn autonomy(root: &serde_json::Value, format: Format) -> Vec<Autonomy> {
-    let declared = match format {
-        Format::Json | Format::Jsonc => root
-            .get("permissions")
-            .and_then(|p| p.get("defaultMode"))
-            .and_then(serde_json::Value::as_str)
-            .map(|value| ("permissions.defaultMode", value)),
-        Format::Toml => root
-            .get("sandbox_mode")
-            .and_then(serde_json::Value::as_str)
-            .map(|value| ("sandbox_mode", value)),
-        // Frontmatter says what one skill may use, never how a session starts.
-        Format::Markdown => None,
+    // JSON with comments is JSON to the tools that read a mode from it.
+    let written = if format == Format::Jsonc {
+        Format::Json
+    } else {
+        format
     };
 
-    declared
-        .filter(|(_, value)| !value.trim().is_empty())
-        .map(|(key, value)| Autonomy {
-            key: key.to_owned(),
-            value: value.to_owned(),
+    let mut found: Vec<Autonomy> = MODES
+        .iter()
+        .filter(|(at, _, _)| *at == written)
+        .filter_map(|(_, key, path)| {
+            let at = path.iter().try_fold(root, |value, step| value.get(step))?;
+            let value = match at {
+                serde_json::Value::String(text) => text.clone(),
+                // VS Code writes its switch as a boolean.
+                serde_json::Value::Bool(yes) => yes.to_string(),
+                _ => return None,
+            };
+            (!value.trim().is_empty()).then(|| Autonomy {
+                key: (*key).to_owned(),
+                value,
+            })
         })
-        .into_iter()
-        .collect()
+        .collect();
+    found.sort();
+    found
 }
 
 /// The entries of a grant list. Settings document a list here, so anything
@@ -929,7 +956,7 @@ env = { DATABASE_URL = "postgres://u:hunter2@h/d", PGPORT = "5432" }
         assert_eq!(found[0].value, "bypassPermissions");
     }
 
-    /// Read as written, judged later: a mode that asks is still a declaration.
+    /// Read as written, judged later.
     #[test]
     fn a_mode_that_asks_is_read_too() {
         let found = modes_of(Format::Json, r#"{"permissions":{"defaultMode":"plan"}}"#);
@@ -948,8 +975,7 @@ env = { DATABASE_URL = "postgres://u:hunter2@h/d", PGPORT = "5432" }
         assert_eq!(found[0].value, "danger-full-access");
     }
 
-    /// The key sits at the root of a Claude settings file too, and reading it
-    /// there would report a mode Claude Code does not honour.
+    /// At the root it is a different key, and not one Claude Code honours.
     #[test]
     fn a_mode_outside_the_permissions_block_is_not_read() {
         assert!(modes_of(Format::Json, r#"{"defaultMode":"bypassPermissions"}"#).is_empty());
@@ -962,7 +988,7 @@ env = { DATABASE_URL = "postgres://u:hunter2@h/d", PGPORT = "5432" }
         );
     }
 
-    /// One tool's key in another tool's file is not that tool's setting.
+    /// One tool's key in another tool's format is not that tool's setting.
     #[test]
     fn a_key_belonging_to_another_tool_is_not_read() {
         assert!(modes_of(Format::Json, r#"{"sandbox_mode":"danger-full-access"}"#).is_empty());
@@ -976,6 +1002,61 @@ env = { DATABASE_URL = "postgres://u:hunter2@h/d", PGPORT = "5432" }
     }
 
     #[test]
+    fn a_vs_code_switch_approving_every_tool_is_read() {
+        let found = modes_of(
+            Format::Jsonc,
+            r#"{"chat.tools.global.autoApprove": true, "editor.fontSize": 13}"#,
+        );
+
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].key, "chat.tools.global.autoApprove");
+        assert_eq!(found[0].value, "true");
+        assert!(found[0].is_unchecked());
+    }
+
+    #[test]
+    fn a_vs_code_switch_left_off_is_read_and_not_unchecked() {
+        let found = modes_of(Format::Jsonc, r#"{"chat.tools.global.autoApprove": false}"#);
+
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].value, "false");
+        assert!(!found[0].is_unchecked());
+    }
+
+    #[test]
+    fn a_zed_default_allowing_every_tool_is_read() {
+        let found = modes_of(
+            Format::Jsonc,
+            r#"{"agent":{"tool_permissions":{"default":"allow"}}}"#,
+        );
+
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].key, "agent.tool_permissions.default");
+        assert!(found[0].is_unchecked());
+    }
+
+    #[test]
+    fn a_zed_default_that_confirms_or_denies_is_not_unchecked() {
+        for value in ["confirm", "deny"] {
+            let json = format!(r#"{{"agent":{{"tool_permissions":{{"default":"{value}"}}}}}}"#);
+            let found = modes_of(Format::Jsonc, &json);
+            assert_eq!(found.len(), 1, "{value}");
+            assert!(!found[0].is_unchecked(), "{value}");
+        }
+    }
+
+    /// Each of several is its own declaration.
+    #[test]
+    fn two_modes_in_one_file_are_both_read() {
+        let found = modes_of(
+            Format::Jsonc,
+            r#"{"chat.tools.global.autoApprove":true,"agent":{"tool_permissions":{"default":"allow"}}}"#,
+        );
+
+        assert_eq!(found.len(), 2, "{found:?}");
+    }
+
+    #[test]
     fn a_file_declaring_no_mode_yields_none() {
         assert!(modes_of(Format::Json, "{}").is_empty());
         assert!(modes_of(Format::Json, r#"{"permissions":{}}"#).is_empty());
@@ -983,7 +1064,7 @@ env = { DATABASE_URL = "postgres://u:hunter2@h/d", PGPORT = "5432" }
         assert!(modes_of(Format::Toml, "model = \"o3\"\n").is_empty());
     }
 
-    /// A mode selecting nothing is a defect, not a declaration.
+    /// A mode selecting nothing is a defect.
     #[test]
     fn a_blank_mode_is_not_a_declaration() {
         assert!(modes_of(Format::Json, r#"{"permissions":{"defaultMode":""}}"#).is_empty());
@@ -1004,7 +1085,7 @@ env = { DATABASE_URL = "postgres://u:hunter2@h/d", PGPORT = "5432" }
         assert!(modes_of(Format::Toml, "sandbox_mode = 3\n").is_empty());
     }
 
-    /// Frontmatter declares what one skill may use, and has no mode to read.
+    /// Frontmatter has no mode to read.
     #[test]
     fn frontmatter_declares_no_mode() {
         assert!(

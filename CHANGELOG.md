@@ -7,15 +7,21 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- The `bypass-permissions` rule, severity high. It flags a settings file that
-  starts an agent with neither a permission prompt nor a sandbox: Claude Code's
-  `permissions.defaultMode` set to `bypassPermissions`, or Codex's
-  `sandbox_mode` set to `danger-full-access`. Every later control assumes one of
-  the two is there. Only those two values fire: Codex `approval_policy = "never"`
-  does not, because Codex still sandboxes, to `read-only` by default. Claude Code
-  stopped honouring `bypassPermissions` from project and local settings in
-  v2.1.257, so a repository setting it reaches only an older client, and clew
-  reports it wherever it is written because the file asks for it either way.
+- The `bypass-permissions` rule, severity high. It flags a configuration file
+  that starts an agent with nothing asking first and nothing bounding what
+  happens: Claude Code's `permissions.defaultMode` set to `bypassPermissions`,
+  Codex's `sandbox_mode` set to `danger-full-access`, VS Code's
+  `chat.tools.global.autoApprove` set to `true`, or Zed's
+  `agent.tool_permissions.default` set to `allow`. Only those four fire. Codex
+  `approval_policy = "never"` does not, because Codex still sandboxes, to
+  `read-only` by default; the other three sandbox nothing, so there the prompt
+  was the only control. Claude Code stopped honouring `bypassPermissions` from
+  project and local settings in v2.1.257, so a repository setting it reaches only
+  an older client, and Zed's built-in security rules still prompt for a few
+  actions.
+
+- `.vscode/settings.json` is read, for the switch that auto-approves every tool.
+  It was not in the catalogue at all, so nothing in a VS Code workspace was.
 
 - The mode a settings file starts an agent in is reported beside the hooks,
   permissions and servers it declares, whether or not a rule objects to it. It

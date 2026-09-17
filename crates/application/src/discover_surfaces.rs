@@ -1280,6 +1280,35 @@ mod tests {
         assert_eq!(report.findings[0].path.as_str(), ".codex/config.toml");
     }
 
+    #[test]
+    fn a_vs_code_workspace_approving_every_tool_is_a_finding() {
+        let tree = tree_of(&[(".vscode/settings.json", EntryKind::File)]);
+        let contents = FakeContents::default().file(
+            ".vscode/settings.json",
+            "{\n  // Trust me\n  \"chat.tools.global.autoApprove\": true\n}\n",
+        );
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &ScanPolicy::default()).run();
+
+        assert_eq!(report.findings.len(), 1, "{report:?}");
+        assert_eq!(report.findings[0].rule, RuleId::BypassPermissions);
+        assert_eq!(report.findings[0].at.map(|p| p.line), Some(3));
+    }
+
+    #[test]
+    fn a_zed_workspace_allowing_every_tool_is_a_finding() {
+        let tree = tree_of(&[(".zed/settings.json", EntryKind::File)]);
+        let contents = FakeContents::default().file(
+            ".zed/settings.json",
+            r#"{"agent":{"tool_permissions":{"default":"allow"}}}"#,
+        );
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &ScanPolicy::default()).run();
+
+        assert_eq!(report.findings.len(), 1, "{report:?}");
+        assert_eq!(report.findings[0].rule, RuleId::BypassPermissions);
+    }
+
     /// Inventory says what the file sets whether or not a rule objects.
     #[test]
     fn a_mode_is_reported_even_when_it_is_not_a_finding() {

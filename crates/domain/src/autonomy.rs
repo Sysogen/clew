@@ -5,8 +5,8 @@
 
 /// A mode a configuration file starts an agent in, as the file writes it.
 ///
-/// The value is recorded as found, not judged. A file naming a mode no tool
-/// recognises is reported as it stands, and no rule fires on it.
+/// Recorded as found, not judged: a mode no tool recognises is reported as it
+/// stands and fires no rule.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Autonomy {
     /// The setting, as its documentation names it, such as
@@ -17,18 +17,20 @@ pub struct Autonomy {
 }
 
 impl Autonomy {
-    /// Whether the mode leaves an agent acting with neither a prompt nor a
-    /// sandbox around it.
+    /// Whether the mode leaves nothing asking first and nothing bounding what
+    /// happens.
     ///
-    /// Only the values that remove both are named. Codex `approval_policy` is
-    /// absent on purpose: it stops the asking but leaves the sandbox, which
-    /// defaults to `read-only`, so the agent is still bounded.
+    /// Codex `approval_policy` is absent on purpose: it stops the asking but
+    /// leaves the sandbox, which defaults to `read-only`. The other three
+    /// sandbox nothing, so the prompt was the only control they had.
     #[must_use]
     pub fn is_unchecked(&self) -> bool {
         matches!(
             (self.key.as_str(), self.value.as_str()),
             ("permissions.defaultMode", "bypassPermissions")
                 | ("sandbox_mode", "danger-full-access")
+                | ("chat.tools.global.autoApprove", "true")
+                | ("agent.tool_permissions.default", "allow")
         )
     }
 }
@@ -54,8 +56,7 @@ mod tests {
         assert!(mode("sandbox_mode", "danger-full-access").is_unchecked());
     }
 
-    /// The accepted set is four values, so it is enumerated rather than
-    /// sampled: exactly one of them is unchecked.
+    /// Four accepted values, enumerated rather than sampled.
     #[test]
     fn every_other_permission_mode_is_silent() {
         for value in ["ask", "plan", "autoMode"] {
@@ -66,7 +67,7 @@ mod tests {
         }
     }
 
-    /// As above, over the three modes Codex accepts.
+    /// As above, over the three Codex accepts.
     #[test]
     fn every_other_sandbox_mode_is_silent() {
         for value in ["read-only", "workspace-write"] {
@@ -77,8 +78,7 @@ mod tests {
         }
     }
 
-    /// The value decides, and so does the key it sits under: one tool's
-    /// dangerous value under another tool's key is neither tool's setting.
+    /// One tool's value under another tool's key is neither tool's setting.
     #[test]
     fn a_value_under_the_wrong_key_is_silent() {
         assert!(!mode("sandbox_mode", "bypassPermissions").is_unchecked());
@@ -91,8 +91,7 @@ mod tests {
         assert!(!mode("", "").is_unchecked());
     }
 
-    /// Stopping the asking is not the same as removing the sandbox, and Codex
-    /// sandboxes read-only by default.
+    /// Stopping the asking is not removing the sandbox.
     #[test]
     fn an_approval_policy_is_not_this_rule() {
         assert!(!mode("approval_policy", "never").is_unchecked());
