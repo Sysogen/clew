@@ -332,25 +332,49 @@ fn explained(id: RuleId) -> (&'static str, &'static str) {
              project's dependencies so the lockfile decides the version and checks its \
              integrity.",
         ),
-        RuleId::BypassPermissions => (
-            "A configuration file starts an agent with nothing asking before it acts and \
-             nothing bounding what it does: Claude Code's permissions.defaultMode set to \
-             bypassPermissions, Codex's sandbox_mode set to danger-full-access, VS \
-             Code's chat.tools.global.autoApprove set to true, or Zed's \
-             agent.tool_permissions.default set to allow. Any instruction the agent \
-             reads, including one smuggled into a file it is given, then runs \
-             unattended. Two limits belong on the finding: Claude Code stopped \
-             honouring bypassPermissions from project and local settings in v2.1.257, so \
-             a repository setting it reaches only an older client, and Zed's built-in \
-             security rules still prompt for a few actions.",
-            "Remove the mode and let the agent ask, or narrow what may happen without \
-             asking: permissions.allow in Claude Code, chat.tools.terminal.autoApprove \
-             in VS Code and a per-tool always_allow in Zed each pre-approve named \
-             operations rather than every one. Where a machine genuinely runs \
-             unattended, setting the mode in that machine's own user settings rather \
-             than in a file the repository ships keeps it to the machine that meant it.",
-        ),
+        RuleId::BypassPermissions => bypass_permissions(),
+        RuleId::UnrestrictedShell => unrestricted_shell(),
     }
+}
+
+/// What `bypass-permissions` means, and what to do about it.
+fn bypass_permissions() -> (&'static str, &'static str) {
+    (
+        "A configuration file starts an agent with nothing asking before it acts and \
+         nothing bounding what it does: Claude Code's permissions.defaultMode set to \
+         bypassPermissions, Codex's sandbox_mode set to danger-full-access, VS \
+         Code's chat.tools.global.autoApprove set to true, or Zed's \
+         agent.tool_permissions.default set to allow. Any instruction the agent \
+         reads, including one smuggled into a file it is given, then runs \
+         unattended. Two limits belong on the finding: Claude Code stopped \
+         honouring bypassPermissions from project and local settings in v2.1.257, so \
+         a repository setting it reaches only an older client, and Zed's built-in \
+         security rules still prompt for a few actions.",
+        "Remove the mode and let the agent ask, or narrow what may happen without \
+         asking: permissions.allow in Claude Code, chat.tools.terminal.autoApprove \
+         in VS Code and a per-tool always_allow in Zed each pre-approve named \
+         operations rather than every one. Where a machine genuinely runs \
+         unattended, setting the mode in that machine's own user settings rather \
+         than in a file the repository ships keeps it to the machine that meant it.",
+    )
+}
+
+/// What `unrestricted-shell` means, and what to do about it.
+fn unrestricted_shell() -> (&'static str, &'static str) {
+    (
+        "A configuration file pre-approves the shell with nothing restricting what \
+         it runs: Claude Code's Bash, Bash() or Bash(*), or Gemini CLI's \
+         run_shell_command, in permissions.allow, tools.allowed, or a skill's \
+         allowed-tools. Every command the agent chooses then runs without being \
+         shown to anyone, which is the grant the other entries in those lists \
+         exist to avoid needing. A tool that takes no argument restriction, such \
+         as WebSearch or an MCP tool, is not flagged: a bare entry is the only way \
+         to write that grant.",
+        "Replace the entry with the commands the project actually runs, scoped, as \
+         Bash(cargo test:*) and run_shell_command(git) are. Where a broad grant is \
+         genuinely wanted, keeping it in a personal settings.local.json rather than \
+         the file the repository ships limits it to the person who chose it.",
+    )
 }
 
 /// What code scanning shows about a rule: the domain's one line, then what it
@@ -573,6 +597,40 @@ mod tests {
                 .as_str()
                 .expect("help")
                 .contains("permissions.allow"),
+            "{rule}"
+        );
+    }
+
+    #[test]
+    fn a_grant_finding_is_a_warning_with_its_remediation() {
+        let report = DiscoveryReport {
+            findings: vec![finding(
+                ".claude/settings.json",
+                Some((3, 16)),
+                RuleId::UnrestrictedShell,
+                Severity::Medium,
+            )],
+            ..DiscoveryReport::default()
+        };
+
+        let log = written(&report);
+
+        assert!(violations(&log).is_empty(), "{:?}", violations(&log));
+        assert_eq!(log["runs"][0]["results"][0]["level"], "warning");
+        let rule = &log["runs"][0]["tool"]["driver"]["rules"][0];
+        assert_eq!(rule["id"], "unrestricted-shell");
+        assert!(
+            rule["fullDescription"]["text"]
+                .as_str()
+                .expect("a description")
+                .contains("WebSearch"),
+            "it says what it does not flag: {rule}"
+        );
+        assert!(
+            rule["help"]["text"]
+                .as_str()
+                .expect("help")
+                .contains("Bash(cargo test:*)"),
             "{rule}"
         );
     }

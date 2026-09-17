@@ -165,7 +165,21 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
                     hook,
                 });
             }
+            // Counted like hook commands: a file may grant one operation
+            // twice, and each copy is placed at its own entry.
+            let mut grants: Vec<String> = Vec::new();
             for permission in found.permissions {
+                let entry = permission.written();
+                let occurrence = grants.iter().filter(|g| **g == entry).count();
+                grants.push(entry);
+                report.findings.extend(rules::granted(
+                    &path,
+                    matched.check,
+                    &permission,
+                    &text,
+                    occurrence,
+                    self.policy.evidence_width(),
+                ));
                 report.permissions.push(GrantedPermission {
                     source: path.clone(),
                     permission,
@@ -1246,6 +1260,91 @@ mod tests {
             inner: contents,
             reads: std::cell::RefCell::default(),
         }
+    }
+
+    #[test]
+    fn a_settings_file_granting_the_whole_shell_is_a_finding() {
+        let tree = tree_of(&[(".claude/settings.json", EntryKind::File)]);
+        let contents = FakeContents::default().file(
+            ".claude/settings.json",
+            "{\n  \"permissions\": {\n    \"allow\": [\"Bash(cargo test:*)\", \"Bash(*)\"]\n  }\n}\n",
+        );
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &ScanPolicy::default()).run();
+
+        assert_eq!(report.findings.len(), 1, "{report:?}");
+        assert_eq!(report.findings[0].rule, RuleId::UnrestrictedShell);
+        assert_eq!(report.findings[0].severity, Severity::Medium);
+        assert_eq!(report.findings[0].at.map(|p| p.line), Some(3));
+        assert_eq!(report.permissions.len(), 2, "both are still inventory");
+    }
+
+    /// A skill's frontmatter grants tools the same way settings do.
+    #[test]
+    fn a_skill_granting_the_shell_is_a_finding() {
+        let tree = tree_of(&[(".claude/skills/build/SKILL.md", EntryKind::File)]);
+        let contents = FakeContents::default().file(
+            ".claude/skills/build/SKILL.md",
+            "---\nname: build\nallowed-tools: [Read, Glob, Bash]\n---\n\nRun the build.\n",
+        );
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &ScanPolicy::default()).run();
+
+        assert_eq!(report.findings.len(), 1, "{report:?}");
+        assert_eq!(report.findings[0].rule, RuleId::UnrestrictedShell);
+        assert_eq!(
+            report.findings[0].path.as_str(),
+            ".claude/skills/build/SKILL.md"
+        );
+    }
+
+    /// Measured: every unscoped entry in the corpus was a tool with no scope
+    /// to give, and none is a finding.
+    #[test]
+    fn a_scoped_grant_and_a_scopeless_tool_are_no_finding() {
+        let tree = tree_of(&[(".claude/settings.json", EntryKind::File)]);
+        let contents = FakeContents::default().file(
+            ".claude/settings.json",
+            r#"{"permissions":{"allow":["Bash(git status:*)","WebSearch","mcp__figma__use_figma","Read(src/**)"]}}"#,
+        );
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &ScanPolicy::default()).run();
+
+        assert!(report.findings.is_empty(), "{report:?}");
+        assert_eq!(report.permissions.len(), 4);
+    }
+
+    /// Only `allow` is read, so neither list can produce a grant to flag.
+    #[test]
+    fn a_denied_shell_is_not_a_grant() {
+        let tree = tree_of(&[(".claude/settings.json", EntryKind::File)]);
+        let contents = FakeContents::default().file(
+            ".claude/settings.json",
+            r#"{"permissions":{"deny":["Bash(*)"],"ask":["Bash"]}}"#,
+        );
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &ScanPolicy::default()).run();
+
+        assert!(report.findings.is_empty(), "{report:?}");
+        assert!(report.permissions.is_empty(), "{report:?}");
+    }
+
+    #[test]
+    fn two_unbounded_grants_in_one_file_are_two_findings() {
+        let tree = tree_of(&[(".claude/settings.json", EntryKind::File)]);
+        let contents = FakeContents::default().file(
+            ".claude/settings.json",
+            "{\n  \"permissions\": {\n    \"allow\": [\n      \"Bash(*)\",\n      \"Bash(*)\"\n    ]\n  }\n}\n",
+        );
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &ScanPolicy::default()).run();
+
+        let lines: Vec<Option<usize>> = report
+            .findings
+            .iter()
+            .map(|f| f.at.map(|p| p.line))
+            .collect();
+        assert_eq!(lines, [Some(4), Some(5)], "{report:?}");
     }
 
     #[test]

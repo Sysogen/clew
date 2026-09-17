@@ -8,6 +8,7 @@ use icu_properties::props::{DefaultIgnorableCodePoint, VariationSelector};
 
 use crate::autonomy::Autonomy;
 use crate::finding::{Evidence, Finding, Line, Position, RuleId};
+use crate::permission::Permission;
 use crate::repo_path::RepoPath;
 use crate::shell;
 
@@ -39,9 +40,9 @@ pub fn run(path: &RepoPath, checks: &[RuleId], text: &str, width: usize) -> Vec<
     for check in checks {
         match check {
             RuleId::InvisibleUnicode => found.extend(invisible_unicode(path, text, width)),
-            // Neither reads the text: an opaque hook has none to read, and a
-            // mode is read from the parsed value by `autonomy`.
-            RuleId::OpaqueHook | RuleId::BypassPermissions => {}
+            // None reads the text: an opaque hook has none to read, and a mode
+            // and a grant are read from the parsed value.
+            RuleId::OpaqueHook | RuleId::BypassPermissions | RuleId::UnrestrictedShell => {}
             RuleId::DownloadAndExecute
             | RuleId::DecodeAndExecute
             | RuleId::CredentialExfiltration
@@ -68,7 +69,10 @@ fn in_shell(rule: RuleId) -> Option<fn(&str) -> Vec<usize>> {
         RuleId::CredentialExfiltration => Some(shell::credentials_sent),
         RuleId::UnverifiedDownload => Some(shell::downloads_run_later),
         RuleId::UnpinnedRemotePackage => Some(shell::unpinned_packages),
-        RuleId::InvisibleUnicode | RuleId::OpaqueHook | RuleId::BypassPermissions => None,
+        RuleId::InvisibleUnicode
+        | RuleId::OpaqueHook
+        | RuleId::BypassPermissions
+        | RuleId::UnrestrictedShell => None,
     }
 }
 
@@ -196,6 +200,35 @@ fn about_file(path: &RepoPath, rule: RuleId, said: &str, width: usize) -> Findin
     }
 }
 
+/// What the named rules say about one operation a file pre-approves, where
+/// `source` holds its `occurrence`th copy, counting from zero.
+#[must_use]
+pub fn granted(
+    path: &RepoPath,
+    checks: &[RuleId],
+    permission: &Permission,
+    source: &str,
+    occurrence: usize,
+    width: usize,
+) -> Option<Finding> {
+    if !checks.contains(&RuleId::UnrestrictedShell) || !permission.is_unrestricted_shell() {
+        return None;
+    }
+
+    let entry = permission.written();
+    Some(
+        GRANT_LISTS
+            .iter()
+            .find_map(|key| after_key(source, key, &entry, occurrence))
+            .and_then(|at| found_at(path, RuleId::UnrestrictedShell, source, at, width))
+            .unwrap_or_else(|| about_file(path, RuleId::UnrestrictedShell, &entry, width)),
+    )
+}
+
+/// The keys a tool lists its pre-approvals under. A grant is looked for only
+/// after one of them, so a tool name in a description is not taken for a grant.
+const GRANT_LISTS: &[&str] = &["allow", "allowed-tools", "allowed"];
+
 /// Whether `text` is a shell script, by its extension or its `#!` line.
 fn is_shell(path: &RepoPath, text: &str) -> bool {
     let named = path
@@ -291,6 +324,161 @@ mod tests {
     fn a_variation_selector_is_ignorable_but_not_hidden() {
         assert!(is_default_ignorable('\u{FE0F}') && !is_hidden('\u{FE0F}'));
         assert!(is_default_ignorable('\u{200B}') && is_hidden('\u{200B}'));
+    }
+
+    fn grant(entry: &str) -> Permission {
+        Permission::parse(entry).expect("a grant")
+    }
+
+    fn grant_found_in(entry: &str, source: &str, occurrence: usize) -> Option<Finding> {
+        granted(
+            &RepoPath::root().join(".claude/settings.json"),
+            &[RuleId::UnrestrictedShell],
+            &grant(entry),
+            source,
+            occurrence,
+            DEFAULT_EVIDENCE_WIDTH,
+        )
+    }
+
+    #[test]
+    fn an_unbounded_shell_grant_is_a_finding() {
+        let source = "{\n  \"permissions\": {\n    \"allow\": [\"Bash(*)\"]\n  }\n}\n";
+
+        let found = grant_found_in("Bash(*)", source, 0).expect("a finding");
+
+        assert_eq!(found.rule, RuleId::UnrestrictedShell);
+        assert_eq!(found.severity, Severity::Medium);
+        assert_eq!(found.at.map(|p| p.line), Some(3));
+        assert!(found.evidence.as_str().contains("Bash(*)"));
+    }
+
+    #[test]
+    fn a_shell_grant_with_a_scope_is_no_finding() {
+        let source = r#"{"permissions":{"allow":["Bash(cargo test:*)"]}}"#;
+
+        assert!(grant_found_in("Bash(cargo test:*)", source, 0).is_none());
+    }
+
+    /// Measured: every unscoped entry in the corpus was one of these.
+    #[test]
+    fn a_tool_that_takes_no_scope_is_no_finding() {
+        let source = r#"{"permissions":{"allow":["WebSearch","mcp__figma__use_figma"]}}"#;
+
+        assert!(grant_found_in("WebSearch", source, 0).is_none());
+        assert!(grant_found_in("mcp__figma__use_figma", source, 0).is_none());
+    }
+
+    #[test]
+    fn a_row_that_does_not_name_the_shell_rule_is_silent() {
+        let source = r#"{"permissions":{"allow":["Bash(*)"]}}"#;
+
+        assert!(
+            granted(
+                &RepoPath::root().join(".claude/settings.json"),
+                &[RuleId::InvisibleUnicode],
+                &grant("Bash(*)"),
+                source,
+                0,
+                DEFAULT_EVIDENCE_WIDTH,
+            )
+            .is_none()
+        );
+    }
+
+    /// Two copies of one grant are two findings, each at its own copy.
+    #[test]
+    fn two_identical_grants_are_placed_separately() {
+        let source = "{\n  \"allow\": [\n    \"Bash(*)\",\n    \"Bash(*)\"\n  ]\n}\n";
+
+        let first = grant_found_in("Bash(*)", source, 0).expect("a finding");
+        let second = grant_found_in("Bash(*)", source, 1).expect("a finding");
+
+        assert_eq!(first.at.map(|p| p.line), Some(3));
+        assert_eq!(second.at.map(|p| p.line), Some(4));
+    }
+
+    /// A tool name in a description is not a grant. Unanchored, the finding
+    /// lands on the description.
+    #[test]
+    fn a_tool_name_outside_the_grant_list_is_not_the_grant() {
+        let source = "{\n  \"description\": \"Bash\",\n  \"permissions\": {\n    \"allow\": [\"Bash\"]\n  }\n}\n";
+
+        let found = grant_found_in("Bash", source, 0).expect("a finding");
+
+        assert_eq!(found.at.map(|p| p.line), Some(4), "{found:?}");
+    }
+
+    /// A scope holding the tool's own name is not another grant of it.
+    #[test]
+    fn a_name_inside_a_scope_is_not_another_grant() {
+        let source = "{\n  \"allow\": [\n    \"Bash(echo Bash)\",\n    \"Bash\"\n  ]\n}\n";
+
+        let found = grant_found_in("Bash", source, 0).expect("a finding");
+
+        assert_eq!(found.at.map(|p| p.line), Some(4), "{found:?}");
+    }
+
+    /// A bare grant is a whole entry, not the start of a longer one.
+    #[test]
+    fn a_bare_grant_is_not_found_inside_a_scoped_one() {
+        let source = "{\n  \"allow\": [\n    \"Bash(ls)\",\n    \"Bash\"\n  ]\n}\n";
+
+        let found = grant_found_in("Bash", source, 0).expect("a finding");
+
+        assert_eq!(found.at.map(|p| p.line), Some(4), "{found:?}");
+    }
+
+    /// A grant the text does not hold is still worth saying, about the file.
+    #[test]
+    fn a_grant_the_text_escaped_is_reported_about_the_file() {
+        let source = r#"{"permissions":{"allow":["\u0042ash"]}}"#;
+
+        let found = grant_found_in("Bash", source, 0).expect("a finding");
+
+        assert_eq!(found.at, None);
+        assert!(found.evidence.as_str().contains("Bash"));
+    }
+
+    #[test]
+    fn grant_evidence_beside_a_secret_is_masked() {
+        let source = concat!(
+            "{\"permissions\":{\"allow\":[\"Bash(*)\"]},",
+            "\"env\":{\"API_KEY\":\"sk-live-SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS\"}}"
+        );
+
+        let found = grant_found_in("Bash(*)", source, 0).expect("a finding");
+
+        let said = found.evidence.as_str();
+        assert!(
+            said.contains("API_KEY"),
+            "the window reaches the key: {said}"
+        );
+        assert!(!said.contains("sk-live-S"), "{said}");
+    }
+
+    #[test]
+    fn grant_evidence_from_a_minified_file_is_bounded() {
+        let filler = "\"x\":\"".to_owned() + &"y".repeat(400) + "\",";
+        let source = format!("{{{filler}\"permissions\":{{\"allow\":[\"Bash(*)\"]}}}}");
+
+        let found = grant_found_in("Bash(*)", &source, 0).expect("a finding");
+
+        assert!(
+            found.evidence.as_str().chars().count() <= DEFAULT_EVIDENCE_WIDTH,
+            "{} chars",
+            found.evidence.as_str().chars().count()
+        );
+        assert!(found.evidence.as_str().contains("Bash(*)"));
+    }
+
+    /// A name carrying a hidden character is not the shell's name, so this
+    /// rule says nothing; `invisible-unicode` is what reads the character.
+    #[test]
+    fn a_tool_name_carrying_a_hidden_character_is_not_the_shell() {
+        let source = "{\"permissions\":{\"allow\":[\"Ba\u{200B}sh\"]}}";
+
+        assert!(grant_found_in("Ba\u{200B}sh", source, 0).is_none());
     }
 
     fn mode(key: &str, value: &str) -> Autonomy {

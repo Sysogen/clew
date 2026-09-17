@@ -355,10 +355,13 @@ fn command_line(hook: &serde_json::Value) -> Option<String> {
 /// report grants the tool does not honour.
 fn permissions(root: &serde_json::Value, format: Format) -> Vec<Permission> {
     let entries = match format {
-        Format::Json | Format::Jsonc | Format::Toml => root
-            .get("permissions")
-            .and_then(|p| p.get("allow"))
-            .map(listed_grants),
+        Format::Json | Format::Jsonc | Format::Toml => {
+            let claude = root.get("permissions").and_then(|p| p.get("allow"));
+            // Gemini keeps its list elsewhere and writes the same `Tool(scope)`
+            // entries in it.
+            let gemini = root.get("tools").and_then(|t| t.get("allowed"));
+            claude.or(gemini).map(listed_grants)
+        }
         Format::Markdown => root.get("allowed-tools").map(grants),
     };
 
@@ -1139,6 +1142,19 @@ env = { DATABASE_URL = "postgres://u:hunter2@h/d", PGPORT = "5432" }
 
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].scope.as_deref(), Some("ls"));
+    }
+
+    #[test]
+    fn a_gemini_allow_list_is_read_as_grants() {
+        let found =
+            perms_of(r#"{"tools":{"allowed":["run_shell_command(git)","run_shell_command"]}}"#);
+
+        assert_eq!(found.len(), 2, "{found:?}");
+        assert_eq!(
+            found.iter().filter(|p| p.is_unrestricted_shell()).count(),
+            1,
+            "{found:?}"
+        );
     }
 
     #[test]
