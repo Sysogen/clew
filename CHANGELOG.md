@@ -28,6 +28,17 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   file is read as commands only when its name or its `#!` line makes it a
   shell script.
 
+- The `decode-and-execute` rule, severity high. It flags a hook that hands
+  what it decodes straight to an interpreter: `base64 -d`, `base32 -d`,
+  `openssl ... -d`, `xxd -r`, or a decompressor writing to standard output,
+  piped into a shell, run through `eval "$(...)"`, `sh -c "$(...)"` or
+  `bash <(...)`, or in a `bash -c` line, as the xz-utils backdoor's
+  `... | xz -d | /bin/bash` was. PowerShell's `-EncodedCommand`, a `-Command`
+  line handing `FromBase64String` to `iex`, and a `python3 -c`, `node -e` or
+  `php -r` line that both decodes and runs are flagged too. Decoded text that
+  nothing runs is silent, and so are `eval "$(ssh-agent -s)"` and
+  `-ExecutionPolicy`.
+
 - The `unverified-download` rule, severity medium. It flags a hook that
   downloads a file and later runs it, or unpacks it and later runs something
   from where it unpacked it, with no checksum or signature checked in between:

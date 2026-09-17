@@ -71,6 +71,7 @@ directories the catalogue names rather than walking a home directory.
 | `invisible-unicode` | high | A character that renders as nothing, such as a zero-width, bidirectional or tag character, in a file an agent reads as instructions or in a hook script |
 | `opaque-hook` | medium | A hook that cannot be reviewed as text: binary, larger than the file limit, or a symbolic link |
 | `download-and-execute` | high | A hook script, or a hook command in a settings file, that hands what it downloads straight to a shell or an interpreter, as `curl ... \| bash` does |
+| `decode-and-execute` | high | A hook that hands what it decodes from base64, hex or a compressed blob straight to an interpreter, as `echo ... \| base64 -d \| sh` does |
 | `unverified-download` | medium | A hook that downloads a file and later runs it, or unpacks it and runs what it held, with no checksum or signature checked in between |
 | `unpinned-remote-package` | low | A hook that runs a registry package at a tag that moves, such as `npx tool@latest`, so whatever was published last runs |
 
@@ -86,6 +87,13 @@ whose `grep` pattern names `curl | sh` is not one, a download that goes only to
 `tar` or `jq` is not one, and a README beside the hooks is never read as
 commands. The compromised tj-actions/changed-files action ran
 `curl ... | sudo python3` in March 2025.
+
+`decode-and-execute` follows `base64 -d`, `xxd -r`, `openssl -d` and a
+decompressor writing to standard output into an interpreter the same ways, and
+flags PowerShell's `-EncodedCommand` and a `python3 -c` or `node -e` line that
+both decodes and runs. Decoded text that nothing runs, such as a base64 round
+trip into a variable or `jq`, is silent. The xz-utils backdoor ran its hidden
+script with `... | xz -d | /bin/bash` in March 2024.
 
 `unverified-download` follows a downloaded file, and the directory it was
 unpacked into, to a later run, through the variables that name them. A

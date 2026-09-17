@@ -284,6 +284,17 @@ fn rule(id: RuleId) -> Rule {
              a lockfile. If the hook came from someone else, find out why it fetches \
              code each time it runs.",
         ),
+        RuleId::DecodeAndExecute => (
+            "A hook decodes code, from base64, hex or a compressed blob, and hands it \
+             straight to an interpreter, as echo ... | base64 -d | sh does. What runs \
+             is not what the hook shows: a review, a diff or a scanner sees only the \
+             encoded form. The xz-utils backdoor (CVE-2024-3094, disclosed by Andres \
+             Freund on 29 March 2024) kept its script in a test file and ran it during \
+             the build with ... | xz -d | /bin/bash.",
+            "Keep the code a hook runs in the hook, or in a script beside it, as text. \
+             If the hook came from someone else, decode the payload into a file without \
+             running it, and read what it does before anything runs it.",
+        ),
         RuleId::UnverifiedDownload => (
             "A hook downloads a file and later runs it, or unpacks it and runs what it \
              held, without checking a checksum or a signature first. A moved tag, a \
