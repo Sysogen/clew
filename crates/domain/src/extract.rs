@@ -529,8 +529,8 @@ fn server(name: &str, config: &serde_json::Value) -> Option<McpServer> {
         name: name.to_owned(),
         transport,
         env,
-        // A boolean, and only a boolean: the string "true" is not one, and a
-        // reader that took it for one would report a trust nothing granted.
+        // Only a boolean: reading the string "true" as one would report a
+        // trust nothing granted.
         trusted: config.get("trust").and_then(serde_json::Value::as_bool) == Some(true),
     })
 }
@@ -1372,8 +1372,7 @@ env = { DATABASE_URL = "postgres://u:hunter2@h/d", PGPORT = "5432" }
         }
     }
 
-    /// Only a boolean is the switch. A reader taking the string "true" for one
-    /// would report a trust the tool never granted.
+    /// Only a boolean is the switch.
     #[test]
     fn a_trust_that_is_not_a_boolean_is_not_trust() {
         for value in ["\"true\"", "1", "null", "{}", "[true]", "\"yes\""] {
@@ -1384,8 +1383,7 @@ env = { DATABASE_URL = "postgres://u:hunter2@h/d", PGPORT = "5432" }
         }
     }
 
-    /// Identical declarations collapse; two that differ only in trust do not,
-    /// or the trusted one would vanish behind the other.
+    /// Identical declarations collapse; two differing only in trust must not.
     #[test]
     fn two_names_sharing_a_declaration_keep_their_own_trust() {
         let found = servers_of(

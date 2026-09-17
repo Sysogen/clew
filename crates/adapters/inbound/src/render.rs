@@ -50,7 +50,7 @@ fn declared(out: &mut String, report: &DiscoveryReport, surface: &Surface) {
             declared.server.invocation()
         );
         if declared.server.trusted {
-            let _ = writeln!(out, "    tool calls are not confirmed");
+            let _ = writeln!(out, "    declared trusted");
         }
         if !declared.server.env.is_empty() {
             let _ = writeln!(out, "    reads {}", declared.server.env.join(", "));
@@ -293,7 +293,7 @@ mod tests {
 
         let said = report(&found, ".");
 
-        assert!(said.contains("tool calls are not confirmed"), "{said}");
+        assert!(said.contains("declared trusted"), "{said}");
     }
 
     #[test]

@@ -35,12 +35,12 @@ pub struct McpServer {
     /// Names only. A value here may be a credential, and clew never records
     /// one.
     pub env: Vec<String>,
-    /// Whether the declaration asks for its tool calls not to be confirmed.
+    /// Whether the declaration asks for every one of its tool calls to go
+    /// unconfirmed.
     ///
-    /// Gemini CLI spells this `trust`. Read from any server declaration,
-    /// because it records what the file says; whether it is a finding is the
-    /// catalogue row's decision, since only the tool that honours the key can
-    /// act on it.
+    /// Gemini CLI spells this `trust`. Read from any declaration, because it
+    /// records what the file says; whether it is a finding is the row's
+    /// decision, since only the tool that honours the key acts on it.
     pub trusted: bool,
 }
 

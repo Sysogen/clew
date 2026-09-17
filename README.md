@@ -144,7 +144,9 @@ itself what tools it offers, so trusting one is not trusting a fixed list: a
 tool added later is trusted too, and a tool whose description changes is never
 shown again. `trust` is Gemini's spelling, and only Gemini's rows are checked
 for it, so the same key copied into a file read by a tool that ignores it is
-reported as part of the declaration and is not a finding.
+reported as part of the declaration and is not a finding. A per-tool list such
+as Cline's `autoApprove` names what it approves rather than approving all of
+it, so it is not this rule.
 
 ### Output formats
 

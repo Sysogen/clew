@@ -322,7 +322,7 @@ mod tests {
                     name: "pg".to_owned(),
                     transport: Transport::local("npx".to_owned(), &args),
                     env: vec!["DATABASE_URL".to_owned()],
-                    trusted: false,
+                    trusted: true,
                 },
             }],
             autonomy: vec![DeclaredAutonomy {
@@ -369,6 +369,7 @@ mod tests {
         assert_eq!(scan["hooks"][0]["action"], "prompt");
         assert_eq!(scan["hooks"][0]["enabled"], false);
         assert_eq!(scan["permissions"][0]["unscoped"], true);
+        assert_eq!(scan["servers"][0]["trusted"], true);
         assert_eq!(scan["autonomy"][0]["key"], "permissions.defaultMode");
         assert_eq!(scan["autonomy"][0]["value"], "bypassPermissions");
         assert_eq!(scan["autonomy"][0]["unchecked"], true);
