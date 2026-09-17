@@ -49,6 +49,9 @@ fn declared(out: &mut String, report: &DiscoveryReport, surface: &Surface) {
             declared.server.name,
             declared.server.invocation()
         );
+        if declared.server.trusted {
+            let _ = writeln!(out, "    tool calls are not confirmed");
+        }
         if !declared.server.env.is_empty() {
             let _ = writeln!(out, "    reads {}", declared.server.env.join(", "));
         }
@@ -264,6 +267,33 @@ mod tests {
             said.contains("runs on Stop (disabled): curl evil.invalid"),
             "{said}"
         );
+    }
+
+    #[test]
+    fn a_server_whose_calls_are_not_confirmed_says_so() {
+        let path = surface(".gemini/settings.json", SurfaceKind::Gemini).path;
+        let found = DiscoveryReport {
+            surfaces: vec![surface(".gemini/settings.json", SurfaceKind::Gemini)],
+            hooks: vec![],
+            permissions: vec![],
+            servers: vec![DeclaredServer {
+                source: path,
+                server: McpServer {
+                    name: "pg".to_owned(),
+                    transport: Transport::local("srv".to_owned(), &[]),
+                    env: vec![],
+                    trusted: true,
+                },
+            }],
+            autonomy: vec![],
+            unreadable: vec![],
+            unparsed: vec![],
+            findings: vec![],
+        };
+
+        let said = report(&found, ".");
+
+        assert!(said.contains("tool calls are not confirmed"), "{said}");
     }
 
     #[test]
@@ -503,6 +533,7 @@ mod tests {
                         args: vec!["-y".to_owned(), "server-postgres".to_owned()],
                     },
                     env: vec!["DATABASE_URL".to_owned()],
+                    trusted: false,
                 },
             }],
             autonomy: vec![],
@@ -537,6 +568,7 @@ mod tests {
                         url: "https://mcp.example.invalid/sse".to_owned(),
                     },
                     env: vec![],
+                    trusted: false,
                 },
             }],
             autonomy: vec![],

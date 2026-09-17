@@ -140,6 +140,7 @@ struct ServerOut {
     name: String,
     transport: TransportOut,
     env: Vec<String>,
+    trusted: bool,
 }
 
 #[derive(Serialize)]
@@ -232,6 +233,7 @@ impl ScanOut {
                         Transport::Remote { url } => TransportOut::Remote { url: url.clone() },
                     },
                     env: d.server.env.clone(),
+                    trusted: d.server.trusted,
                 })
                 .collect(),
             autonomy: report
@@ -320,6 +322,7 @@ mod tests {
                     name: "pg".to_owned(),
                     transport: Transport::local("npx".to_owned(), &args),
                     env: vec!["DATABASE_URL".to_owned()],
+                    trusted: false,
                 },
             }],
             autonomy: vec![DeclaredAutonomy {

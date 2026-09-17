@@ -334,6 +334,7 @@ fn explained(id: RuleId) -> (&'static str, &'static str) {
         ),
         RuleId::BypassPermissions => bypass_permissions(),
         RuleId::UnrestrictedShell => unrestricted_shell(),
+        RuleId::TrustedServer => trusted_server(),
     }
 }
 
@@ -374,6 +375,22 @@ fn unrestricted_shell() -> (&'static str, &'static str) {
          Bash(cargo test:*) and run_shell_command(git) are. Where a broad grant is \
          genuinely wanted, keeping it in a personal settings.local.json rather than \
          the file the repository ships limits it to the person who chose it.",
+    )
+}
+
+/// What `trusted-server` means, and what to do about it.
+fn trusted_server() -> (&'static str, &'static str) {
+    (
+        "An MCP server is declared with trust: true, which Gemini CLI documents as \
+         bypassing all tool call confirmations for that server. Every tool the server \
+         offers then runs unseen, and a server decides for itself what tools it \
+         offers: one added after the trust was granted is trusted too, and a tool \
+         whose description changes is never shown again. The agent takes the server's \
+         word for what it is being asked to do.",
+        "Remove trust and confirm the calls, or keep it only for a server whose code \
+         you control and whose tool list you pin. Where the confirmations are too \
+         noisy, includeTools names the ones a project actually uses, which bounds the \
+         server without turning the prompt off.",
     )
 }
 
@@ -631,6 +648,33 @@ mod tests {
                 .as_str()
                 .expect("help")
                 .contains("Bash(cargo test:*)"),
+            "{rule}"
+        );
+    }
+
+    #[test]
+    fn a_trusted_server_finding_is_a_warning_with_its_remediation() {
+        let report = DiscoveryReport {
+            findings: vec![finding(
+                ".gemini/settings.json",
+                Some((3, 5)),
+                RuleId::TrustedServer,
+                Severity::Medium,
+            )],
+            ..DiscoveryReport::default()
+        };
+
+        let log = written(&report);
+
+        assert!(violations(&log).is_empty(), "{:?}", violations(&log));
+        assert_eq!(log["runs"][0]["results"][0]["level"], "warning");
+        let rule = &log["runs"][0]["tool"]["driver"]["rules"][0];
+        assert_eq!(rule["id"], "trusted-server");
+        assert!(
+            rule["help"]["text"]
+                .as_str()
+                .expect("help")
+                .contains("includeTools"),
             "{rule}"
         );
     }
