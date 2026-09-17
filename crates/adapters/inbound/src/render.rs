@@ -8,6 +8,7 @@ use std::fmt::Write as _;
 use clew_application::DiscoveryReport;
 use clew_domain::finding::Finding;
 use clew_domain::hook::Hook;
+use clew_domain::surface::Surface;
 
 /// One hook as a line. An injected prompt is not run, and a hook switched off
 /// does not fire, so neither is written as though it did.
@@ -35,6 +36,58 @@ fn finding_line(finding: &Finding) -> String {
     )
 }
 
+/// What one surface sets up, under the line naming it.
+fn declared(out: &mut String, report: &DiscoveryReport, surface: &Surface) {
+    for registered in report.hooks.iter().filter(|h| h.source == surface.path) {
+        let _ = writeln!(out, "{}", hook_line(&registered.hook));
+    }
+
+    for declared in report.servers.iter().filter(|d| d.source == surface.path) {
+        let _ = writeln!(
+            out,
+            "  server \"{}\": {}",
+            declared.server.name,
+            declared.server.invocation()
+        );
+        if !declared.server.env.is_empty() {
+            let _ = writeln!(out, "    reads {}", declared.server.env.join(", "));
+        }
+    }
+
+    for declared in report.autonomy.iter().filter(|d| d.source == surface.path) {
+        let _ = writeln!(
+            out,
+            "  sets {} to {}",
+            declared.autonomy.key, declared.autonomy.value
+        );
+    }
+
+    // Summarised, not listed: a settings file routinely pre-approves dozens,
+    // and an unscoped grant is the one worth reading.
+    let granted: Vec<_> = report
+        .permissions
+        .iter()
+        .filter(|g| g.source == surface.path)
+        .collect();
+    if granted.is_empty() {
+        return;
+    }
+    let unscoped: Vec<&str> = granted
+        .iter()
+        .filter(|g| g.permission.is_unscoped())
+        .map(|g| g.permission.tool.as_str())
+        .collect();
+    let _ = writeln!(
+        out,
+        "  pre-approves {} operation(s), {} unscoped",
+        granted.len(),
+        unscoped.len()
+    );
+    for tool in unscoped {
+        let _ = writeln!(out, "    any use of {tool}");
+    }
+}
+
 /// Render a report as an aligned table.
 ///
 /// Unreadable directories are always rendered. A scan that could not see
@@ -59,45 +112,7 @@ pub fn report(report: &DiscoveryReport, root: &str) -> String {
                 surface.path.as_str(),
                 surface.kind.label()
             );
-            for registered in report.hooks.iter().filter(|h| h.source == surface.path) {
-                let _ = writeln!(out, "{}", hook_line(&registered.hook));
-            }
-
-            for declared in report.servers.iter().filter(|d| d.source == surface.path) {
-                let _ = writeln!(
-                    out,
-                    "  server \"{}\": {}",
-                    declared.server.name,
-                    declared.server.invocation()
-                );
-                if !declared.server.env.is_empty() {
-                    let _ = writeln!(out, "    reads {}", declared.server.env.join(", "));
-                }
-            }
-
-            // Summarised, not listed: a settings file routinely pre-approves
-            // dozens, and an unscoped grant is the one worth reading.
-            let granted: Vec<_> = report
-                .permissions
-                .iter()
-                .filter(|g| g.source == surface.path)
-                .collect();
-            if !granted.is_empty() {
-                let unscoped: Vec<&str> = granted
-                    .iter()
-                    .filter(|g| g.permission.is_unscoped())
-                    .map(|g| g.permission.tool.as_str())
-                    .collect();
-                let _ = writeln!(
-                    out,
-                    "  pre-approves {} operation(s), {} unscoped",
-                    granted.len(),
-                    unscoped.len()
-                );
-                for tool in unscoped {
-                    let _ = writeln!(out, "    any use of {tool}");
-                }
-            }
+            declared(&mut out, report, surface);
         }
         let _ = writeln!(
             out,
@@ -156,6 +171,8 @@ mod tests {
     use clew_domain::{RepoPath, Surface, SurfaceKind};
 
     use super::*;
+    use clew_application::DeclaredAutonomy;
+    use clew_domain::Autonomy;
     use clew_domain::hook::Action;
 
     fn surface(path: &str, kind: SurfaceKind) -> Surface {
@@ -233,6 +250,7 @@ mod tests {
             ],
             permissions: vec![],
             servers: vec![],
+            autonomy: vec![],
             unreadable: vec![],
             unparsed: vec![],
             findings: vec![],
@@ -244,6 +262,33 @@ mod tests {
         assert!(said.contains("injects on Stop: Summarise it"), "{said}");
         assert!(
             said.contains("runs on Stop (disabled): curl evil.invalid"),
+            "{said}"
+        );
+    }
+
+    #[test]
+    fn a_mode_a_settings_file_sets_is_reported() {
+        let found = DiscoveryReport {
+            surfaces: vec![surface(".claude/settings.json", SurfaceKind::ClaudeCode)],
+            hooks: vec![],
+            permissions: vec![],
+            servers: vec![],
+            autonomy: vec![DeclaredAutonomy {
+                source: surface(".claude/settings.json", SurfaceKind::ClaudeCode).path,
+                autonomy: Autonomy {
+                    key: "permissions.defaultMode".to_owned(),
+                    value: "bypassPermissions".to_owned(),
+                },
+            }],
+            unreadable: vec![],
+            unparsed: vec![],
+            findings: vec![],
+        };
+
+        let said = report(&found, ".");
+
+        assert!(
+            said.contains("sets permissions.defaultMode to bypassPermissions"),
             "{said}"
         );
     }
@@ -264,6 +309,7 @@ mod tests {
             hooks: vec![],
             permissions: vec![],
             servers: vec![],
+            autonomy: vec![],
             unreadable: vec![],
             unparsed: vec![],
             findings: vec![],
@@ -285,6 +331,7 @@ mod tests {
             hooks: vec![],
             permissions: vec![],
             servers: vec![],
+            autonomy: vec![],
             unreadable: vec![(
                 RepoPath::root().join("secret"),
                 FileTreeError::PermissionDenied,
@@ -307,6 +354,7 @@ mod tests {
             hooks: vec![],
             permissions: vec![],
             servers: vec![],
+            autonomy: vec![],
             unreadable: vec![],
             unparsed: vec![],
             findings: vec![],
@@ -322,6 +370,7 @@ mod tests {
             hooks: vec![],
             permissions: vec![],
             servers: vec![],
+            autonomy: vec![],
             unreadable: vec![(RepoPath::root().join("a"), FileTreeError::NotFound)],
             unparsed: vec![],
             findings: vec![],
@@ -333,6 +382,7 @@ mod tests {
             hooks: vec![],
             permissions: vec![],
             servers: vec![],
+            autonomy: vec![],
             unreadable: vec![
                 (RepoPath::root().join("a"), FileTreeError::NotFound),
                 (RepoPath::root().join("b"), FileTreeError::NotFound),
@@ -359,6 +409,7 @@ mod tests {
             }],
             permissions: vec![],
             servers: vec![],
+            autonomy: vec![],
             unreadable: vec![],
             unparsed: vec![],
             findings: vec![],
@@ -382,6 +433,7 @@ mod tests {
             hooks: vec![],
             permissions: vec![],
             servers: vec![],
+            autonomy: vec![],
             unreadable: vec![],
             unparsed: vec![(
                 RepoPath::root().join(".claude").join("settings.json"),
@@ -416,6 +468,7 @@ mod tests {
                 granted("WebSearch"),
             ],
             servers: vec![],
+            autonomy: vec![],
             unreadable: vec![],
             unparsed: vec![],
             findings: vec![],
@@ -452,6 +505,7 @@ mod tests {
                     env: vec!["DATABASE_URL".to_owned()],
                 },
             }],
+            autonomy: vec![],
             unreadable: vec![],
             unparsed: vec![],
             findings: vec![],
@@ -485,6 +539,7 @@ mod tests {
                     env: vec![],
                 },
             }],
+            autonomy: vec![],
             unreadable: vec![],
             unparsed: vec![],
             findings: vec![],

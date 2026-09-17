@@ -75,6 +75,7 @@ directories the catalogue names rather than walking a home directory.
 | `credential-exfiltration` | high | A hook that sends a credential file, a token a tool prints or the whole environment over the network, as `env \| curl -d @- ...` does |
 | `unverified-download` | medium | A hook that downloads a file and later runs it, or unpacks it and runs what it held, with no checksum or signature checked in between |
 | `unpinned-remote-package` | low | A hook that runs a registry package at a tag that moves, such as `npx tool@latest`, so whatever was published last runs |
+| `bypass-permissions` | high | A configuration file that starts an agent with nothing asking first and nothing bounding what happens: Claude Code's `permissions.defaultMode` set to `bypassPermissions`, Codex's `sandbox_mode` set to `danger-full-access`, VS Code's `chat.tools.global.autoApprove` set to `true`, or Zed's `agent.tool_permissions.default` set to `allow` |
 
 `invisible-unicode` is the Rules File Backdoor, disclosed by Pillar Security in
 March 2025: an instruction the model reads and a reviewer cannot see. In a hook
@@ -113,6 +114,15 @@ and a tool run by name is the one on `PATH`, not the download.
 `npm exec`, `uvx` and `pipx run` given a package at `@latest` or another tag
 that moves, and looks through `xargs` to find them. `npx prettier`, which runs
 what the project installed, and `npx tool@1.4.2` are silent.
+
+`bypass-permissions` is the one rule that reads a configuration file rather than
+a hook. Only the four values above fire. Codex `approval_policy = "never"` does
+not, because Codex still sandboxes, to `read-only` by default, so the agent is
+bounded even when nobody is asked; the other three tools sandbox nothing, so
+there the prompt was the only control. Two limits are worth knowing: Claude Code
+stopped honouring `bypassPermissions` from project and local settings in
+v2.1.257, so a repository setting it reaches only an older client, and Zed's
+built-in security rules still prompt for a few actions.
 
 ### Output formats
 
