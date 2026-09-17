@@ -3,6 +3,10 @@
 
 //! Operations an agent may perform without asking.
 
+/// The tool that runs a command of the agent's choosing. Spelt as the
+/// settings spell it, which is case-sensitive.
+const SHELL: &str = "Bash";
+
 /// A pre-approved operation, as written in the configuration.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Permission {
@@ -50,6 +54,25 @@ impl Permission {
             .as_deref()
             .is_none_or(|s| s.is_empty() || s == "*")
     }
+
+    /// Whether this grants the shell with nothing restricting what it runs.
+    ///
+    /// Only the shell. A bare `WebSearch` or `mcp__server__tool` is unscoped
+    /// too, but neither takes an argument restriction, so a bare entry is the
+    /// only way to write that grant and flagging it would say nothing.
+    #[must_use]
+    pub fn is_unrestricted_shell(&self) -> bool {
+        self.tool == SHELL && self.is_unscoped()
+    }
+
+    /// The entry rebuilt as a file writes it, for finding it in one.
+    #[must_use]
+    pub fn written(&self) -> String {
+        match &self.scope {
+            Some(scope) => format!("{}({scope})", self.tool),
+            None => self.tool.clone(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -86,6 +109,67 @@ mod tests {
     fn a_wildcard_or_empty_scope_is_unscoped() {
         assert!(parsed("Bash(*)").is_unscoped());
         assert!(parsed("Bash()").is_unscoped());
+    }
+
+    #[test]
+    fn an_unbounded_shell_grant_is_unrestricted() {
+        for entry in ["Bash", "Bash()", "Bash(*)"] {
+            assert!(
+                parsed(entry).is_unrestricted_shell(),
+                "{entry} runs anything"
+            );
+        }
+    }
+
+    #[test]
+    fn a_shell_grant_with_a_scope_is_not() {
+        for entry in [
+            "Bash(ls)",
+            "Bash(cargo test:*)",
+            "Bash(*.sh)",
+            "Bash(git:*)",
+        ] {
+            assert!(
+                !parsed(entry).is_unrestricted_shell(),
+                "{entry} restricts what runs"
+            );
+        }
+    }
+
+    /// A tool with no argument restriction to give is not an unbounded grant
+    /// of one: a bare entry is the only way to write it.
+    #[test]
+    fn a_tool_that_takes_no_scope_is_not_the_shell() {
+        for entry in [
+            "WebSearch",
+            "TodoWrite",
+            "mcp__plugin_figma_figma__use_figma",
+            "Read",
+        ] {
+            assert!(!parsed(entry).is_unrestricted_shell(), "{entry}");
+            assert!(parsed(entry).is_unscoped(), "{entry} is still unscoped");
+        }
+    }
+
+    #[test]
+    fn the_tool_name_is_matched_exactly() {
+        for entry in ["bash", "BASH", " bash(*)", "Bashful", "Bash2"] {
+            assert!(
+                !parsed(entry).is_unrestricted_shell(),
+                "{entry} is not the tool"
+            );
+        }
+        // Space around an entry is not part of it, so it is still the tool.
+        assert!(parsed("  Bash  ").is_unrestricted_shell());
+    }
+
+    #[test]
+    fn an_entry_is_rebuilt_as_a_file_writes_it() {
+        for entry in ["Bash(*)", "Bash()", "Bash(cargo test:*)", "WebSearch"] {
+            assert_eq!(parsed(entry).written(), entry, "{entry}");
+        }
+        // Surrounding space is not part of the entry, so it does not come back.
+        assert_eq!(parsed("  Bash(ls)  ").written(), "Bash(ls)");
     }
 
     #[test]
