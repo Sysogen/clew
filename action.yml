@@ -24,7 +24,7 @@ inputs:
     default: "true"
   version:
     description: The clew release to run. The default is the one this action was released with.
-    default: "0.4.0"
+    default: "0.5.0"
 
 outputs:
   sarif:
