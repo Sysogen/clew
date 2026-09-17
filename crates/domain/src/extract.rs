@@ -529,6 +529,9 @@ fn server(name: &str, config: &serde_json::Value) -> Option<McpServer> {
         name: name.to_owned(),
         transport,
         env,
+        // A boolean, and only a boolean: the string "true" is not one, and a
+        // reader that took it for one would report a trust nothing granted.
+        trusted: config.get("trust").and_then(serde_json::Value::as_bool) == Some(true),
     })
 }
 
@@ -1347,6 +1350,51 @@ env = { DATABASE_URL = "postgres://u:hunter2@h/d", PGPORT = "5432" }
         run(&[Extraction::McpServers], Format::Json, json)
             .expect("valid json")
             .servers
+    }
+
+    #[test]
+    fn a_server_asking_not_to_be_confirmed_is_trusted() {
+        let found = servers_of(r#"{"mcpServers":{"pg":{"command":"srv","trust":true}}}"#);
+
+        assert_eq!(found.len(), 1);
+        assert!(found[0].trusted);
+    }
+
+    #[test]
+    fn a_server_without_the_key_is_not_trusted() {
+        for json in [
+            r#"{"mcpServers":{"pg":{"command":"srv"}}}"#,
+            r#"{"mcpServers":{"pg":{"command":"srv","trust":false}}}"#,
+        ] {
+            let found = servers_of(json);
+            assert_eq!(found.len(), 1, "{json}");
+            assert!(!found[0].trusted, "{json}");
+        }
+    }
+
+    /// Only a boolean is the switch. A reader taking the string "true" for one
+    /// would report a trust the tool never granted.
+    #[test]
+    fn a_trust_that_is_not_a_boolean_is_not_trust() {
+        for value in ["\"true\"", "1", "null", "{}", "[true]", "\"yes\""] {
+            let json = format!(r#"{{"mcpServers":{{"pg":{{"command":"srv","trust":{value}}}}}}}"#);
+            let found = servers_of(&json);
+            assert_eq!(found.len(), 1, "{json}");
+            assert!(!found[0].trusted, "{json}");
+        }
+    }
+
+    /// Identical declarations collapse; two that differ only in trust do not,
+    /// or the trusted one would vanish behind the other.
+    #[test]
+    fn two_names_sharing_a_declaration_keep_their_own_trust() {
+        let found = servers_of(
+            r#"{"mcpServers":{"a":{"command":"srv","trust":true},"b":{"command":"srv"}}}"#,
+        );
+
+        assert_eq!(found.len(), 2, "{found:?}");
+        let trusted: Vec<bool> = found.iter().map(|s| s.trusted).collect();
+        assert_eq!(trusted.iter().filter(|t| **t).count(), 1, "{found:?}");
     }
 
     #[test]

@@ -186,6 +186,13 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
                 });
             }
             for server in found.servers {
+                report.findings.extend(rules::server(
+                    &path,
+                    matched.check,
+                    &server,
+                    &text,
+                    self.policy.evidence_width(),
+                ));
                 report.servers.push(DeclaredServer {
                     source: path.clone(),
                     server,
@@ -1260,6 +1267,67 @@ mod tests {
             inner: contents,
             reads: std::cell::RefCell::default(),
         }
+    }
+
+    #[test]
+    fn a_trusted_server_is_a_finding() {
+        let tree = tree_of(&[(".gemini/settings.json", EntryKind::File)]);
+        let contents = FakeContents::default().file(
+            ".gemini/settings.json",
+            "{\n  \"mcpServers\": {\n    \"pg\": {\n      \"command\": \"srv\",\n      \"trust\": true\n    }\n  }\n}\n",
+        );
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &ScanPolicy::default()).run();
+
+        assert_eq!(report.findings.len(), 1, "{report:?}");
+        assert_eq!(report.findings[0].rule, RuleId::TrustedServer);
+        assert_eq!(report.findings[0].severity, Severity::Medium);
+        assert_eq!(report.findings[0].at.map(|p| p.line), Some(3));
+    }
+
+    /// A trusted server is still a server, and inventory says so.
+    #[test]
+    fn a_trusted_server_is_still_a_declared_server() {
+        let tree = tree_of(&[(".gemini/settings.json", EntryKind::File)]);
+        let contents = FakeContents::default().file(
+            ".gemini/settings.json",
+            r#"{"mcpServers":{"pg":{"command":"srv","trust":true}}}"#,
+        );
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &ScanPolicy::default()).run();
+
+        assert_eq!(report.servers.len(), 1, "{report:?}");
+        assert!(report.servers[0].server.trusted);
+    }
+
+    #[test]
+    fn an_untrusted_server_is_no_finding() {
+        let tree = tree_of(&[(".gemini/settings.json", EntryKind::File)]);
+        let contents = FakeContents::default().file(
+            ".gemini/settings.json",
+            r#"{"mcpServers":{"a":{"command":"srv"},"b":{"command":"srv2","trust":false}}}"#,
+        );
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &ScanPolicy::default()).run();
+
+        assert!(report.findings.is_empty(), "{report:?}");
+        assert_eq!(report.servers.len(), 2);
+    }
+
+    /// `trust` is Gemini's spelling. A copy of it in a file read by a tool
+    /// that does not honour it is recorded, not judged.
+    #[test]
+    fn a_stray_trust_outside_gemini_is_inventory_only() {
+        let tree = tree_of(&[(".mcp.json", EntryKind::File)]);
+        let contents = FakeContents::default().file(
+            ".mcp.json",
+            r#"{"mcpServers":{"pg":{"command":"srv","trust":true}}}"#,
+        );
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &ScanPolicy::default()).run();
+
+        assert!(report.findings.is_empty(), "{report:?}");
+        assert!(report.servers[0].server.trusted, "still recorded");
     }
 
     #[test]

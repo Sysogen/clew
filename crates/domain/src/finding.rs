@@ -35,6 +35,8 @@ pub enum RuleId {
     BypassPermissions,
     /// A pre-approval of the shell with nothing restricting what it runs.
     UnrestrictedShell,
+    /// An MCP server whose tool calls are not confirmed.
+    TrustedServer,
 }
 
 impl RuleId {
@@ -51,6 +53,7 @@ impl RuleId {
             Self::UnpinnedRemotePackage => "unpinned-remote-package",
             Self::BypassPermissions => "bypass-permissions",
             Self::UnrestrictedShell => "unrestricted-shell",
+            Self::TrustedServer => "trusted-server",
         }
     }
 
@@ -83,6 +86,7 @@ impl RuleId {
             Self::UnrestrictedShell => {
                 "A pre-approved shell grant with nothing restricting the commands it runs"
             }
+            Self::TrustedServer => "An MCP server whose tool calls run without being confirmed",
         }
     }
 
@@ -95,9 +99,10 @@ impl RuleId {
             | Self::DecodeAndExecute
             | Self::CredentialExfiltration
             | Self::BypassPermissions => Severity::High,
-            Self::OpaqueHook | Self::UnverifiedDownload | Self::UnrestrictedShell => {
-                Severity::Medium
-            }
+            Self::OpaqueHook
+            | Self::UnverifiedDownload
+            | Self::UnrestrictedShell
+            | Self::TrustedServer => Severity::Medium,
             Self::UnpinnedRemotePackage => Severity::Low,
         }
     }
@@ -115,6 +120,7 @@ impl RuleId {
             "unpinned-remote-package" => Self::UnpinnedRemotePackage,
             "bypass-permissions" => Self::BypassPermissions,
             "unrestricted-shell" => Self::UnrestrictedShell,
+            "trusted-server" => Self::TrustedServer,
             _ => return None,
         })
     }

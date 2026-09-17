@@ -33,6 +33,16 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and `ask` lists, which clew does not read as grants. One file granting the same
   operation twice gives a finding at each entry.
 
+- The `trusted-server` rule, severity medium. It flags an MCP server declared
+  with `trust: true`, which Gemini CLI documents as bypassing all tool call
+  confirmations for that server. A server decides for itself what tools it
+  offers, so a tool added after the trust was granted is trusted too, and a tool
+  whose description changes is never shown again. Only a boolean is the switch,
+  so the string `"true"` is not, and `trust` is Gemini's spelling: the same key
+  in a file read by a tool that ignores it is reported as part of the
+  declaration rather than flagged. The finding is placed at the name the server
+  is declared under.
+
 - The mode a settings file starts an agent in is reported beside the hooks,
   permissions and servers it declares, whether or not a rule objects to it. It
   is the first thing clew reads out of a settings file that is not a grant.
