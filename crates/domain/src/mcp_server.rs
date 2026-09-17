@@ -35,6 +35,13 @@ pub struct McpServer {
     /// Names only. A value here may be a credential, and clew never records
     /// one.
     pub env: Vec<String>,
+    /// Whether the declaration asks for every one of its tool calls to go
+    /// unconfirmed.
+    ///
+    /// Gemini CLI spells this `trust`. Read from any declaration, because it
+    /// records what the file says; whether it is a finding is the row's
+    /// decision, since only the tool that honours the key acts on it.
+    pub trusted: bool,
 }
 
 /// Shown in place of a value clew will not print.
@@ -139,6 +146,7 @@ mod tests {
             name: "s".to_owned(),
             transport,
             env: vec![],
+            trusted: false,
         }
     }
 
@@ -271,6 +279,7 @@ mod tests {
                 args: vec!["-y".to_owned(), "server-postgres".to_owned()],
             },
             env: vec![],
+            trusted: false,
         };
         assert_eq!(s.invocation(), "npx -y server-postgres");
     }
@@ -284,6 +293,7 @@ mod tests {
                 args: vec![],
             },
             env: vec![],
+            trusted: false,
         };
         assert_eq!(s.invocation(), "./run.sh");
     }
@@ -296,6 +306,7 @@ mod tests {
                 url: "https://mcp.example.invalid/sse".to_owned(),
             },
             env: vec![],
+            trusted: false,
         };
         assert_eq!(s.invocation(), "https://mcp.example.invalid/sse");
     }

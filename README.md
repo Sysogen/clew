@@ -75,8 +75,14 @@ directories the catalogue names rather than walking a home directory.
 | `credential-exfiltration` | high | A hook that sends a credential file, a token a tool prints or the whole environment over the network, as `env \| curl -d @- ...` does |
 | `unverified-download` | medium | A hook that downloads a file and later runs it, or unpacks it and runs what it held, with no checksum or signature checked in between |
 | `unpinned-remote-package` | low | A hook that runs a registry package at a tag that moves, such as `npx tool@latest`, so whatever was published last runs |
+<<<<<<< HEAD
 | `bypass-permissions` | high | A configuration file that starts an agent with nothing asking first and nothing bounding what happens: Claude Code's `permissions.defaultMode` set to `bypassPermissions`, Codex's `sandbox_mode` set to `danger-full-access`, VS Code's `chat.tools.global.autoApprove` set to `true`, or Zed's `agent.tool_permissions.default` set to `allow` |
 | `unrestricted-shell` | medium | A configuration file or skill that pre-approves the shell with nothing restricting it: Claude Code's `Bash` or Gemini CLI's `run_shell_command`, bare or at `*`, in `permissions.allow`, `tools.allowed` or `allowed-tools` |
+=======
+| `bypass-permissions` | high | A settings file that starts an agent with neither a permission prompt nor a sandbox: Claude Code's `permissions.defaultMode` set to `bypassPermissions`, or Codex's `sandbox_mode` set to `danger-full-access` |
+| `unrestricted-shell` | medium | A settings file or skill that pre-approves the shell with nothing restricting it: `Bash`, `Bash()` or `Bash(*)` in `permissions.allow` or `allowed-tools` |
+| `trusted-server` | medium | An MCP server declared with `trust: true`, which Gemini CLI documents as bypassing every tool call confirmation for that server |
+>>>>>>> 6c73c75 (feat(domain): flag an unconfirmed MCP server)
 
 `invisible-unicode` is the Rules File Backdoor, disclosed by Pillar Security in
 March 2025: an instruction the model reads and a reviewer cannot see. In a hook
@@ -132,6 +138,15 @@ but neither takes an argument restriction, so a bare entry is the only way to
 write that grant and flagging it would say nothing. `Bash(cargo test:*)`,
 `run_shell_command(git)` and every other scoped entry are silent, as are the
 `deny` and `ask` lists, which clew does not read as grants.
+
+`trusted-server` flags `trust: true` on an MCP server. A server decides for
+itself what tools it offers, so trusting one is not trusting a fixed list: a
+tool added later is trusted too, and a tool whose description changes is never
+shown again. `trust` is Gemini's spelling, and only Gemini's rows are checked
+for it, so the same key copied into a file read by a tool that ignores it is
+reported as part of the declaration and is not a finding. A per-tool list such
+as Cline's `autoApprove` names what it approves rather than approving all of
+it, so it is not this rule.
 
 ### Output formats
 
