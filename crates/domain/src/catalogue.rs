@@ -718,6 +718,7 @@ mod tests {
                     RuleId::OpaqueHook,
                     RuleId::DownloadAndExecute,
                     RuleId::DecodeAndExecute,
+                    RuleId::CredentialExfiltration,
                     RuleId::UnverifiedDownload,
                     RuleId::UnpinnedRemotePackage
                 ],
@@ -1183,6 +1184,7 @@ mod tests {
                 RuleId::OpaqueHook,
                 RuleId::DownloadAndExecute,
                 RuleId::DecodeAndExecute,
+                RuleId::CredentialExfiltration,
                 RuleId::UnverifiedDownload,
                 RuleId::UnpinnedRemotePackage
             ]
