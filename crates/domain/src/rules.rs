@@ -6,6 +6,7 @@
 use icu_properties::CodePointSetData;
 use icu_properties::props::{DefaultIgnorableCodePoint, VariationSelector};
 
+use crate::autonomy::Autonomy;
 use crate::finding::{Evidence, Finding, Line, Position, RuleId};
 use crate::repo_path::RepoPath;
 use crate::shell;
@@ -38,8 +39,10 @@ pub fn run(path: &RepoPath, checks: &[RuleId], text: &str, width: usize) -> Vec<
     for check in checks {
         match check {
             RuleId::InvisibleUnicode => found.extend(invisible_unicode(path, text, width)),
-            // Text can be reviewed, so there is nothing to say.
-            RuleId::OpaqueHook => {}
+            // Neither reads text here: a file that can be read as text is not
+            // an opaque hook, and a mode is read from the parsed value by
+            // `autonomy`.
+            RuleId::OpaqueHook | RuleId::BypassPermissions => {}
             RuleId::DownloadAndExecute
             | RuleId::DecodeAndExecute
             | RuleId::CredentialExfiltration
@@ -66,7 +69,7 @@ fn in_shell(rule: RuleId) -> Option<fn(&str) -> Vec<usize>> {
         RuleId::CredentialExfiltration => Some(shell::credentials_sent),
         RuleId::UnverifiedDownload => Some(shell::downloads_run_later),
         RuleId::UnpinnedRemotePackage => Some(shell::unpinned_packages),
-        RuleId::InvisibleUnicode | RuleId::OpaqueHook => None,
+        RuleId::InvisibleUnicode | RuleId::OpaqueHook | RuleId::BypassPermissions => None,
     }
 }
 
@@ -107,6 +110,37 @@ pub fn hook_command(
         .filter_map(|(rule, at)| found_at(path, rule, command, at, width))
         .map(|found| Finding { at: place, ..found })
         .collect()
+}
+
+/// What the named rules say about the mode a file starts an agent in.
+///
+/// Placed at the value, which both JSON and TOML quote, so a settings file and
+/// a Codex configuration are located the same way. A value the text does not
+/// hold verbatim, because the format escaped it, yields a finding about the
+/// file rather than a wrong line.
+#[must_use]
+pub fn autonomy(
+    path: &RepoPath,
+    checks: &[RuleId],
+    mode: &Autonomy,
+    source: &str,
+    width: usize,
+) -> Option<Finding> {
+    if !checks.contains(&RuleId::BypassPermissions) || !mode.is_unchecked() {
+        return None;
+    }
+
+    let quoted = format!("\"{}\"", mode.value);
+    let placed = source
+        .find(&quoted)
+        .and_then(|at| found_at(path, RuleId::BypassPermissions, source, at + 1, width));
+    Some(placed.unwrap_or_else(|| Finding {
+        path: path.clone(),
+        at: None,
+        rule: RuleId::BypassPermissions,
+        severity: RuleId::BypassPermissions.severity(),
+        evidence: Evidence::quote(&Line::new(&mode.value), 0, width),
+    }))
 }
 
 /// Whether `text` is a shell script, by its extension or its `#!` line.
@@ -204,6 +238,171 @@ mod tests {
     fn a_variation_selector_is_ignorable_but_not_hidden() {
         assert!(is_default_ignorable('\u{FE0F}') && !is_hidden('\u{FE0F}'));
         assert!(is_default_ignorable('\u{200B}') && is_hidden('\u{200B}'));
+    }
+
+    fn mode(key: &str, value: &str) -> Autonomy {
+        Autonomy {
+            key: key.to_owned(),
+            value: value.to_owned(),
+        }
+    }
+
+    fn mode_found_in(file: &str, mode: &Autonomy, source: &str) -> Option<Finding> {
+        autonomy(
+            &RepoPath::root().join(file),
+            &[RuleId::BypassPermissions],
+            mode,
+            source,
+            DEFAULT_EVIDENCE_WIDTH,
+        )
+    }
+
+    #[test]
+    fn a_settings_file_bypassing_permissions_is_a_finding() {
+        let source =
+            "{\n  \"permissions\": {\n    \"defaultMode\": \"bypassPermissions\"\n  }\n}\n";
+
+        let found = mode_found_in(
+            ".claude/settings.json",
+            &mode("permissions.defaultMode", "bypassPermissions"),
+            source,
+        )
+        .expect("a finding");
+
+        assert_eq!(found.rule, RuleId::BypassPermissions);
+        assert_eq!(found.severity, Severity::High);
+        assert_eq!(found.at.map(|p| (p.line, p.column)), Some((3, 21)));
+        assert!(found.evidence.as_str().contains("bypassPermissions"));
+    }
+
+    /// Both formats quote the value, so a Codex configuration is placed the
+    /// same way a settings file is.
+    #[test]
+    fn a_codex_configuration_is_placed_at_its_value() {
+        let source = "model = \"o3\"\nsandbox_mode = \"danger-full-access\"\n";
+
+        let found = mode_found_in(
+            ".codex/config.toml",
+            &mode("sandbox_mode", "danger-full-access"),
+            source,
+        )
+        .expect("a finding");
+
+        assert_eq!(found.at.map(|p| p.line), Some(2));
+    }
+
+    #[test]
+    fn a_mode_that_asks_is_no_finding() {
+        for value in ["ask", "plan", "autoMode"] {
+            let source = format!("{{\"permissions\":{{\"defaultMode\":\"{value}\"}}}}");
+            assert!(
+                mode_found_in(
+                    ".claude/settings.json",
+                    &mode("permissions.defaultMode", value),
+                    &source
+                )
+                .is_none(),
+                "{value}"
+            );
+        }
+    }
+
+    /// The row decides which rules read a file. Without this one named, the
+    /// mode is inventory and nothing more.
+    #[test]
+    fn a_row_that_does_not_name_the_rule_is_silent() {
+        let source = r#"{"permissions":{"defaultMode":"bypassPermissions"}}"#;
+
+        assert!(
+            autonomy(
+                &RepoPath::root().join(".claude/settings.json"),
+                &[RuleId::InvisibleUnicode],
+                &mode("permissions.defaultMode", "bypassPermissions"),
+                source,
+                DEFAULT_EVIDENCE_WIDTH,
+            )
+            .is_none()
+        );
+    }
+
+    /// A value the text does not hold verbatim is still worth saying, about
+    /// the file rather than at a line that would be wrong.
+    #[test]
+    fn a_value_the_text_escaped_is_reported_about_the_file() {
+        let source = r#"{"permissions":{"defaultMode":"bypass\u0050ermissions"}}"#;
+
+        let found = mode_found_in(
+            ".claude/settings.json",
+            &mode("permissions.defaultMode", "bypassPermissions"),
+            source,
+        )
+        .expect("a finding");
+
+        assert_eq!(found.at, None);
+        assert!(found.evidence.as_str().contains("bypassPermissions"));
+    }
+
+    #[test]
+    fn evidence_beside_a_secret_is_masked() {
+        // Beside the mode, so the window certainly reaches it: a test whose
+        // secret falls outside the quoted window proves nothing.
+        let source = concat!(
+            "{\"permissions\":{\"defaultMode\":\"bypassPermissions\"},",
+            "\"env\":{\"API_KEY\":\"sk-live-SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS\"}}"
+        );
+
+        let found = mode_found_in(
+            ".claude/settings.json",
+            &mode("permissions.defaultMode", "bypassPermissions"),
+            source,
+        )
+        .expect("a finding");
+
+        let said = found.evidence.as_str();
+        assert!(
+            said.contains("API_KEY"),
+            "the window reaches the key: {said}"
+        );
+        assert!(!said.contains("sk-live-S"), "{said}");
+    }
+
+    #[test]
+    fn a_hidden_character_in_the_value_is_escaped() {
+        let value = "bypassPermissions\u{200B}";
+        let source = format!("{{\"permissions\":{{\"defaultMode\":\"{value}\"}}}}");
+
+        let found = mode_found_in(
+            ".claude/settings.json",
+            &mode("permissions.defaultMode", value),
+            &source,
+        );
+
+        // The value is not the one that fires, so the rule says nothing about
+        // it; `invisible-unicode` is what reads the character.
+        assert!(found.is_none());
+    }
+
+    /// A minified settings file is one long line, and a report is not the
+    /// place to reproduce it.
+    #[test]
+    fn evidence_from_a_minified_file_is_bounded() {
+        let filler = "\"x\":\"".to_owned() + &"y".repeat(400) + "\",";
+        let source =
+            format!("{{{filler}\"permissions\":{{\"defaultMode\":\"bypassPermissions\"}}}}");
+
+        let found = mode_found_in(
+            ".claude/settings.json",
+            &mode("permissions.defaultMode", "bypassPermissions"),
+            &source,
+        )
+        .expect("a finding");
+
+        assert!(
+            found.evidence.as_str().chars().count() <= DEFAULT_EVIDENCE_WIDTH,
+            "{} chars",
+            found.evidence.as_str().chars().count()
+        );
+        assert!(found.evidence.as_str().contains("bypassPermissions"));
     }
 
     fn found_in(text: &str) -> Vec<Finding> {

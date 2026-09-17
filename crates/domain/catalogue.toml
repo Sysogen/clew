@@ -24,17 +24,19 @@ version = 1
 glob = "**/.claude/settings.json"
 tool = "claude-code"
 kind = "claude-code"
-extract = ["hooks", "permissions", "mcp-servers"]
-last_verified = "2026-09-11"
-source = "https://code.claude.com/docs/en/settings"
+extract = ["hooks", "permissions", "mcp-servers", "autonomy"]
+check = ["bypass-permissions"]
+last_verified = "2026-09-17"
+source = "https://code.claude.com/docs/en/settings-reference#permissions-defaultmode"
 
 [[surface]]
 glob = "**/.claude/settings.local.json"
 tool = "claude-code"
 kind = "claude-code"
-extract = ["hooks", "permissions", "mcp-servers"]
-last_verified = "2026-09-11"
-source = "https://code.claude.com/docs/en/settings"
+extract = ["hooks", "permissions", "mcp-servers", "autonomy"]
+check = ["bypass-permissions"]
+last_verified = "2026-09-17"
+source = "https://code.claude.com/docs/en/settings-reference#permissions-defaultmode"
 
 [[surface]]
 glob = "**/.mcp.json"
@@ -111,9 +113,10 @@ glob = "**/.codex/config.toml"
 tool = "codex"
 kind = "codex"
 format = "toml"
-extract = ["mcp-servers"]
-last_verified = "2026-09-11"
-source = "https://github.com/openai/codex/blob/main/docs/config.md"
+extract = ["mcp-servers", "autonomy"]
+check = ["bypass-permissions"]
+last_verified = "2026-09-17"
+source = "https://github.com/openai/codex/blob/main/codex-rs/protocol/src/config_types.rs"
 
 [[surface]]
 glob = "**/AGENTS.md"
@@ -328,9 +331,10 @@ scope = "home"
 glob = ".claude/settings.json"
 tool = "claude-code"
 kind = "claude-code"
-extract = ["hooks", "permissions", "mcp-servers"]
-last_verified = "2026-09-12"
-source = "https://code.claude.com/docs/en/settings"
+extract = ["hooks", "permissions", "mcp-servers", "autonomy"]
+check = ["bypass-permissions"]
+last_verified = "2026-09-17"
+source = "https://code.claude.com/docs/en/settings-reference#permissions-defaultmode"
 
 [[surface]]
 scope = "home"

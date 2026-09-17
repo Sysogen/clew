@@ -13,7 +13,7 @@ use clew_domain::ports::file_tree::{EntryKind, FileTree, FileTreeError};
 use clew_domain::rules;
 use clew_domain::scope::Scope;
 use clew_domain::{
-    Hook, McpServer, Permission, RepoPath, ScanPolicy, Surface, SurfaceKind, catalogue,
+    Autonomy, Hook, McpServer, Permission, RepoPath, ScanPolicy, Surface, SurfaceKind, catalogue,
 };
 
 /// An MCP server, and the file that declared it.
@@ -32,6 +32,15 @@ pub struct GrantedPermission {
     pub source: RepoPath,
     /// The permission itself.
     pub permission: Permission,
+}
+
+/// A mode an agent starts in, and the file that set it.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct DeclaredAutonomy {
+    /// The configuration file it was read from.
+    pub source: RepoPath,
+    /// The mode itself.
+    pub autonomy: Autonomy,
 }
 
 /// A hook, and the file that registered it.
@@ -58,6 +67,8 @@ pub struct DiscoveryReport {
     pub permissions: Vec<GrantedPermission>,
     /// MCP servers the surfaces declare, in path order.
     pub servers: Vec<DeclaredServer>,
+    /// Modes the surfaces start an agent in, in path order.
+    pub autonomy: Vec<DeclaredAutonomy>,
     /// Directories that could not be listed, with the reason.
     pub unreadable: Vec<(RepoPath, FileTreeError)>,
     /// Surfaces that could not be read or understood, with the reason.
@@ -164,6 +175,19 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
                 report.servers.push(DeclaredServer {
                     source: path.clone(),
                     server,
+                });
+            }
+            for mode in found.autonomy {
+                report.findings.extend(rules::autonomy(
+                    &path,
+                    matched.check,
+                    &mode,
+                    &text,
+                    self.policy.evidence_width(),
+                ));
+                report.autonomy.push(DeclaredAutonomy {
+                    source: path.clone(),
+                    autonomy: mode,
                 });
             }
         }
@@ -315,6 +339,7 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
         report.hooks.sort();
         report.permissions.sort();
         report.servers.sort();
+        report.autonomy.sort();
         report.unreadable.sort_by(|a, b| a.0.cmp(&b.0));
         report.unparsed.sort_by(|a, b| a.0.cmp(&b.0));
         report.findings.sort();
@@ -1221,6 +1246,69 @@ mod tests {
             inner: contents,
             reads: std::cell::RefCell::default(),
         }
+    }
+
+    #[test]
+    fn a_settings_file_bypassing_permissions_is_a_finding() {
+        let tree = tree_of(&[(".claude/settings.json", EntryKind::File)]);
+        let contents = FakeContents::default().file(
+            ".claude/settings.json",
+            "{\n  \"permissions\": {\n    \"defaultMode\": \"bypassPermissions\"\n  }\n}\n",
+        );
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &ScanPolicy::default()).run();
+
+        assert_eq!(report.findings.len(), 1, "{report:?}");
+        assert_eq!(report.findings[0].rule, RuleId::BypassPermissions);
+        assert_eq!(report.findings[0].severity, Severity::High);
+        assert_eq!(report.findings[0].at.map(|p| p.line), Some(3));
+        assert!(report.is_complete(), "{report:?}");
+    }
+
+    #[test]
+    fn a_codex_configuration_without_a_sandbox_is_a_finding() {
+        let tree = tree_of(&[(".codex/config.toml", EntryKind::File)]);
+        let contents = FakeContents::default().file(
+            ".codex/config.toml",
+            "model = \"o3\"\nsandbox_mode = \"danger-full-access\"\n",
+        );
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &ScanPolicy::default()).run();
+
+        assert_eq!(report.findings.len(), 1, "{report:?}");
+        assert_eq!(report.findings[0].rule, RuleId::BypassPermissions);
+        assert_eq!(report.findings[0].path.as_str(), ".codex/config.toml");
+    }
+
+    /// Inventory says what the file sets whether or not a rule objects.
+    #[test]
+    fn a_mode_is_reported_even_when_it_is_not_a_finding() {
+        let tree = tree_of(&[(".claude/settings.json", EntryKind::File)]);
+        let contents = FakeContents::default().file(
+            ".claude/settings.json",
+            r#"{"permissions":{"defaultMode":"plan"}}"#,
+        );
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &ScanPolicy::default()).run();
+
+        assert_eq!(report.autonomy.len(), 1, "{report:?}");
+        assert_eq!(report.autonomy[0].autonomy.value, "plan");
+        assert_eq!(report.autonomy[0].source.as_str(), ".claude/settings.json");
+        assert!(report.findings.is_empty(), "{report:?}");
+    }
+
+    #[test]
+    fn a_settings_file_setting_no_mode_declares_none() {
+        let tree = tree_of(&[(".claude/settings.json", EntryKind::File)]);
+        let contents = FakeContents::default().file(
+            ".claude/settings.json",
+            r#"{"permissions":{"allow":["Bash(ls)"]}}"#,
+        );
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &ScanPolicy::default()).run();
+
+        assert!(report.autonomy.is_empty(), "{report:?}");
+        assert!(report.findings.is_empty(), "{report:?}");
     }
 
     #[test]

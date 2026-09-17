@@ -90,6 +90,7 @@ struct ScanOut {
     hooks: Vec<HookOut>,
     permissions: Vec<PermissionOut>,
     servers: Vec<ServerOut>,
+    autonomy: Vec<AutonomyOut>,
     findings: Vec<FindingOut>,
     unreadable: Vec<Problem>,
     unparsed: Vec<Problem>,
@@ -121,6 +122,15 @@ struct PermissionOut {
     tool: String,
     scope: Option<String>,
     unscoped: bool,
+}
+
+#[derive(Serialize)]
+#[cfg_attr(test, derive(serde::Deserialize, Debug, PartialEq))]
+struct AutonomyOut {
+    source: String,
+    key: String,
+    value: String,
+    unchecked: bool,
 }
 
 #[derive(Serialize)]
@@ -224,6 +234,16 @@ impl ScanOut {
                     env: d.server.env.clone(),
                 })
                 .collect(),
+            autonomy: report
+                .autonomy
+                .iter()
+                .map(|d| AutonomyOut {
+                    source: d.source.as_str().to_owned(),
+                    key: d.autonomy.key.clone(),
+                    value: d.autonomy.value.clone(),
+                    unchecked: d.autonomy.is_unchecked(),
+                })
+                .collect(),
             findings: report
                 .findings
                 .iter()
@@ -265,6 +285,8 @@ mod tests {
     use serde_json::Value;
 
     use super::*;
+    use clew_application::DeclaredAutonomy;
+    use clew_domain::Autonomy;
 
     fn path(p: &str) -> RepoPath {
         p.split('/').fold(RepoPath::root(), |acc, s| acc.join(s))
@@ -289,7 +311,7 @@ mod tests {
                 },
             }],
             permissions: vec![GrantedPermission {
-                source: settings,
+                source: settings.clone(),
                 permission: Permission::parse("WebSearch").expect("valid entry"),
             }],
             servers: vec![DeclaredServer {
@@ -298,6 +320,13 @@ mod tests {
                     name: "pg".to_owned(),
                     transport: Transport::local("npx".to_owned(), &args),
                     env: vec!["DATABASE_URL".to_owned()],
+                },
+            }],
+            autonomy: vec![DeclaredAutonomy {
+                source: settings.clone(),
+                autonomy: Autonomy {
+                    key: "permissions.defaultMode".to_owned(),
+                    value: "bypassPermissions".to_owned(),
                 },
             }],
             unreadable: vec![(path("secret"), FileTreeError::PermissionDenied)],
@@ -337,6 +366,10 @@ mod tests {
         assert_eq!(scan["hooks"][0]["action"], "prompt");
         assert_eq!(scan["hooks"][0]["enabled"], false);
         assert_eq!(scan["permissions"][0]["unscoped"], true);
+        assert_eq!(scan["autonomy"][0]["key"], "permissions.defaultMode");
+        assert_eq!(scan["autonomy"][0]["value"], "bypassPermissions");
+        assert_eq!(scan["autonomy"][0]["unchecked"], true);
+        assert_eq!(scan["autonomy"][0]["source"], ".claude/settings.json");
         assert_eq!(scan["servers"][0]["transport"]["type"], "local");
         assert_eq!(scan["servers"][0]["env"][0], "DATABASE_URL");
         assert_eq!(scan["findings"][0]["rule"], "opaque-hook");

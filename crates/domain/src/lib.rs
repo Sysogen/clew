@@ -8,6 +8,7 @@
 //! async runtime. Every capability it needs from the outside world is a trait
 //! in [`ports`], implemented by an adapter.
 
+pub mod autonomy;
 pub mod catalogue;
 pub mod credential;
 pub mod extract;
@@ -24,6 +25,7 @@ pub mod secrets;
 pub mod shell;
 pub mod surface;
 
+pub use autonomy::Autonomy;
 pub use catalogue::{Catalogue, shipped as catalogue};
 pub use hook::Hook;
 pub use mcp_server::{McpServer, Transport};

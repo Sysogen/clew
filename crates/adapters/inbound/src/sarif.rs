@@ -249,10 +249,10 @@ fn notification(path: &RepoPath, text: String) -> Notification {
     }
 }
 
-/// What code scanning shows about a rule: the domain's one line, then what it
-/// means and what to do about it.
-fn rule(id: RuleId) -> Rule {
-    let (full, help) = match id {
+/// What a rule means, and what to do about it. Kept apart from [`rule`] so the
+/// prose can grow with the rule pack without the shape growing with it.
+fn explained(id: RuleId) -> (&'static str, &'static str) {
+    match id {
         RuleId::InvisibleUnicode => (
             "An instruction, rules, skill or hook file holds a character that renders \
              as nothing: zero-width, bidirectional, tag-block or another \
@@ -332,7 +332,29 @@ fn rule(id: RuleId) -> Rule {
              project's dependencies so the lockfile decides the version and checks its \
              integrity.",
         ),
-    };
+        RuleId::BypassPermissions => (
+            "A configuration file starts an agent in a mode that neither asks before it \
+             acts nor keeps a sandbox around what it does: Claude Code's \
+             permissions.defaultMode set to bypassPermissions, or Codex's sandbox_mode \
+             set to danger-full-access. Every prompt and every boundary a later setting \
+             relies on is gone, so any instruction the agent reads, including one \
+             smuggled into a file it is given, runs unattended. Claude Code stopped \
+             honouring bypassPermissions from project and local settings in v2.1.257: a \
+             project file setting it reaches only an older client, though the file asks \
+             for it either way.",
+            "Remove the mode and let the agent ask, or narrow what may happen without \
+             asking through permissions.allow, which is read per operation rather than \
+             wholesale. Where a machine genuinely runs unattended, set the mode in that \
+             machine's user or managed settings rather than in a file the repository \
+             ships, so it goes no further than the machine that meant it.",
+        ),
+    }
+}
+
+/// What code scanning shows about a rule: the domain's one line, then what it
+/// means and what to do about it.
+fn rule(id: RuleId) -> Rule {
+    let (full, help) = explained(id);
     Rule {
         id: id.as_str(),
         short_description: Text {
@@ -515,6 +537,42 @@ mod tests {
         assert_eq!(
             ranked,
             [("invisible-unicode", "high"), ("opaque-hook", "medium")]
+        );
+    }
+
+    /// The rule reaches code scanning as a ranked alert carrying what a reader
+    /// needs to act on it, remediation included.
+    #[test]
+    fn a_mode_finding_is_an_error_with_its_remediation() {
+        let report = DiscoveryReport {
+            findings: vec![finding(
+                ".claude/settings.json",
+                Some((3, 21)),
+                RuleId::BypassPermissions,
+                Severity::High,
+            )],
+            ..DiscoveryReport::default()
+        };
+
+        let log = written(&report);
+
+        assert!(violations(&log).is_empty(), "{:?}", violations(&log));
+        assert_eq!(log["runs"][0]["results"][0]["level"], "error");
+        let rule = &log["runs"][0]["tool"]["driver"]["rules"][0];
+        assert_eq!(rule["id"], "bypass-permissions");
+        assert!(
+            rule["fullDescription"]["text"]
+                .as_str()
+                .expect("a description")
+                .contains("danger-full-access"),
+            "{rule}"
+        );
+        assert!(
+            rule["help"]["text"]
+                .as_str()
+                .expect("help")
+                .contains("permissions.allow"),
+            "{rule}"
         );
     }
 

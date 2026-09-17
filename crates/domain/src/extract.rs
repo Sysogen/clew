@@ -7,6 +7,7 @@
 
 use thiserror::Error;
 
+use crate::autonomy::Autonomy;
 use crate::hook::{Action, Hook};
 use crate::mcp_server::{McpServer, Transport};
 use yaml_rust2::{Yaml, YamlLoader};
@@ -201,6 +202,8 @@ pub enum Extraction {
     Permissions,
     /// Model Context Protocol servers.
     McpServers,
+    /// The mode an agent starts in.
+    Autonomy,
 }
 
 impl Extraction {
@@ -211,6 +214,7 @@ impl Extraction {
             "hooks" => Self::Hooks,
             "permissions" => Self::Permissions,
             "mcp-servers" => Self::McpServers,
+            "autonomy" => Self::Autonomy,
             _ => return None,
         })
     }
@@ -225,6 +229,8 @@ pub struct Findings {
     pub permissions: Vec<Permission>,
     /// MCP servers declared.
     pub servers: Vec<McpServer>,
+    /// Modes the file starts an agent in.
+    pub autonomy: Vec<Autonomy>,
 }
 
 /// Run `wanted` over `contents`, parsing it once.
@@ -249,6 +255,7 @@ pub fn run(wanted: &[Extraction], format: Format, contents: &str) -> Result<Find
             Extraction::Hooks => found.hooks = hooks(&root),
             Extraction::Permissions => found.permissions = permissions(&root, format),
             Extraction::McpServers => found.servers = mcp_servers(&root),
+            Extraction::Autonomy => found.autonomy = autonomy(&root, format),
         }
     }
     Ok(found)
@@ -362,6 +369,36 @@ fn permissions(root: &serde_json::Value, format: Format) -> Vec<Permission> {
         .collect();
     found.sort();
     found
+}
+
+/// The mode a file starts an agent in.
+///
+/// Each tool spells this its own way and honours only its own spelling, so the
+/// format decides which key is read. A blank value selects no mode, so it is a
+/// defect rather than a declaration and is not reported as one.
+fn autonomy(root: &serde_json::Value, format: Format) -> Vec<Autonomy> {
+    let declared = match format {
+        Format::Json | Format::Jsonc => root
+            .get("permissions")
+            .and_then(|p| p.get("defaultMode"))
+            .and_then(serde_json::Value::as_str)
+            .map(|value| ("permissions.defaultMode", value)),
+        Format::Toml => root
+            .get("sandbox_mode")
+            .and_then(serde_json::Value::as_str)
+            .map(|value| ("sandbox_mode", value)),
+        // Frontmatter says what one skill may use, never how a session starts.
+        Format::Markdown => None,
+    };
+
+    declared
+        .filter(|(_, value)| !value.trim().is_empty())
+        .map(|(key, value)| Autonomy {
+            key: key.to_owned(),
+            value: value.to_owned(),
+        })
+        .into_iter()
+        .collect()
 }
 
 /// The entries of a grant list. Settings document a list here, so anything
@@ -871,6 +908,111 @@ env = { DATABASE_URL = "postgres://u:hunter2@h/d", PGPORT = "5432" }
         assert_eq!(
             run(&[Extraction::Hooks], Format::Json, "{not json").map(|f| f.hooks),
             Err(ParseError::NotJson)
+        );
+    }
+
+    fn modes_of(format: Format, text: &str) -> Vec<Autonomy> {
+        run(&[Extraction::Autonomy], format, text)
+            .expect("parses")
+            .autonomy
+    }
+
+    #[test]
+    fn a_permission_mode_is_read_from_settings() {
+        let found = modes_of(
+            Format::Json,
+            r#"{"permissions":{"defaultMode":"bypassPermissions"}}"#,
+        );
+
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].key, "permissions.defaultMode");
+        assert_eq!(found[0].value, "bypassPermissions");
+    }
+
+    /// Read as written, judged later: a mode that asks is still a declaration.
+    #[test]
+    fn a_mode_that_asks_is_read_too() {
+        let found = modes_of(Format::Json, r#"{"permissions":{"defaultMode":"plan"}}"#);
+
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].value, "plan");
+        assert!(!found[0].is_unchecked());
+    }
+
+    #[test]
+    fn a_sandbox_mode_is_read_from_codex_configuration() {
+        let found = modes_of(Format::Toml, "sandbox_mode = \"danger-full-access\"\n");
+
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].key, "sandbox_mode");
+        assert_eq!(found[0].value, "danger-full-access");
+    }
+
+    /// The key sits at the root of a Claude settings file too, and reading it
+    /// there would report a mode Claude Code does not honour.
+    #[test]
+    fn a_mode_outside_the_permissions_block_is_not_read() {
+        assert!(modes_of(Format::Json, r#"{"defaultMode":"bypassPermissions"}"#).is_empty());
+        assert!(
+            modes_of(
+                Format::Json,
+                r#"{"other":{"permissions":{"defaultMode":"bypassPermissions"}}}"#
+            )
+            .is_empty()
+        );
+    }
+
+    /// One tool's key in another tool's file is not that tool's setting.
+    #[test]
+    fn a_key_belonging_to_another_tool_is_not_read() {
+        assert!(modes_of(Format::Json, r#"{"sandbox_mode":"danger-full-access"}"#).is_empty());
+        assert!(
+            modes_of(
+                Format::Toml,
+                "[permissions]\ndefaultMode = \"bypassPermissions\"\n"
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_file_declaring_no_mode_yields_none() {
+        assert!(modes_of(Format::Json, "{}").is_empty());
+        assert!(modes_of(Format::Json, r#"{"permissions":{}}"#).is_empty());
+        assert!(modes_of(Format::Json, r#"{"permissions":{"allow":["Bash(ls)"]}}"#).is_empty());
+        assert!(modes_of(Format::Toml, "model = \"o3\"\n").is_empty());
+    }
+
+    /// A mode selecting nothing is a defect, not a declaration.
+    #[test]
+    fn a_blank_mode_is_not_a_declaration() {
+        assert!(modes_of(Format::Json, r#"{"permissions":{"defaultMode":""}}"#).is_empty());
+        assert!(modes_of(Format::Json, r#"{"permissions":{"defaultMode":"   "}}"#).is_empty());
+    }
+
+    #[test]
+    fn an_unexpected_mode_shape_yields_none() {
+        for text in [
+            r#"{"permissions":"nope"}"#,
+            r#"{"permissions":{"defaultMode":42}}"#,
+            r#"{"permissions":{"defaultMode":null}}"#,
+            r#"{"permissions":{"defaultMode":["bypassPermissions"]}}"#,
+            r#"{"permissions":{"defaultMode":{"mode":"bypassPermissions"}}}"#,
+        ] {
+            assert!(modes_of(Format::Json, text).is_empty(), "{text}");
+        }
+        assert!(modes_of(Format::Toml, "sandbox_mode = 3\n").is_empty());
+    }
+
+    /// Frontmatter declares what one skill may use, and has no mode to read.
+    #[test]
+    fn frontmatter_declares_no_mode() {
+        assert!(
+            modes_of(
+                Format::Markdown,
+                "---\npermissions:\n  defaultMode: bypassPermissions\n---\n"
+            )
+            .is_empty()
         );
     }
 

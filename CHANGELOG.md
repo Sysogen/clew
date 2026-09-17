@@ -5,6 +5,22 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- The `bypass-permissions` rule, severity high. It flags a settings file that
+  starts an agent with neither a permission prompt nor a sandbox: Claude Code's
+  `permissions.defaultMode` set to `bypassPermissions`, or Codex's
+  `sandbox_mode` set to `danger-full-access`. Every later control assumes one of
+  the two is there. Only those two values fire: Codex `approval_policy = "never"`
+  does not, because Codex still sandboxes, to `read-only` by default. Claude Code
+  stopped honouring `bypassPermissions` from project and local settings in
+  v2.1.257, so a repository setting it reaches only an older client, and clew
+  reports it wherever it is written because the file asks for it either way.
+
+- The mode a settings file starts an agent in is reported beside the hooks,
+  permissions and servers it declares, whether or not a rule objects to it. It
+  is the first thing clew reads out of a settings file that is not a grant.
+
 ## [0.5.0] - 2026-09-17
 
 ### Added

@@ -504,6 +504,7 @@ mod tests {
             Extraction::Hooks,
             Extraction::Permissions,
             Extraction::McpServers,
+            Extraction::Autonomy,
         ][..];
         let servers = &[Extraction::McpServers][..];
         let parsed = [
@@ -517,7 +518,10 @@ mod tests {
             (".kiro/hooks/lint-on-save.json", &[Extraction::Hooks][..]),
             (".cursor/mcp.json", servers),
             ("cline_mcp_settings.json", servers),
-            (".codex/config.toml", servers),
+            (
+                ".codex/config.toml",
+                &[Extraction::McpServers, Extraction::Autonomy][..],
+            ),
         ];
         let formats = [
             (".codex/config.toml", Format::Toml),
@@ -664,10 +668,11 @@ mod tests {
         );
     }
 
-    /// A rule reads prose and hook scripts, never settings, whichever tool owns
-    /// the file.
+    /// A rule reads prose, hook scripts, and the mode a settings file starts an
+    /// agent in. Nothing else in a settings file is checked, whichever tool
+    /// owns it.
     #[test]
-    fn a_rule_reads_prose_and_hook_scripts_never_settings() {
+    fn a_rule_reads_prose_hook_scripts_and_the_mode_settings_set() {
         let prose = [
             (Scope::Repository, ".claude/skills/a/SKILL.md"),
             (Scope::Repository, "CLAUDE.md"),
@@ -692,8 +697,14 @@ mod tests {
             (Scope::System, "etc/windsurf/rules/policy.md"),
         ];
         let hooks = [(Scope::Repository, ".claude/hooks/sync.sh")];
+        let modes = [
+            (Scope::Repository, ".claude/settings.json"),
+            (Scope::Repository, ".claude/settings.local.json"),
+            (Scope::Repository, ".codex/config.toml"),
+            (Scope::Home, ".claude/settings.json"),
+        ];
         assert_eq!(
-            prose.len() + hooks.len(),
+            prose.len() + hooks.len() + modes.len(),
             shipped()
                 .rules()
                 .iter()
@@ -726,12 +737,18 @@ mod tests {
             );
         }
 
+        for (scope, path) in modes {
+            let m = shipped()
+                .lookup_in(&p(path), scope)
+                .unwrap_or_else(|| panic!("{path} matched no row"));
+            assert_eq!(m.check, &[RuleId::BypassPermissions], "{path}");
+        }
+
         let settings = [
             (Scope::Repository, ".kiro/settings/mcp.json"),
             (Scope::Repository, ".kiro/hooks/lint-on-save.json"),
             (Scope::Repository, ".cursor/mcp.json"),
             (Scope::Repository, ".zed/settings.json"),
-            (Scope::Repository, ".claude/settings.json"),
             (Scope::Repository, ".env"),
             (Scope::Home, ".kiro/settings/mcp.json"),
             (Scope::Home, ".codeium/windsurf/mcp_config.json"),
@@ -740,7 +757,7 @@ mod tests {
             let m = shipped()
                 .lookup_in(&p(path), scope)
                 .unwrap_or_else(|| panic!("{path} matched no row"));
-            assert!(m.check.is_empty(), "{path} is not prose");
+            assert!(m.check.is_empty(), "{path} sets no mode and is not prose");
         }
     }
 
@@ -808,6 +825,7 @@ mod tests {
             Extraction::Hooks,
             Extraction::Permissions,
             Extraction::McpServers,
+            Extraction::Autonomy,
         ][..];
         let servers = &[Extraction::McpServers][..];
         let expected: &[(&str, SurfaceKind, &[Extraction])] = &[
@@ -1120,7 +1138,7 @@ mod tests {
         let settings = shipped()
             .lookup(&p(".claude/settings.json"))
             .expect("match");
-        assert_eq!(settings.extract.len(), 3, "{:?}", settings.extract);
+        assert_eq!(settings.extract.len(), 4, "{:?}", settings.extract);
     }
 
     #[test]
