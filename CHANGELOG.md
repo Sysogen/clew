@@ -23,10 +23,10 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `.vscode/settings.json` is read, for the switch that auto-approves every tool.
   It was not in the catalogue at all, so nothing in a VS Code workspace was.
 
-- The `unrestricted-shell` rule, severity medium. It flags a settings file or a
-  skill that pre-approves the shell with nothing restricting what it runs:
-  `Bash`, `Bash()` or `Bash(*)` in `permissions.allow`, or in a skill's
-  `allowed-tools`. Every command the agent picks then runs without being shown to
+- The `unrestricted-shell` rule, severity medium. It flags a configuration file
+  or a skill that pre-approves the shell with nothing restricting what it runs:
+  Claude Code's `Bash` or Gemini CLI's `run_shell_command`, bare or at `*`, in
+  `permissions.allow`, `tools.allowed`, or a skill's `allowed-tools`. Every command the agent picks then runs without being shown to
   anyone. Only the shell is flagged: a bare `WebSearch` or `mcp__server__tool` is
   unscoped too, but neither takes an argument restriction, so a bare entry is the
   only way to write that grant. Scoped entries are silent, and so are the `deny`

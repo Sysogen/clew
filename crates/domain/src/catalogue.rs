@@ -513,7 +513,10 @@ mod tests {
             (".claude/settings.local.json", all),
             (".claude/skills/a/SKILL.md", &[Extraction::Permissions][..]),
             (".mcp.json", servers),
-            (".gemini/settings.json", servers),
+            (
+                ".gemini/settings.json",
+                &[Extraction::McpServers, Extraction::Permissions][..],
+            ),
             (".kiro/settings/mcp.json", servers),
             (
                 ".zed/settings.json",
@@ -719,6 +722,11 @@ mod tests {
             (Scope::Repository, ".claude/settings.local.json"),
             (Scope::Home, ".claude/settings.json"),
         ];
+        // Gemini pre-approves tools and says nothing about a mode.
+        let grants = [
+            (Scope::Repository, ".gemini/settings.json"),
+            (Scope::Home, ".gemini/settings.json"),
+        ];
         // These set a mode and pre-approve nothing clew reads.
         let modes = [
             (Scope::Repository, ".codex/config.toml"),
@@ -726,7 +734,12 @@ mod tests {
             (Scope::Repository, ".zed/settings.json"),
         ];
         assert_eq!(
-            prose.len() + hooks.len() + skills.len() + settings_rules.len() + modes.len(),
+            prose.len()
+                + hooks.len()
+                + skills.len()
+                + settings_rules.len()
+                + modes.len()
+                + grants.len(),
             shipped()
                 .rules()
                 .iter()
@@ -763,6 +776,7 @@ mod tests {
             &[RuleId::BypassPermissions, RuleId::UnrestrictedShell],
         );
         checked(&modes, &[RuleId::BypassPermissions]);
+        checked(&grants, &[RuleId::UnrestrictedShell]);
 
         let settings = [
             (Scope::Repository, ".kiro/settings/mcp.json"),
@@ -849,7 +863,11 @@ mod tests {
         let servers = &[Extraction::McpServers][..];
         let expected: &[(&str, SurfaceKind, &[Extraction])] = &[
             (".claude/settings.json", SurfaceKind::ClaudeCode, all),
-            (".gemini/settings.json", SurfaceKind::Gemini, servers),
+            (
+                ".gemini/settings.json",
+                SurfaceKind::Gemini,
+                &[Extraction::McpServers, Extraction::Permissions][..],
+            ),
             (".kiro/settings/mcp.json", SurfaceKind::Kiro, servers),
             (".kiro/steering/product.md", SurfaceKind::Kiro, &[]),
             (

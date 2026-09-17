@@ -362,18 +362,18 @@ fn bypass_permissions() -> (&'static str, &'static str) {
 /// What `unrestricted-shell` means, and what to do about it.
 fn unrestricted_shell() -> (&'static str, &'static str) {
     (
-        "A settings file pre-approves the shell with nothing restricting what it \
-         runs: Bash, Bash() or Bash(*) in permissions.allow, or in a skill's \
+        "A configuration file pre-approves the shell with nothing restricting what \
+         it runs: Claude Code's Bash, Bash() or Bash(*), or Gemini CLI's \
+         run_shell_command, in permissions.allow, tools.allowed, or a skill's \
          allowed-tools. Every command the agent chooses then runs without being \
-         shown to anyone, which is the grant the other permission entries exist to \
-         avoid needing. A tool that takes no argument restriction, such as \
-         WebSearch or an MCP tool, is not flagged: a bare entry is the only way to \
-         write that grant.",
+         shown to anyone, which is the grant the other entries in those lists \
+         exist to avoid needing. A tool that takes no argument restriction, such \
+         as WebSearch or an MCP tool, is not flagged: a bare entry is the only way \
+         to write that grant.",
         "Replace the entry with the commands the project actually runs, scoped, as \
-         Bash(cargo test:*) and Bash(git status:*) are. Where a broad grant is \
+         Bash(cargo test:*) and run_shell_command(git) are. Where a broad grant is \
          genuinely wanted, keeping it in a personal settings.local.json rather than \
-         the settings file the repository ships limits it to the person who chose \
-         it.",
+         the file the repository ships limits it to the person who chose it.",
     )
 }
 

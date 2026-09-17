@@ -216,28 +216,18 @@ pub fn granted(
     }
 
     let entry = permission.written();
-    let placed = entry_at(source, &entry, occurrence)
-        .and_then(|at| found_at(path, RuleId::UnrestrictedShell, source, at, width));
-    Some(placed.unwrap_or_else(|| Finding {
-        path: path.clone(),
-        at: None,
-        rule: RuleId::UnrestrictedShell,
-        severity: RuleId::UnrestrictedShell.severity(),
-        evidence: Evidence::quote(&Line::new(&entry), 0, width),
-    }))
+    Some(
+        GRANT_LISTS
+            .iter()
+            .find_map(|key| after_key(source, key, &entry, occurrence))
+            .and_then(|at| found_at(path, RuleId::UnrestrictedShell, source, at, width))
+            .unwrap_or_else(|| about_file(path, RuleId::UnrestrictedShell, &entry, width)),
+    )
 }
 
-/// Where `source` writes the `occurrence`th `entry` as a whole grant.
-///
-/// A grant followed by `(` is a longer one that merely starts the same way, so
-/// a bare `Bash` is never located inside `Bash(ls)`.
-fn entry_at(source: &str, entry: &str, occurrence: usize) -> Option<usize> {
-    source
-        .match_indices(entry)
-        .filter(|(at, _)| !source[at + entry.len()..].starts_with('('))
-        .nth(occurrence)
-        .map(|(at, _)| at)
-}
+/// The keys a tool lists its pre-approvals under. A grant is looked for only
+/// after one of them, so a tool name in a description is not taken for a grant.
+const GRANT_LISTS: &[&str] = &["allow", "allowed-tools", "allowed"];
 
 /// Whether `text` is a shell script, by its extension or its `#!` line.
 fn is_shell(path: &RepoPath, text: &str) -> bool {
@@ -370,8 +360,7 @@ mod tests {
         assert!(grant_found_in("Bash(cargo test:*)", source, 0).is_none());
     }
 
-    /// Measured against real settings: every unscoped entry in the corpus was
-    /// a tool with no scope to give, so these must stay silent.
+    /// Measured: every unscoped entry in the corpus was one of these.
     #[test]
     fn a_tool_that_takes_no_scope_is_no_finding() {
         let source = r#"{"permissions":{"allow":["WebSearch","mcp__figma__use_figma"]}}"#;
@@ -409,6 +398,27 @@ mod tests {
         assert_eq!(second.at.map(|p| p.line), Some(4));
     }
 
+    /// A tool name in a description is not a grant. Unanchored, the finding
+    /// lands on the description.
+    #[test]
+    fn a_tool_name_outside_the_grant_list_is_not_the_grant() {
+        let source = "{\n  \"description\": \"Bash\",\n  \"permissions\": {\n    \"allow\": [\"Bash\"]\n  }\n}\n";
+
+        let found = grant_found_in("Bash", source, 0).expect("a finding");
+
+        assert_eq!(found.at.map(|p| p.line), Some(4), "{found:?}");
+    }
+
+    /// A scope holding the tool's own name is not another grant of it.
+    #[test]
+    fn a_name_inside_a_scope_is_not_another_grant() {
+        let source = "{\n  \"allow\": [\n    \"Bash(echo Bash)\",\n    \"Bash\"\n  ]\n}\n";
+
+        let found = grant_found_in("Bash", source, 0).expect("a finding");
+
+        assert_eq!(found.at.map(|p| p.line), Some(4), "{found:?}");
+    }
+
     /// A bare grant is a whole entry, not the start of a longer one.
     #[test]
     fn a_bare_grant_is_not_found_inside_a_scoped_one() {
@@ -419,8 +429,7 @@ mod tests {
         assert_eq!(found.at.map(|p| p.line), Some(4), "{found:?}");
     }
 
-    /// A grant the text does not hold, because the format wrote it otherwise,
-    /// is still worth saying, about the file rather than at a wrong line.
+    /// A grant the text does not hold is still worth saying, about the file.
     #[test]
     fn a_grant_the_text_escaped_is_reported_about_the_file() {
         let source = r#"{"permissions":{"allow":["\u0042ash"]}}"#;
