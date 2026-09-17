@@ -5,6 +5,8 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-17
+
 ### Added
 
 - A script a hook runs is read as a hook script wherever it sits in the
@@ -336,7 +338,8 @@ tagged release.
   devcontainers.
 - `CLEW_MAX_DEPTH` sets the directory recursion limit.
 
-[Unreleased]: https://github.com/sysogen/clew/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/sysogen/clew/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/sysogen/clew/releases/tag/v0.5.0
 [0.4.0]: https://github.com/sysogen/clew/releases/tag/v0.4.0
 [0.3.0]: https://github.com/sysogen/clew/releases/tag/v0.3.0
 [0.2.0]: https://github.com/sysogen/clew/releases/tag/v0.2.0

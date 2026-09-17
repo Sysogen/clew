@@ -170,7 +170,7 @@ permissions:
 
 steps:
   - uses: actions/checkout@v6
-  - uses: Sysogen/clew@v0.4.0
+  - uses: Sysogen/clew@v0.5.0
     with:
       fail-on: high
 ```
