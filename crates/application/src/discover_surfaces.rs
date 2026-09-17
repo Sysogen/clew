@@ -165,8 +165,8 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
                     hook,
                 });
             }
-            // Counted like hook commands: one file may grant the same
-            // operation twice, and each copy is placed at its own entry.
+            // Counted like hook commands: a file may grant one operation
+            // twice, and each copy is placed at its own entry.
             let mut grants: Vec<String> = Vec::new();
             for permission in found.permissions {
                 let entry = permission.written();
@@ -1279,7 +1279,7 @@ mod tests {
         assert_eq!(report.permissions.len(), 2, "both are still inventory");
     }
 
-    /// A skill's frontmatter grants tools the same way a settings file does.
+    /// A skill's frontmatter grants tools the same way settings do.
     #[test]
     fn a_skill_granting_the_shell_is_a_finding() {
         let tree = tree_of(&[(".claude/skills/build/SKILL.md", EntryKind::File)]);
@@ -1298,8 +1298,8 @@ mod tests {
         );
     }
 
-    /// Measured against real settings files: every unscoped entry in the
-    /// corpus was a tool with no scope to give. None of them is a finding.
+    /// Measured: every unscoped entry in the corpus was a tool with no scope
+    /// to give, and none is a finding.
     #[test]
     fn a_scoped_grant_and_a_scopeless_tool_are_no_finding() {
         let tree = tree_of(&[(".claude/settings.json", EntryKind::File)]);

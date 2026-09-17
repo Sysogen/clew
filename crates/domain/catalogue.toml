@@ -132,8 +132,9 @@ source = "https://agents.md"
 glob = "**/.gemini/settings.json"
 tool = "gemini-cli"
 kind = "gemini"
-extract = ["mcp-servers"]
-last_verified = "2026-09-12"
+extract = ["mcp-servers", "permissions"]
+check = ["unrestricted-shell"]
+last_verified = "2026-09-17"
 source = "https://github.com/google-gemini/gemini-cli/blob/main/docs/reference/configuration.md"
 
 # --- Cursor -----------------------------------------------------------------
@@ -352,8 +353,9 @@ scope = "home"
 glob = ".gemini/settings.json"
 tool = "gemini-cli"
 kind = "gemini"
-extract = ["mcp-servers"]
-last_verified = "2026-09-12"
+extract = ["mcp-servers", "permissions"]
+check = ["unrestricted-shell"]
+last_verified = "2026-09-17"
 source = "https://github.com/google-gemini/gemini-cli/blob/main/docs/reference/configuration.md"
 
 [[surface]]

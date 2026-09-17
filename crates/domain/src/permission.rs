@@ -3,9 +3,9 @@
 
 //! Operations an agent may perform without asking.
 
-/// The tool that runs a command of the agent's choosing. Spelt as the
-/// settings spell it, which is case-sensitive.
-const SHELL: &str = "Bash";
+/// The tools that run a command of the agent's choosing, spelt as each tool's
+/// own settings spell them, which is case-sensitive.
+const SHELLS: &[&str] = &["Bash", "run_shell_command"];
 
 /// A pre-approved operation, as written in the configuration.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -30,9 +30,11 @@ impl Permission {
             return None;
         }
 
-        // Last ')' rather than first, so a scope containing parentheses survives.
+        // Last ')' rather than first, so a scope containing parentheses
+        // survives, and it has to end the entry: anything after it belongs to
+        // no grant, which makes the whole entry a defect.
         match (entry.find('('), entry.rfind(')')) {
-            (Some(open), Some(close)) if open < close => {
+            (Some(open), Some(close)) if open < close && close + 1 == entry.len() => {
                 let tool = entry[..open].trim();
                 (!tool.is_empty()).then(|| Self {
                     tool: tool.to_owned(),
@@ -58,11 +60,11 @@ impl Permission {
     /// Whether this grants the shell with nothing restricting what it runs.
     ///
     /// Only the shell. A bare `WebSearch` or `mcp__server__tool` is unscoped
-    /// too, but neither takes an argument restriction, so a bare entry is the
-    /// only way to write that grant and flagging it would say nothing.
+    /// too, but takes no restriction, so a bare entry is the only way to write
+    /// it and flagging it would say nothing.
     #[must_use]
     pub fn is_unrestricted_shell(&self) -> bool {
-        self.tool == SHELL && self.is_unscoped()
+        SHELLS.contains(&self.tool.as_str()) && self.is_unscoped()
     }
 
     /// The entry rebuilt as a file writes it, for finding it in one.
@@ -113,7 +115,13 @@ mod tests {
 
     #[test]
     fn an_unbounded_shell_grant_is_unrestricted() {
-        for entry in ["Bash", "Bash()", "Bash(*)"] {
+        for entry in [
+            "Bash",
+            "Bash()",
+            "Bash(*)",
+            "run_shell_command",
+            "run_shell_command(*)",
+        ] {
             assert!(
                 parsed(entry).is_unrestricted_shell(),
                 "{entry} runs anything"
@@ -128,6 +136,8 @@ mod tests {
             "Bash(cargo test:*)",
             "Bash(*.sh)",
             "Bash(git:*)",
+            "run_shell_command(git)",
+            "run_shell_command(npm test)",
         ] {
             assert!(
                 !parsed(entry).is_unrestricted_shell(),
@@ -136,8 +146,7 @@ mod tests {
         }
     }
 
-    /// A tool with no argument restriction to give is not an unbounded grant
-    /// of one: a bare entry is the only way to write it.
+    /// A tool with no restriction to give is not an unbounded grant of one.
     #[test]
     fn a_tool_that_takes_no_scope_is_not_the_shell() {
         for entry in [
@@ -159,7 +168,7 @@ mod tests {
                 "{entry} is not the tool"
             );
         }
-        // Space around an entry is not part of it, so it is still the tool.
+        // Space around an entry is not part of it.
         assert!(parsed("  Bash  ").is_unrestricted_shell());
     }
 
@@ -168,13 +177,23 @@ mod tests {
         for entry in ["Bash(*)", "Bash()", "Bash(cargo test:*)", "WebSearch"] {
             assert_eq!(parsed(entry).written(), entry, "{entry}");
         }
-        // Surrounding space is not part of the entry, so it does not come back.
+        // Nor does it come back.
         assert_eq!(parsed("  Bash(ls)  ").written(), "Bash(ls)");
     }
 
     #[test]
     fn an_entry_that_grants_nothing_is_rejected() {
-        for entry in ["", "   ", "Bash(", "Bash)", ")Bash(", "(ls)", "()"] {
+        for entry in [
+            "",
+            "   ",
+            "Bash(",
+            "Bash)",
+            ")Bash(",
+            "(ls)",
+            "()",
+            "Bash(*)junk",
+            "Bash(ls) x",
+        ] {
             assert_eq!(
                 Permission::parse(entry),
                 None,
