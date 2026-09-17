@@ -1285,7 +1285,7 @@ mod tests {
         assert_eq!(report.findings[0].at.map(|p| p.line), Some(3));
     }
 
-    /// A trusted server is still a server, and inventory says so.
+    /// A trusted server is still a server.
     #[test]
     fn a_trusted_server_is_still_a_declared_server() {
         let tree = tree_of(&[(".gemini/settings.json", EntryKind::File)]);
@@ -1314,8 +1314,8 @@ mod tests {
         assert_eq!(report.servers.len(), 2);
     }
 
-    /// `trust` is Gemini's spelling. A copy of it in a file read by a tool
-    /// that does not honour it is recorded, not judged.
+    /// A copy of Gemini's spelling in a file that ignores it is recorded,
+    /// not judged.
     #[test]
     fn a_stray_trust_outside_gemini_is_inventory_only() {
         let tree = tree_of(&[(".mcp.json", EntryKind::File)]);

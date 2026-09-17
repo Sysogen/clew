@@ -249,19 +249,19 @@ pub fn server(
     if !checks.contains(&RuleId::TrustedServer) || !server.trusted {
         return None;
     }
-
-    let quoted = serde_json::to_string(&server.name).ok()?;
-    let placed = source
-        .find(&quoted)
-        .and_then(|at| found_at(path, RuleId::TrustedServer, source, at + 1, width));
-    Some(placed.unwrap_or_else(|| Finding {
-        path: path.clone(),
-        at: None,
-        rule: RuleId::TrustedServer,
-        severity: RuleId::TrustedServer.severity(),
-        evidence: Evidence::quote(&Line::new(&server.name), 0, width),
-    }))
+    Some(
+        SERVER_BLOCKS
+            .iter()
+            .find_map(|key| after_key(source, key, &server.name, 0))
+            .and_then(|at| found_at(path, RuleId::TrustedServer, source, at, width))
+            .unwrap_or_else(|| about_file(path, RuleId::TrustedServer, &server.name, width)),
+    )
 }
+
+/// The keys a tool declares its servers under. A name is looked for only after
+/// one of them, so a name repeated in a description is not taken for the
+/// declaration.
+const SERVER_BLOCKS: &[&str] = &["mcpServers", "mcp_servers", "context_servers"];
 
 /// Whether `text` is a shell script, by its extension or its `#!` line.
 fn is_shell(path: &RepoPath, text: &str) -> bool {
@@ -414,6 +414,37 @@ mod tests {
             )
             .is_none()
         );
+    }
+
+    /// A name repeated outside the block is not the declaration. Unanchored,
+    /// the finding lands on the description.
+    #[test]
+    fn a_name_outside_the_server_block_is_not_the_declaration() {
+        let source = "{\n  \"description\": \"pg\",\n  \"mcpServers\": {\n    \"pg\": {\"trust\": true}\n  }\n}\n";
+
+        let found = server_found_in(&declared("pg", true), source).expect("a finding");
+
+        assert_eq!(found.at.map(|p| p.line), Some(4), "{found:?}");
+    }
+
+    /// A name the text does not hold leaves the finding about the file.
+    #[test]
+    fn an_escaped_server_name_is_reported_about_the_file() {
+        let source = r#"{"mcpServers":{"\u0070g":{"trust":true}}}"#;
+
+        let found = server_found_in(&declared("pg", true), source).expect("a finding");
+
+        assert_eq!(found.at, None, "{found:?}");
+    }
+
+    /// A name outside ASCII still places, on a character boundary.
+    #[test]
+    fn a_server_named_in_another_script_still_places() {
+        let source = "{\n  \"mcpServers\": {\n    \"caf\u{e9}\": {\"trust\": true}\n  }\n}\n";
+
+        let found = server_found_in(&declared("caf\u{e9}", true), source).expect("a finding");
+
+        assert_eq!(found.at.map(|p| p.line), Some(3), "{found:?}");
     }
 
     #[test]
