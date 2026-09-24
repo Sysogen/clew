@@ -25,7 +25,7 @@ glob = "**/.claude/settings.json"
 tool = "claude-code"
 kind = "claude-code"
 extract = ["hooks", "permissions", "mcp-servers", "autonomy"]
-check = ["bypass-permissions"]
+check = ["bypass-permissions", "unrestricted-shell"]
 last_verified = "2026-09-17"
 source = "https://code.claude.com/docs/en/settings-reference#permissions-defaultmode"
 
@@ -34,7 +34,7 @@ glob = "**/.claude/settings.local.json"
 tool = "claude-code"
 kind = "claude-code"
 extract = ["hooks", "permissions", "mcp-servers", "autonomy"]
-check = ["bypass-permissions"]
+check = ["bypass-permissions", "unrestricted-shell"]
 last_verified = "2026-09-17"
 source = "https://code.claude.com/docs/en/settings-reference#permissions-defaultmode"
 
@@ -66,10 +66,10 @@ source = "https://code.claude.com/docs/en/hooks"
 glob = "**/.claude/skills/**/SKILL.md"
 tool = "claude-code"
 kind = "skill"
-check = ["invisible-unicode"]
+check = ["invisible-unicode", "unrestricted-shell"]
 format = "markdown"
 extract = ["permissions"]
-last_verified = "2026-09-11"
+last_verified = "2026-09-17"
 source = "https://code.claude.com/docs/en/skills"
 
 [[surface]]
@@ -132,8 +132,9 @@ source = "https://agents.md"
 glob = "**/.gemini/settings.json"
 tool = "gemini-cli"
 kind = "gemini"
-extract = ["mcp-servers"]
-last_verified = "2026-09-12"
+extract = ["mcp-servers", "permissions"]
+check = ["unrestricted-shell"]
+last_verified = "2026-09-17"
 source = "https://github.com/google-gemini/gemini-cli/blob/main/docs/reference/configuration.md"
 
 # --- Cursor -----------------------------------------------------------------
@@ -343,7 +344,7 @@ glob = ".claude/settings.json"
 tool = "claude-code"
 kind = "claude-code"
 extract = ["hooks", "permissions", "mcp-servers", "autonomy"]
-check = ["bypass-permissions"]
+check = ["bypass-permissions", "unrestricted-shell"]
 last_verified = "2026-09-17"
 source = "https://code.claude.com/docs/en/settings-reference#permissions-defaultmode"
 
@@ -352,8 +353,9 @@ scope = "home"
 glob = ".gemini/settings.json"
 tool = "gemini-cli"
 kind = "gemini"
-extract = ["mcp-servers"]
-last_verified = "2026-09-12"
+extract = ["mcp-servers", "permissions"]
+check = ["unrestricted-shell"]
+last_verified = "2026-09-17"
 source = "https://github.com/google-gemini/gemini-cli/blob/main/docs/reference/configuration.md"
 
 [[surface]]

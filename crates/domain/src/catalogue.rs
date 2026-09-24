@@ -513,7 +513,10 @@ mod tests {
             (".claude/settings.local.json", all),
             (".claude/skills/a/SKILL.md", &[Extraction::Permissions][..]),
             (".mcp.json", servers),
-            (".gemini/settings.json", servers),
+            (
+                ".gemini/settings.json",
+                &[Extraction::McpServers, Extraction::Permissions][..],
+            ),
             (".kiro/settings/mcp.json", servers),
             (
                 ".zed/settings.json",
@@ -674,12 +677,21 @@ mod tests {
         );
     }
 
-    /// A rule reads prose, hook scripts, and the mode a file starts an agent
-    /// in. Nothing else in a configuration file is checked.
+    /// Every path matches a row, and that row names exactly `rules`.
+    fn checked(paths: &[(Scope, &str)], rules: &[RuleId]) {
+        for (scope, path) in paths {
+            let m = shipped()
+                .lookup_in(&p(path), *scope)
+                .unwrap_or_else(|| panic!("{path} matched no row"));
+            assert_eq!(m.check, rules, "{path}");
+        }
+    }
+
+    /// A rule reads prose, hook scripts, and the two things a configuration
+    /// file decides: the mode it starts an agent in, and what it pre-approves.
     #[test]
-    fn a_rule_reads_prose_hook_scripts_and_the_mode_settings_set() {
+    fn a_rule_reads_prose_hook_scripts_and_what_settings_decide() {
         let prose = [
-            (Scope::Repository, ".claude/skills/a/SKILL.md"),
             (Scope::Repository, "CLAUDE.md"),
             (Scope::Repository, ".kiro/steering/product.md"),
             (Scope::Repository, "AGENTS.md"),
@@ -702,16 +714,32 @@ mod tests {
             (Scope::System, "etc/windsurf/rules/policy.md"),
         ];
         let hooks = [(Scope::Repository, ".claude/hooks/sync.sh")];
-        let modes = [
+        // Prose that also grants tools, so both rules read it.
+        let skills = [(Scope::Repository, ".claude/skills/a/SKILL.md")];
+        // A settings file decides the mode and the pre-approvals both.
+        let settings_rules = [
             (Scope::Repository, ".claude/settings.json"),
             (Scope::Repository, ".claude/settings.local.json"),
+            (Scope::Home, ".claude/settings.json"),
+        ];
+        // Gemini pre-approves tools and says nothing about a mode.
+        let grants = [
+            (Scope::Repository, ".gemini/settings.json"),
+            (Scope::Home, ".gemini/settings.json"),
+        ];
+        // These set a mode and pre-approve nothing clew reads.
+        let modes = [
             (Scope::Repository, ".codex/config.toml"),
             (Scope::Repository, ".vscode/settings.json"),
             (Scope::Repository, ".zed/settings.json"),
-            (Scope::Home, ".claude/settings.json"),
         ];
         assert_eq!(
-            prose.len() + hooks.len() + modes.len(),
+            prose.len()
+                + hooks.len()
+                + skills.len()
+                + settings_rules.len()
+                + modes.len()
+                + grants.len(),
             shipped()
                 .rules()
                 .iter()
@@ -719,12 +747,8 @@ mod tests {
                 .count(),
             "every checked row needs a case here"
         );
-        for (scope, path) in prose {
-            let m = shipped()
-                .lookup_in(&p(path), scope)
-                .unwrap_or_else(|| panic!("{path} matched no row"));
-            assert_eq!(m.check, &[RuleId::InvisibleUnicode], "{path}");
-        }
+
+        checked(&prose, &[RuleId::InvisibleUnicode]);
         for (scope, path) in hooks {
             let m = shipped()
                 .lookup_in(&p(path), scope)
@@ -743,13 +767,16 @@ mod tests {
                 "{path}"
             );
         }
-
-        for (scope, path) in modes {
-            let m = shipped()
-                .lookup_in(&p(path), scope)
-                .unwrap_or_else(|| panic!("{path} matched no row"));
-            assert_eq!(m.check, &[RuleId::BypassPermissions], "{path}");
-        }
+        checked(
+            &skills,
+            &[RuleId::InvisibleUnicode, RuleId::UnrestrictedShell],
+        );
+        checked(
+            &settings_rules,
+            &[RuleId::BypassPermissions, RuleId::UnrestrictedShell],
+        );
+        checked(&modes, &[RuleId::BypassPermissions]);
+        checked(&grants, &[RuleId::UnrestrictedShell]);
 
         let settings = [
             (Scope::Repository, ".kiro/settings/mcp.json"),
@@ -836,7 +863,11 @@ mod tests {
         let servers = &[Extraction::McpServers][..];
         let expected: &[(&str, SurfaceKind, &[Extraction])] = &[
             (".claude/settings.json", SurfaceKind::ClaudeCode, all),
-            (".gemini/settings.json", SurfaceKind::Gemini, servers),
+            (
+                ".gemini/settings.json",
+                SurfaceKind::Gemini,
+                &[Extraction::McpServers, Extraction::Permissions][..],
+            ),
             (".kiro/settings/mcp.json", SurfaceKind::Kiro, servers),
             (".kiro/steering/product.md", SurfaceKind::Kiro, &[]),
             (

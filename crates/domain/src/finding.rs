@@ -33,6 +33,8 @@ pub enum RuleId {
     UnpinnedRemotePackage,
     /// A mode that lets an agent act with neither a prompt nor a sandbox.
     BypassPermissions,
+    /// A pre-approval of the shell with nothing restricting what it runs.
+    UnrestrictedShell,
 }
 
 impl RuleId {
@@ -48,6 +50,7 @@ impl RuleId {
             Self::UnverifiedDownload => "unverified-download",
             Self::UnpinnedRemotePackage => "unpinned-remote-package",
             Self::BypassPermissions => "bypass-permissions",
+            Self::UnrestrictedShell => "unrestricted-shell",
         }
     }
 
@@ -77,6 +80,9 @@ impl RuleId {
             Self::BypassPermissions => {
                 "A mode that starts an agent with neither a permission prompt nor a sandbox"
             }
+            Self::UnrestrictedShell => {
+                "A pre-approved shell grant with nothing restricting the commands it runs"
+            }
         }
     }
 
@@ -89,7 +95,9 @@ impl RuleId {
             | Self::DecodeAndExecute
             | Self::CredentialExfiltration
             | Self::BypassPermissions => Severity::High,
-            Self::OpaqueHook | Self::UnverifiedDownload => Severity::Medium,
+            Self::OpaqueHook | Self::UnverifiedDownload | Self::UnrestrictedShell => {
+                Severity::Medium
+            }
             Self::UnpinnedRemotePackage => Severity::Low,
         }
     }
@@ -106,6 +114,7 @@ impl RuleId {
             "unverified-download" => Self::UnverifiedDownload,
             "unpinned-remote-package" => Self::UnpinnedRemotePackage,
             "bypass-permissions" => Self::BypassPermissions,
+            "unrestricted-shell" => Self::UnrestrictedShell,
             _ => return None,
         })
     }
