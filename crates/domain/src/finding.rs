@@ -31,6 +31,8 @@ pub enum RuleId {
     UnverifiedDownload,
     /// A hook that runs a registry package at a tag that moves.
     UnpinnedRemotePackage,
+    /// A mode that lets an agent act with neither a prompt nor a sandbox.
+    BypassPermissions,
 }
 
 impl RuleId {
@@ -45,6 +47,7 @@ impl RuleId {
             Self::CredentialExfiltration => "credential-exfiltration",
             Self::UnverifiedDownload => "unverified-download",
             Self::UnpinnedRemotePackage => "unpinned-remote-package",
+            Self::BypassPermissions => "bypass-permissions",
         }
     }
 
@@ -71,6 +74,9 @@ impl RuleId {
             Self::UnpinnedRemotePackage => {
                 "A registry package run at a tag that moves, such as @latest"
             }
+            Self::BypassPermissions => {
+                "A mode that starts an agent with neither a permission prompt nor a sandbox"
+            }
         }
     }
 
@@ -81,7 +87,8 @@ impl RuleId {
             Self::InvisibleUnicode
             | Self::DownloadAndExecute
             | Self::DecodeAndExecute
-            | Self::CredentialExfiltration => Severity::High,
+            | Self::CredentialExfiltration
+            | Self::BypassPermissions => Severity::High,
             Self::OpaqueHook | Self::UnverifiedDownload => Severity::Medium,
             Self::UnpinnedRemotePackage => Severity::Low,
         }
@@ -98,6 +105,7 @@ impl RuleId {
             "credential-exfiltration" => Self::CredentialExfiltration,
             "unverified-download" => Self::UnverifiedDownload,
             "unpinned-remote-package" => Self::UnpinnedRemotePackage,
+            "bypass-permissions" => Self::BypassPermissions,
             _ => return None,
         })
     }
