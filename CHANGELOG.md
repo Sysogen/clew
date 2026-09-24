@@ -5,6 +5,8 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-24
+
 ### Added
 
 - The `bypass-permissions` rule, severity high. It flags a configuration file
@@ -16,9 +18,9 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `approval_policy = "never"` does not, because Codex still sandboxes, to
   `read-only` by default; the other three sandbox nothing, so there the prompt
   was the only control. Claude Code stopped honouring `bypassPermissions` from
-  project and local settings in v2.1.257, so a repository setting it reaches only
-  an older client, and Zed's built-in security rules still prompt for a few
-  actions.
+  project and local settings in v2.1.257, so a repository setting it reaches
+  only an older client, and Zed's built-in security rules still prompt for a
+  few actions.
 
 - `.vscode/settings.json` is read, for the switch that auto-approves every tool.
   It was not in the catalogue at all, so nothing in a VS Code workspace was.
@@ -26,11 +28,12 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The `unrestricted-shell` rule, severity medium. It flags a configuration file
   or a skill that pre-approves the shell with nothing restricting what it runs:
   Claude Code's `Bash` or Gemini CLI's `run_shell_command`, bare or at `*`, in
-  `permissions.allow`, `tools.allowed`, or a skill's `allowed-tools`. Every command the agent picks then runs without being shown to
-  anyone. Only the shell is flagged: a bare `WebSearch` or `mcp__server__tool` is
-  unscoped too, but neither takes an argument restriction, so a bare entry is the
-  only way to write that grant. Scoped entries are silent, and so are the `deny`
-  and `ask` lists, which clew does not read as grants. One file granting the same
+  `permissions.allow`, `tools.allowed`, or a skill's `allowed-tools`. Every
+  command the agent picks then runs without being shown to anyone. Only the
+  shell is flagged: a bare `WebSearch` or `mcp__server__tool` is unscoped too,
+  but neither takes an argument restriction, so a bare entry is the only way to
+  write that grant. Scoped entries are silent, and so are the `deny` and `ask`
+  lists, which clew does not read as grants. One file granting the same
   operation twice gives a finding at each entry.
 
 - The `trusted-server` rule, severity medium. It flags an MCP server declared
@@ -380,7 +383,8 @@ tagged release.
   devcontainers.
 - `CLEW_MAX_DEPTH` sets the directory recursion limit.
 
-[Unreleased]: https://github.com/sysogen/clew/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/sysogen/clew/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/sysogen/clew/releases/tag/v0.6.0
 [0.5.0]: https://github.com/sysogen/clew/releases/tag/v0.5.0
 [0.4.0]: https://github.com/sysogen/clew/releases/tag/v0.4.0
 [0.3.0]: https://github.com/sysogen/clew/releases/tag/v0.3.0
