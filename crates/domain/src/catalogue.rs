@@ -687,10 +687,11 @@ mod tests {
         }
     }
 
-    /// A rule reads prose, hook scripts, and the two things a configuration
-    /// file decides: the mode it starts an agent in, and what it pre-approves.
+    /// A rule reads prose, hook scripts, and the three things a configuration
+    /// file decides: the mode it starts an agent in, what it pre-approves, and
+    /// whether a server it declares is confirmed.
     #[test]
-    fn a_rule_reads_prose_hook_scripts_and_what_settings_decide() {
+    fn a_rule_reads_prose_hook_scripts_and_what_configuration_decides() {
         let prose = [
             (Scope::Repository, "CLAUDE.md"),
             (Scope::Repository, ".kiro/steering/product.md"),
@@ -722,8 +723,9 @@ mod tests {
             (Scope::Repository, ".claude/settings.local.json"),
             (Scope::Home, ".claude/settings.json"),
         ];
-        // Gemini pre-approves tools and says nothing about a mode.
-        let grants = [
+        // Gemini pre-approves tools and decides whether a server it declares
+        // is confirmed, and says nothing about a mode.
+        let gemini = [
             (Scope::Repository, ".gemini/settings.json"),
             (Scope::Home, ".gemini/settings.json"),
         ];
@@ -739,7 +741,7 @@ mod tests {
                 + skills.len()
                 + settings_rules.len()
                 + modes.len()
-                + grants.len(),
+                + gemini.len(),
             shipped()
                 .rules()
                 .iter()
@@ -776,7 +778,7 @@ mod tests {
             &[RuleId::BypassPermissions, RuleId::UnrestrictedShell],
         );
         checked(&modes, &[RuleId::BypassPermissions]);
-        checked(&grants, &[RuleId::UnrestrictedShell]);
+        checked(&gemini, &[RuleId::UnrestrictedShell, RuleId::TrustedServer]);
 
         let settings = [
             (Scope::Repository, ".kiro/settings/mcp.json"),

@@ -8,6 +8,7 @@ use icu_properties::props::{DefaultIgnorableCodePoint, VariationSelector};
 
 use crate::autonomy::Autonomy;
 use crate::finding::{Evidence, Finding, Line, Position, RuleId};
+use crate::mcp_server::McpServer;
 use crate::permission::Permission;
 use crate::repo_path::RepoPath;
 use crate::shell;
@@ -40,9 +41,12 @@ pub fn run(path: &RepoPath, checks: &[RuleId], text: &str, width: usize) -> Vec<
     for check in checks {
         match check {
             RuleId::InvisibleUnicode => found.extend(invisible_unicode(path, text, width)),
-            // None reads the text: an opaque hook has none to read, and a mode
-            // and a grant are read from the parsed value.
-            RuleId::OpaqueHook | RuleId::BypassPermissions | RuleId::UnrestrictedShell => {}
+            // None reads the text: an opaque hook has none to read, and the
+            // rest are read from the parsed value.
+            RuleId::OpaqueHook
+            | RuleId::BypassPermissions
+            | RuleId::UnrestrictedShell
+            | RuleId::TrustedServer => {}
             RuleId::DownloadAndExecute
             | RuleId::DecodeAndExecute
             | RuleId::CredentialExfiltration
@@ -72,7 +76,8 @@ fn in_shell(rule: RuleId) -> Option<fn(&str) -> Vec<usize>> {
         RuleId::InvisibleUnicode
         | RuleId::OpaqueHook
         | RuleId::BypassPermissions
-        | RuleId::UnrestrictedShell => None,
+        | RuleId::UnrestrictedShell
+        | RuleId::TrustedServer => None,
     }
 }
 
@@ -229,6 +234,35 @@ pub fn granted(
 /// after one of them, so a tool name in a description is not taken for a grant.
 const GRANT_LISTS: &[&str] = &["allow", "allowed-tools", "allowed"];
 
+/// What the named rules say about one MCP server a file declares.
+///
+/// Placed at the name the server is declared under, which is the key a reader
+/// looks for, rather than at the keyword that trusts it.
+#[must_use]
+pub fn server(
+    path: &RepoPath,
+    checks: &[RuleId],
+    server: &McpServer,
+    source: &str,
+    width: usize,
+) -> Option<Finding> {
+    if !checks.contains(&RuleId::TrustedServer) || !server.trusted {
+        return None;
+    }
+    Some(
+        SERVER_BLOCKS
+            .iter()
+            .find_map(|key| after_key(source, key, &server.name, 0))
+            .and_then(|at| found_at(path, RuleId::TrustedServer, source, at, width))
+            .unwrap_or_else(|| about_file(path, RuleId::TrustedServer, &server.name, width)),
+    )
+}
+
+/// The keys a tool declares its servers under. A name is looked for only after
+/// one of them, so a name repeated in a description is not taken for the
+/// declaration.
+const SERVER_BLOCKS: &[&str] = &["mcpServers", "mcp_servers", "context_servers"];
+
 /// Whether `text` is a shell script, by its extension or its `#!` line.
 fn is_shell(path: &RepoPath, text: &str) -> bool {
     let named = path
@@ -317,6 +351,7 @@ fn invisible_unicode(path: &RepoPath, text: &str, width: usize) -> Vec<Finding> 
 
 #[cfg(test)]
 mod tests {
+    use super::server as server_rule;
     use super::*;
     use crate::finding::{DEFAULT_EVIDENCE_WIDTH, Severity};
 
@@ -324,6 +359,146 @@ mod tests {
     fn a_variation_selector_is_ignorable_but_not_hidden() {
         assert!(is_default_ignorable('\u{FE0F}') && !is_hidden('\u{FE0F}'));
         assert!(is_default_ignorable('\u{200B}') && is_hidden('\u{200B}'));
+    }
+
+    fn declared(name: &str, trusted: bool) -> McpServer {
+        McpServer {
+            name: name.to_owned(),
+            transport: crate::mcp_server::Transport::local("srv".to_owned(), &[]),
+            env: Vec::new(),
+            trusted,
+        }
+    }
+
+    fn server_found_in(server: &McpServer, source: &str) -> Option<Finding> {
+        server_rule(
+            &RepoPath::root().join(".gemini/settings.json"),
+            &[RuleId::TrustedServer],
+            server,
+            source,
+            DEFAULT_EVIDENCE_WIDTH,
+        )
+    }
+
+    #[test]
+    fn a_trusted_server_is_a_finding() {
+        let source = "{\n  \"mcpServers\": {\n    \"pg\": {\n      \"command\": \"srv\",\n      \"trust\": true\n    }\n  }\n}\n";
+
+        let found = server_found_in(&declared("pg", true), source).expect("a finding");
+
+        assert_eq!(found.rule, RuleId::TrustedServer);
+        assert_eq!(found.severity, Severity::Medium);
+        // The name, not the keyword two lines below it.
+        assert_eq!(found.at.map(|p| p.line), Some(3), "{found:?}");
+        assert!(found.evidence.as_str().contains("pg"));
+    }
+
+    #[test]
+    fn an_untrusted_server_is_not() {
+        let source = r#"{"mcpServers":{"pg":{"command":"srv","trust":false}}}"#;
+
+        assert!(server_found_in(&declared("pg", false), source).is_none());
+    }
+
+    #[test]
+    fn a_row_that_does_not_name_the_server_rule_is_silent() {
+        let source = r#"{"mcpServers":{"pg":{"command":"srv","trust":true}}}"#;
+
+        assert!(
+            server_rule(
+                &RepoPath::root().join(".mcp.json"),
+                &[RuleId::InvisibleUnicode],
+                &declared("pg", true),
+                source,
+                DEFAULT_EVIDENCE_WIDTH,
+            )
+            .is_none()
+        );
+    }
+
+    /// A name repeated outside the block is not the declaration. Unanchored,
+    /// the finding lands on the description.
+    #[test]
+    fn a_name_outside_the_server_block_is_not_the_declaration() {
+        let source = "{\n  \"description\": \"pg\",\n  \"mcpServers\": {\n    \"pg\": {\"trust\": true}\n  }\n}\n";
+
+        let found = server_found_in(&declared("pg", true), source).expect("a finding");
+
+        assert_eq!(found.at.map(|p| p.line), Some(4), "{found:?}");
+    }
+
+    /// A name the text does not hold leaves the finding about the file.
+    #[test]
+    fn an_escaped_server_name_is_reported_about_the_file() {
+        let source = r#"{"mcpServers":{"\u0070g":{"trust":true}}}"#;
+
+        let found = server_found_in(&declared("pg", true), source).expect("a finding");
+
+        assert_eq!(found.at, None, "{found:?}");
+    }
+
+    /// A name outside ASCII still places, on a character boundary.
+    #[test]
+    fn a_server_named_in_another_script_still_places() {
+        let source = "{\n  \"mcpServers\": {\n    \"caf\u{e9}\": {\"trust\": true}\n  }\n}\n";
+
+        let found = server_found_in(&declared("caf\u{e9}", true), source).expect("a finding");
+
+        assert_eq!(found.at.map(|p| p.line), Some(3), "{found:?}");
+    }
+
+    #[test]
+    fn each_trusted_server_is_placed_at_its_own_name() {
+        let source = "{\n  \"mcpServers\": {\n    \"alpha\": {\"trust\": true},\n    \"beta\": {\"trust\": true}\n  }\n}\n";
+
+        let first = server_found_in(&declared("alpha", true), source).expect("a finding");
+        let second = server_found_in(&declared("beta", true), source).expect("a finding");
+
+        assert_eq!(first.at.map(|p| p.line), Some(3));
+        assert_eq!(second.at.map(|p| p.line), Some(4));
+    }
+
+    #[test]
+    fn trusted_evidence_beside_a_secret_is_masked() {
+        let source = concat!(
+            "{\"mcpServers\":{\"pg\":{\"trust\":true,",
+            "\"env\":{\"API_KEY\":\"sk-live-SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS\"}}}}"
+        );
+
+        let found = server_found_in(&declared("pg", true), source).expect("a finding");
+
+        let said = found.evidence.as_str();
+        assert!(
+            said.contains("API_KEY"),
+            "the window reaches the key: {said}"
+        );
+        assert!(!said.contains("sk-live-S"), "{said}");
+    }
+
+    #[test]
+    fn a_hidden_character_in_a_server_name_is_escaped() {
+        let name = "p\u{200B}g";
+        let source = format!("{{\"mcpServers\":{{\"{name}\":{{\"trust\":true}}}}}}");
+
+        let found = server_found_in(&declared(name, true), &source).expect("a finding");
+
+        let said = found.evidence.as_str();
+        assert!(!said.contains('\u{200B}'), "the character escaped: {said}");
+        assert!(said.contains("<U+200B>"), "{said}");
+    }
+
+    #[test]
+    fn trusted_evidence_from_a_minified_file_is_bounded() {
+        let filler = "\"x\":\"".to_owned() + &"y".repeat(400) + "\",";
+        let source = format!("{{{filler}\"mcpServers\":{{\"pg\":{{\"trust\":true}}}}}}");
+
+        let found = server_found_in(&declared("pg", true), &source).expect("a finding");
+
+        assert!(
+            found.evidence.as_str().chars().count() <= DEFAULT_EVIDENCE_WIDTH,
+            "{} chars",
+            found.evidence.as_str().chars().count()
+        );
     }
 
     fn grant(entry: &str) -> Permission {
