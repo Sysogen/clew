@@ -72,7 +72,19 @@ jobs:
       - name: Publish
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: cargo publish --workspace --no-verify
+        run: |
+          set -euo pipefail
+          version="$(./scripts/version.sh)"
+          for crate in clew-domain clew-application clew-adapter-fs \
+                       clew-adapter-cli clew-cli; do
+              entry="${crate:0:2}/${crate:2:2}/$crate"
+              if history="$(curl -sf "https://index.crates.io/$entry")" &&
+                  grep -q "\"vers\":\"$version\"" <<<"$history"; then
+                  echo "$crate $version is already on the index"
+                  continue
+              fi
+              cargo publish --no-verify --package "$crate"
+          done
 
   binaries:
     name: ${{ matrix.target }}
