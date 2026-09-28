@@ -5,6 +5,15 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `RuleId::all`, `RuleId::detail` and `RuleId::remediation` on `clew-domain`.
+  What a rule means and what to do about it were written into the SARIF
+  adapter, where the only way to read them was to generate a log; they sit
+  beside the model now, so a log, a command and a page can say the same words.
+  `all` is what lets the rule set be listed at all, which nothing could do
+  before.
+
 ## [0.6.0] - 2026-09-24
 
 ### Added

