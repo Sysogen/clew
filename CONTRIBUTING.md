@@ -280,7 +280,15 @@ Maintainers only.
    the five `clew-*` entries under `[workspace.dependencies]` and the
    `version` default in `action.yml` to match, and moves `CHANGELOG.md`'s
    `Unreleased` section under the new number.
-2. Merge it.
+2. Merge it, keeping the commit body GitHub prefills into the squash box.
+
+**Keep the body.** Squashing composes the commit on `main` from the branch's
+commit messages, and every type but `docs` needs a body of at least 20
+characters. Clearing the box leaves `build: release <version> (#N)` with no
+body, which fails the `Commit messages` job; `Release` then refuses to publish,
+because it will not release from a commit CI did not pass. The tag is already
+created by that point, so the release has to be repaired rather than retried.
+This cost 0.6.0 a first attempt.
 
 The internal dependency pins are not optional. Miss them and the published
 crates ask for the previous release of each other, so the five are not a
