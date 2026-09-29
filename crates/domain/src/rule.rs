@@ -3,15 +3,22 @@
 
 //! A rule, as something clew holds rather than something it matches on.
 //!
-//! One rule is one value in [`shipped`], so adding one means writing it and
-//! listing it, not threading a name through every match.
+//! One rule is one file under [`crate::rules`]. Adding one means writing that
+//! file, declaring its module, and giving it a [`RuleId`] and an arm in [`of`],
+//! rather than threading a name through every match that wanted to know.
+
+use std::sync::OnceLock;
 
 use crate::autonomy::Autonomy;
 use crate::finding::{Finding, RuleId, Severity};
 use crate::mcp_server::McpServer;
 use crate::permission::Permission;
 use crate::repo_path::RepoPath;
-use crate::rules;
+use crate::rules::{
+    bypass_permissions, credential_exfiltration, decode_and_execute, download_and_execute,
+    invisible_unicode, opaque_hook, trusted_server, unpinned_remote_package, unrestricted_shell,
+    unverified_download,
+};
 
 /// A kind of thing clew judges.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -105,207 +112,60 @@ impl Examined<'_> {
     }
 }
 
-/// A rule clew applies.
-///
-/// What it says about itself comes from its [`RuleId`] for now; a later change
-/// moves the words onto the rule.
+/// A rule clew applies. One file holds all of it.
 pub trait Rule: Sync {
     /// The identifier, which never changes meaning once published.
     fn id(&self) -> RuleId;
+
+    /// The identifier as it is written and suppressed.
+    fn name(&self) -> &'static str;
+
+    /// How much a finding under it matters.
+    fn severity(&self) -> Severity;
+
+    /// One line, for a listing.
+    fn description(&self) -> &'static str;
+
+    /// What it means, and the incident behind it.
+    fn detail(&self) -> &'static str;
+
+    /// What to do about a finding under it.
+    fn remediation(&self) -> &'static str;
 
     /// What it reads. The scan offers it nothing else.
     fn reads(&self) -> &'static [Subject];
 
     /// What it says about one subject.
     fn check(&self, at: &Examined<'_>, width: usize) -> Vec<Finding>;
-
-    /// How much a finding under it matters.
-    fn severity(&self) -> Severity {
-        self.id().severity()
-    }
 }
 
-/// What every rule that reads shell says about one subject.
+/// The rule a `RuleId` names.
 ///
-/// A hook is written as a script and as a command in a settings file, and both
-/// are the same shell. `rules::run` decides when a script is read as commands.
-fn shell_rule(id: RuleId, at: &Examined<'_>, width: usize) -> Vec<Finding> {
-    match at {
-        Examined::Text { path, text } => rules::run(path, &[id], text, width),
-        Examined::HookCommand {
-            path,
-            command,
-            source,
-            occurrence,
-        } => rules::hook_command(path, &[id], command, source, *occurrence, width),
-        _ => Vec::new(),
-    }
-}
-
-/// Rules that read shell, whichever way it is written.
-const SHELL: &[Subject] = &[Subject::Text, Subject::HookCommand];
-
-macro_rules! shell_rules {
-    ($($name:ident => $id:ident,)*) => {$(
-        struct $name;
-
-        impl Rule for $name {
-            fn id(&self) -> RuleId {
-                RuleId::$id
-            }
-
-            fn reads(&self) -> &'static [Subject] {
-                SHELL
-            }
-
-            fn check(&self, at: &Examined<'_>, width: usize) -> Vec<Finding> {
-                shell_rule(RuleId::$id, at, width)
-            }
-        }
-    )*};
-}
-
-shell_rules! {
-    DownloadAndExecute => DownloadAndExecute,
-    DecodeAndExecute => DecodeAndExecute,
-    CredentialExfiltration => CredentialExfiltration,
-    UnverifiedDownload => UnverifiedDownload,
-    UnpinnedRemotePackage => UnpinnedRemotePackage,
-}
-
-struct InvisibleUnicode;
-
-impl Rule for InvisibleUnicode {
-    fn id(&self) -> RuleId {
-        RuleId::InvisibleUnicode
-    }
-
-    fn reads(&self) -> &'static [Subject] {
-        &[Subject::Text]
-    }
-
-    fn check(&self, at: &Examined<'_>, width: usize) -> Vec<Finding> {
-        match at {
-            Examined::Text { path, text } => rules::run(path, &[self.id()], text, width),
-            _ => Vec::new(),
-        }
-    }
-}
-
-struct OpaqueHook;
-
-impl Rule for OpaqueHook {
-    fn id(&self) -> RuleId {
-        RuleId::OpaqueHook
-    }
-
-    fn reads(&self) -> &'static [Subject] {
-        &[Subject::Unreadable]
-    }
-
-    fn check(&self, at: &Examined<'_>, width: usize) -> Vec<Finding> {
-        match at {
-            Examined::Unreadable { path, reason } => {
-                rules::unreviewable(path, &[self.id()], reason, width)
-                    .into_iter()
-                    .collect()
-            }
-            _ => Vec::new(),
-        }
-    }
-}
-
-struct BypassPermissions;
-
-impl Rule for BypassPermissions {
-    fn id(&self) -> RuleId {
-        RuleId::BypassPermissions
-    }
-
-    fn reads(&self) -> &'static [Subject] {
-        &[Subject::Mode]
-    }
-
-    fn check(&self, at: &Examined<'_>, width: usize) -> Vec<Finding> {
-        match at {
-            Examined::Mode { path, mode, source } => {
-                rules::autonomy(path, &[self.id()], mode, source, width)
-                    .into_iter()
-                    .collect()
-            }
-            _ => Vec::new(),
-        }
-    }
-}
-
-struct UnrestrictedShell;
-
-impl Rule for UnrestrictedShell {
-    fn id(&self) -> RuleId {
-        RuleId::UnrestrictedShell
-    }
-
-    fn reads(&self) -> &'static [Subject] {
-        &[Subject::Grant]
-    }
-
-    fn check(&self, at: &Examined<'_>, width: usize) -> Vec<Finding> {
-        match at {
-            Examined::Grant {
-                path,
-                grant,
-                source,
-                occurrence,
-            } => rules::granted(path, &[self.id()], grant, source, *occurrence, width)
-                .into_iter()
-                .collect(),
-            _ => Vec::new(),
-        }
-    }
-}
-
-struct TrustedServer;
-
-impl Rule for TrustedServer {
-    fn id(&self) -> RuleId {
-        RuleId::TrustedServer
-    }
-
-    fn reads(&self) -> &'static [Subject] {
-        &[Subject::Server]
-    }
-
-    fn check(&self, at: &Examined<'_>, width: usize) -> Vec<Finding> {
-        match at {
-            Examined::Server {
-                path,
-                server,
-                source,
-            } => rules::server(path, &[self.id()], server, source, width)
-                .into_iter()
-                .collect(),
-            _ => Vec::new(),
-        }
+/// A match, not a search, so the compiler says when a variant has no rule.
+#[must_use]
+pub fn of(id: RuleId) -> &'static dyn Rule {
+    match id {
+        RuleId::InvisibleUnicode => &invisible_unicode::InvisibleUnicode,
+        RuleId::OpaqueHook => &opaque_hook::OpaqueHook,
+        RuleId::DownloadAndExecute => &download_and_execute::DownloadAndExecute,
+        RuleId::DecodeAndExecute => &decode_and_execute::DecodeAndExecute,
+        RuleId::CredentialExfiltration => &credential_exfiltration::CredentialExfiltration,
+        RuleId::UnverifiedDownload => &unverified_download::UnverifiedDownload,
+        RuleId::UnpinnedRemotePackage => &unpinned_remote_package::UnpinnedRemotePackage,
+        RuleId::BypassPermissions => &bypass_permissions::BypassPermissions,
+        RuleId::UnrestrictedShell => &unrestricted_shell::UnrestrictedShell,
+        RuleId::TrustedServer => &trusted_server::TrustedServer,
     }
 }
 
 /// Every rule clew ships, in the order a listing shows them.
 ///
-/// A rule not here never runs, which `every_rule_is_registered` catches.
+/// Derived from the ids, so there is no second list to fall out of step, and
+/// built once: `judge` asks per file, per hook command and per grant.
 #[must_use]
 pub fn shipped() -> &'static [&'static dyn Rule] {
-    &[
-        &InvisibleUnicode,
-        &OpaqueHook,
-        &DownloadAndExecute,
-        &DecodeAndExecute,
-        &CredentialExfiltration,
-        &UnverifiedDownload,
-        &UnpinnedRemotePackage,
-        &BypassPermissions,
-        &UnrestrictedShell,
-        &TrustedServer,
-    ]
+    static SHIPPED: OnceLock<Vec<&'static dyn Rule>> = OnceLock::new();
+    SHIPPED.get_or_init(|| RuleId::all().iter().copied().map(of).collect())
 }
 
 /// What the rules a row names say about one thing.
@@ -333,6 +193,42 @@ mod tests {
             assert!(registered.contains(rule), "{rule:?} is not registered");
         }
         assert_eq!(registered.len(), RuleId::all().len(), "{registered:?}");
+    }
+
+    /// `of` ties each id to a rule, but nothing ties a file to an id: one
+    /// added to `rules/` and left out of `RuleId` would sit there doing
+    /// nothing.
+    #[test]
+    fn every_rule_file_is_reachable() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/src/rules");
+        let reached: Vec<String> = RuleId::all()
+            .iter()
+            .map(|id| id.as_str().replace('-', "_") + ".rs")
+            .collect();
+
+        let mut files: Vec<String> = std::fs::read_dir(dir)
+            .expect("the rules directory")
+            .filter_map(|entry| {
+                entry
+                    .ok()
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+            })
+            .filter(|name| {
+                std::path::Path::new(name)
+                    .extension()
+                    .is_some_and(|e| e.eq_ignore_ascii_case("rs"))
+                    && name != "mod.rs"
+            })
+            .collect();
+        files.sort_unstable();
+
+        for file in &files {
+            assert!(
+                reached.contains(file),
+                "{file} is not reached by any RuleId"
+            );
+        }
+        assert_eq!(files.len(), reached.len(), "{files:?} against {reached:?}");
     }
 
     #[test]

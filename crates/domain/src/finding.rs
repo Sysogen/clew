@@ -43,86 +43,25 @@ impl RuleId {
     /// The identifier, as reported and as a catalogue row names it.
     #[must_use]
     pub fn as_str(self) -> &'static str {
-        match self {
-            Self::InvisibleUnicode => "invisible-unicode",
-            Self::OpaqueHook => "opaque-hook",
-            Self::DownloadAndExecute => "download-and-execute",
-            Self::DecodeAndExecute => "decode-and-execute",
-            Self::CredentialExfiltration => "credential-exfiltration",
-            Self::UnverifiedDownload => "unverified-download",
-            Self::UnpinnedRemotePackage => "unpinned-remote-package",
-            Self::BypassPermissions => "bypass-permissions",
-            Self::UnrestrictedShell => "unrestricted-shell",
-            Self::TrustedServer => "trusted-server",
-        }
+        crate::rule::of(self).name()
     }
 
     /// One line saying what the rule looks for.
     #[must_use]
     pub fn description(self) -> &'static str {
-        match self {
-            Self::InvisibleUnicode => {
-                "Non-printing Unicode in a file an agent reads as instructions"
-            }
-            Self::OpaqueHook => "A hook file clew cannot review as text",
-            Self::DownloadAndExecute => {
-                "Code fetched from the network and handed straight to an interpreter"
-            }
-            Self::DecodeAndExecute => {
-                "Code decoded from base64, hex or a compressed blob and handed straight to an interpreter"
-            }
-            Self::CredentialExfiltration => {
-                "A credential file, a token or the whole environment sent over the network"
-            }
-            Self::UnverifiedDownload => {
-                "A downloaded file run with no checksum or signature checked first"
-            }
-            Self::UnpinnedRemotePackage => {
-                "A registry package run at a tag that moves, such as @latest"
-            }
-            Self::BypassPermissions => {
-                "A mode that starts an agent with neither a permission prompt nor a sandbox"
-            }
-            Self::UnrestrictedShell => {
-                "A pre-approved shell grant with nothing restricting the commands it runs"
-            }
-            Self::TrustedServer => "An MCP server whose tool calls run without being confirmed",
-        }
+        crate::rule::of(self).description()
     }
 
     /// How much a finding under the rule matters.
     #[must_use]
     pub fn severity(self) -> Severity {
-        match self {
-            Self::InvisibleUnicode
-            | Self::DownloadAndExecute
-            | Self::DecodeAndExecute
-            | Self::CredentialExfiltration
-            | Self::BypassPermissions => Severity::High,
-            Self::OpaqueHook
-            | Self::UnverifiedDownload
-            | Self::UnrestrictedShell
-            | Self::TrustedServer => Severity::Medium,
-            Self::UnpinnedRemotePackage => Severity::Low,
-        }
+        crate::rule::of(self).severity()
     }
 
     /// The rule a catalogue row names, if it names one that exists.
     #[must_use]
     pub fn from_catalogue(name: &str) -> Option<Self> {
-        Some(match name {
-            "invisible-unicode" => Self::InvisibleUnicode,
-            "opaque-hook" => Self::OpaqueHook,
-            "download-and-execute" => Self::DownloadAndExecute,
-            "decode-and-execute" => Self::DecodeAndExecute,
-            "credential-exfiltration" => Self::CredentialExfiltration,
-            "unverified-download" => Self::UnverifiedDownload,
-            "unpinned-remote-package" => Self::UnpinnedRemotePackage,
-            "bypass-permissions" => Self::BypassPermissions,
-            "unrestricted-shell" => Self::UnrestrictedShell,
-            "trusted-server" => Self::TrustedServer,
-            _ => return None,
-        })
+        Self::all().iter().copied().find(|id| id.as_str() == name)
     }
 }
 

@@ -143,25 +143,33 @@ A `*` stays inside one segment and `**` crosses them, so
 
 ## Adding a rule
 
-A rule is a value in the registry, `shipped` in `crates/domain/src/rule.rs`.
-Write it, list it there, and nothing else in the tree has to know:
+A rule is one file, `crates/domain/src/rules/<id>.rs`, holding everything about
+it: its id, severity, the line a listing shows, what it means, what to do about
+it, what it reads, and what it finds.
 
-1. Say what it reads, one or more of the `Subject` kinds. A rule offered
-   anything else says nothing.
-2. Say what it finds, in `check`.
-3. Add it to `shipped`, and to `rule-pack.snapshot`, raising the rule pack
-   version. `every_rule_is_registered` fails until it is registered, which is
-   what stops a rule being written and never run.
-4. Name it in the `check` list of the catalogue rows it reads.
+1. Write the file. Say what it reads, one or more of the `Subject` kinds; a rule
+   offered anything else says nothing. Say what it finds in `check`, using the
+   helpers in `rules/mod.rs`.
+2. Declare the module in `rules/mod.rs`.
+3. Add the `RuleId` variant and its arm in `rule::of`. The compiler will not
+   build without the arm, which is what ties an id to a rule.
+4. Add the line to `rule-pack.snapshot`, raising the rule pack version.
+5. Name it in the `check` list of the catalogue rows it reads.
 
-The functions in `rules.rs` are `pub(crate)` on purpose: judging goes through
+Three tests guard the wiring: `every_rule_file_is_reachable` catches a rule
+written and never reached, `no_rule_is_registered_twice` catches two rules
+claiming one id, and the snapshot catches a set that changed without review
+seeing it.
+
+The helpers in `rules/mod.rs` are `pub(crate)` on purpose: judging goes through
 the registry, so a rule cannot be run without being one.
 
 ## Editing what a rule says
 
-`detail` and `remediation` in `crates/domain/src/explain.rs` are the only copy.
-A page per rule under `docs/rules/` and the rule table in `README.md` are
-generated from them, so after editing either, run:
+`detail` and `remediation` on the rule, in its own file under
+`crates/domain/src/rules/`, are the only copy. A page per rule under
+`docs/rules/` and the rule table in `README.md` are generated from them, so
+after editing either, run:
 
 ```sh
 ./scripts/rule-pages.sh --write
