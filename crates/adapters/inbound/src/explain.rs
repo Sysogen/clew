@@ -1,0 +1,190 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Sysogen Lda
+
+//! The rule pack, for a person to read and for a tool to parse.
+
+use std::fmt::Write as _;
+
+use clew_domain::explain::RULE_PACK_VERSION;
+use clew_domain::finding::RuleId;
+use serde::Serialize;
+
+/// One rule, as a machine reads it.
+#[derive(Serialize)]
+pub struct RuleOut {
+    id: &'static str,
+    severity: &'static str,
+    description: &'static str,
+    detail: &'static str,
+    remediation: &'static str,
+    page: String,
+}
+
+impl RuleOut {
+    fn of(id: RuleId) -> Self {
+        Self {
+            id: id.as_str(),
+            severity: id.severity().as_str(),
+            description: id.description(),
+            detail: id.detail(),
+            remediation: id.remediation(),
+            page: id.page(),
+        }
+    }
+}
+
+/// The pack, and every rule in it.
+#[derive(Serialize)]
+struct PackOut {
+    rule_pack: u32,
+    rules: Vec<RuleOut>,
+}
+
+/// One rule, and the pack it belongs to. A saved explanation has to say which
+/// pack judged, the same as a listing does.
+#[derive(Serialize)]
+struct OneOut {
+    rule_pack: u32,
+    #[serde(flatten)]
+    rule: RuleOut,
+}
+
+/// Every rule, as an aligned listing.
+#[must_use]
+pub fn rules() -> String {
+    let width = RuleId::all()
+        .iter()
+        .map(|r| r.as_str().len())
+        .max()
+        .unwrap_or(0);
+
+    let mut out = String::new();
+    for rule in RuleId::all() {
+        let _ = writeln!(
+            out,
+            "{:<width$}  {:<6}  {}",
+            rule.as_str(),
+            rule.severity().as_str(),
+            rule.description()
+        );
+    }
+    let _ = writeln!(
+        out,
+        "\n{} rule(s), pack {RULE_PACK_VERSION}.",
+        RuleId::all().len()
+    );
+    out
+}
+
+/// Every rule as one document, so a study can record what judged.
+///
+/// # Errors
+///
+/// Only when serialisation fails.
+pub fn rules_json() -> Result<String, serde_json::Error> {
+    serde_json::to_string_pretty(&PackOut {
+        rule_pack: RULE_PACK_VERSION,
+        rules: RuleId::all().iter().copied().map(RuleOut::of).collect(),
+    })
+}
+
+/// One rule, at length.
+#[must_use]
+pub fn explain(id: RuleId) -> String {
+    format!(
+        "{}  {}\n\n{}\n\n{}\n\nWhat to do\n\n{}\n\n{}\n",
+        id.as_str(),
+        id.severity().as_str(),
+        id.description(),
+        id.detail(),
+        id.remediation(),
+        id.page()
+    )
+}
+
+/// One rule as a document.
+///
+/// # Errors
+///
+/// Only when serialisation fails.
+pub fn explain_json(id: RuleId) -> Result<String, serde_json::Error> {
+    serde_json::to_string_pretty(&OneOut {
+        rule_pack: RULE_PACK_VERSION,
+        rule: RuleOut::of(id),
+    })
+}
+
+/// What to say when a rule id names nothing.
+#[must_use]
+pub fn no_such_rule(id: &str) -> String {
+    let known: Vec<&str> = RuleId::all().iter().map(|r| r.as_str()).collect();
+    format!(
+        "no such rule '{id}'. Known rules:\n  {}",
+        known.join("\n  ")
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_listing_holds_every_rule() {
+        let said = rules();
+
+        for rule in RuleId::all() {
+            assert!(said.contains(rule.as_str()), "{} missing", rule.as_str());
+        }
+        assert!(
+            said.contains(&format!("pack {RULE_PACK_VERSION}")),
+            "{said}"
+        );
+    }
+
+    #[test]
+    fn an_explanation_says_what_it_means_and_what_to_do() {
+        for rule in RuleId::all() {
+            let said = explain(*rule);
+
+            assert!(said.contains(rule.as_str()), "{said}");
+            assert!(said.contains(rule.severity().as_str()), "{said}");
+            assert!(said.contains(rule.detail()), "{said}");
+            assert!(said.contains(rule.remediation()), "{said}");
+            assert!(said.contains(&rule.page()), "{said}");
+        }
+    }
+
+    #[test]
+    fn a_document_carries_the_pack_and_every_rule() {
+        let written = rules_json().expect("serialises");
+        let pack: serde_json::Value = serde_json::from_str(&written).expect("parses");
+
+        assert_eq!(pack["rule_pack"], RULE_PACK_VERSION);
+        let listed = pack["rules"].as_array().expect("an array");
+        assert_eq!(listed.len(), RuleId::all().len());
+        assert_eq!(listed[0]["id"], RuleId::all()[0].as_str());
+        assert_eq!(listed[0]["page"], RuleId::all()[0].page());
+    }
+
+    #[test]
+    fn one_rule_reads_back_as_a_document() {
+        let written = explain_json(RuleId::TrustedServer).expect("serialises");
+        let rule: serde_json::Value = serde_json::from_str(&written).expect("parses");
+
+        assert_eq!(rule["rule_pack"], RULE_PACK_VERSION);
+        assert_eq!(rule["id"], "trusted-server");
+        assert_eq!(rule["severity"], "medium");
+        assert_eq!(rule["remediation"], RuleId::TrustedServer.remediation());
+    }
+
+    /// An id is a promise, so a near miss is refused rather than guessed at.
+    #[test]
+    fn an_unknown_rule_is_answered_with_the_known_ones() {
+        let said = no_such_rule("trusted-servers");
+
+        assert!(said.contains("no such rule 'trusted-servers'"), "{said}");
+        for rule in RuleId::all() {
+            assert!(said.contains(rule.as_str()), "{said}");
+        }
+    }
+}

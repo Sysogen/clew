@@ -130,6 +130,19 @@ impl RuleId {
         }
     }
 
+    /// Where the rule is written up, for a finding to cite.
+    ///
+    /// Names `main`, so a log kept for a year links to what the page says
+    /// later. Pinning it to the release is deferred, not dismissed.
+    #[must_use]
+    pub fn page(self) -> String {
+        format!(
+            "{}/blob/main/docs/rules/{}.md",
+            env!("CARGO_PKG_REPOSITORY"),
+            self.as_str()
+        )
+    }
+
     /// What to do about a finding under the rule.
     #[must_use]
     pub fn remediation(self) -> &'static str {
@@ -256,6 +269,23 @@ mod tests {
             "the rule pack changed; update rule-pack.snapshot and raise \
              RULE_PACK_VERSION if what a scan finds changed"
         );
+    }
+
+    #[test]
+    fn a_page_is_named_for_the_rule() {
+        for rule in RuleId::all() {
+            let page = rule.page();
+            assert!(page.starts_with("https://"), "{page}");
+            assert!(page.ends_with(&format!("/{}.md", rule.as_str())), "{page}");
+        }
+    }
+
+    /// Every id `all` holds reads back, so `explain` can take one.
+    #[test]
+    fn every_listed_rule_reads_back_from_its_id() {
+        for rule in RuleId::all() {
+            assert_eq!(RuleId::from_catalogue(rule.as_str()), Some(*rule));
+        }
     }
 
     /// An id is a promise, so a listing may not hold one twice.

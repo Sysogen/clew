@@ -141,6 +141,20 @@ than `**/hooks/**`.
 A `*` stays inside one segment and `**` crosses them, so
 `**/.agents/skills/*/SKILL.md` is one directory deep and no more.
 
+## Editing what a rule says
+
+`detail` and `remediation` in `crates/domain/src/explain.rs` are the only copy.
+A page per rule under `docs/rules/` and the rule table in `README.md` are
+generated from them, so after editing either, run:
+
+```sh
+./scripts/rule-pages.sh --write
+```
+
+CI runs `--check` and fails if they drift. Nothing is hand-edited under
+`docs/rules/`, and nothing between the `rules:start` and `rules:end` markers in
+the README.
+
 ## The two versions
 
 A finding has to be citable: somebody reading a report months later needs to

@@ -7,6 +7,21 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `clew rules` lists every rule clew applies, and `clew explain RULE` says what
+  one means, what to do about a finding under it, and where it is written up.
+  Both take `--format json`, and each document names the rule pack, so a study
+  can record what judged. Neither takes `--fail-on` or `--format sarif`: both
+  belong to a scan, and a flag that promises to change the exit status is
+  refused rather than accepted and dropped. An id that names no rule is refused
+  with the ids that exist rather than resolved to the one it nearly named.
+
+- A page per rule under `docs/rules/`, and a SARIF `helpUri` pointing at it, so
+  a code scanning alert leads somewhere. The pages and the README's rule table
+  are generated from the rule pack by `./scripts/rule-pages.sh`, and CI fails if
+  they drift: the same words reach an alert, a terminal and a page, and four
+  copies of a sentence is how one rule comes to mean three things. A page no
+  rule claims, left by a rule removed or renamed, is reported too.
+
 - A rule pack version and a catalogue revision, so a finding can be cited and
   traced to the rules that made it. Both are reported by `clew --version`, as
   `rule_pack` and `catalogue` in `--format json`, and on the SARIF driver's

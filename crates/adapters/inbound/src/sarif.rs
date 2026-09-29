@@ -95,6 +95,7 @@ struct DriverProperties {
 #[serde(rename_all = "camelCase")]
 struct Rule {
     id: &'static str,
+    help_uri: String,
     short_description: Text,
     full_description: Text,
     help: Text,
@@ -269,6 +270,7 @@ fn notification(path: &RepoPath, text: String) -> Notification {
 fn rule(id: RuleId) -> Rule {
     Rule {
         id: id.as_str(),
+        help_uri: id.page(),
         short_description: Text {
             text: id.description().to_owned(),
         },
@@ -546,6 +548,21 @@ mod tests {
                 .contains("includeTools"),
             "{rule}"
         );
+    }
+
+    /// A reader following an alert has somewhere to go.
+    #[test]
+    fn each_rule_links_to_its_page() {
+        let log = written(&scanned());
+
+        for rule in log["runs"][0]["tool"]["driver"]["rules"]
+            .as_array()
+            .expect("rules")
+        {
+            let id = rule["id"].as_str().expect("an id");
+            let known = RuleId::from_catalogue(id).expect("a known rule");
+            assert_eq!(rule["helpUri"], known.page(), "{id}");
+        }
     }
 
     /// A log has to say what judged, or a finding cannot be traced to it.

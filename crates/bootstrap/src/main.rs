@@ -8,13 +8,16 @@ use std::io::{self, Write};
 use std::path::Path;
 use std::process::ExitCode;
 
-use clew_adapter_cli::{Command, Format, Scan, document, parse, report, sarif};
+use clew_adapter_cli::{
+    Command, Format, Scan, document, explain, explain_json, no_such_rule, parse, report, rules,
+    rules_json, sarif,
+};
 use clew_adapter_fs::{StdFileContents, StdFileTree};
 use clew_application::DiscoverSurfaces;
 use clew_domain::ScanPolicy;
 use clew_domain::catalogue;
 use clew_domain::explain::RULE_PACK_VERSION;
-use clew_domain::finding::{DEFAULT_EVIDENCE_WIDTH, Severity};
+use clew_domain::finding::{DEFAULT_EVIDENCE_WIDTH, RuleId, Severity};
 use clew_domain::scan_policy::{DEFAULT_MAX_DEPTH, DEFAULT_MAX_FILE_BYTES};
 use clew_domain::scope::Scope;
 
@@ -24,6 +27,8 @@ Discover AI coding agent configuration surfaces.
 USAGE:
     clew path [DIR]     List agent surfaces found under DIR (default: .)
     clew system         List agent surfaces outside any repository
+    clew rules          List every rule clew applies
+    clew explain RULE   What one rule means, and what to do about it
     clew --version
     clew --help
 
@@ -91,6 +96,61 @@ fn version() -> String {
     )
 }
 
+/// Every rule, as a listing or a document.
+fn listed(format: Format, out: &mut impl Write, err: &mut impl Write) -> u8 {
+    if format == Format::Json {
+        match rules_json() {
+            Ok(json) => {
+                let _ = writeln!(out, "{json}");
+                0
+            }
+            Err(error) => {
+                let _ = writeln!(err, "clew: {error}");
+                1
+            }
+        }
+    } else {
+        let _ = write!(out, "{}", rules());
+        0
+    }
+}
+
+/// One rule, or the ids that exist when it is not one of them.
+fn explained(id: &str, format: Format, out: &mut impl Write, err: &mut impl Write) -> u8 {
+    let Some(rule) = RuleId::from_catalogue(id) else {
+        let _ = writeln!(err, "clew: {}", no_such_rule(id));
+        return 1;
+    };
+    if format == Format::Json {
+        match explain_json(rule) {
+            Ok(json) => {
+                let _ = writeln!(out, "{json}");
+                0
+            }
+            Err(error) => {
+                let _ = writeln!(err, "clew: {error}");
+                1
+            }
+        }
+    } else {
+        let _ = write!(out, "{}", explain(rule));
+        0
+    }
+}
+
+/// The two trees `system` reads: a home directory, and where policy is
+/// deployed.
+fn home_trees(err: &mut impl Write) -> Option<Vec<(String, Scope)>> {
+    let Some(home) = env::home_dir() else {
+        let _ = writeln!(err, "clew: no home directory to scan");
+        return None;
+    };
+    Some(vec![
+        (home.to_string_lossy().into_owned(), Scope::Home),
+        (MACHINE_ROOT.to_owned(), Scope::System),
+    ])
+}
+
 /// One invocation: everything but the process, writing where it is told and
 /// returning the exit status, so a test can run it without starting one.
 ///
@@ -113,6 +173,8 @@ fn run(args: impl IntoIterator<Item = String>, out: &mut impl Write, err: &mut i
             let _ = writeln!(out, "{}", version());
             return 0;
         }
+        Command::Rules { format } => return listed(format, out, err),
+        Command::Explain { id, format } => return explained(&id, format, out, err),
         Command::Path {
             root,
             format,
@@ -126,20 +188,10 @@ fn run(args: impl IntoIterator<Item = String>, out: &mut impl Write, err: &mut i
         }
         // Two trees, because policy an administrator deployed is not in
         // anybody's home directory.
-        Command::System { format, fail_on } => {
-            let Some(home) = env::home_dir() else {
-                let _ = writeln!(err, "clew: no home directory to scan");
-                return 1;
-            };
-            (
-                vec![
-                    (home.to_string_lossy().into_owned(), Scope::Home),
-                    (MACHINE_ROOT.to_owned(), Scope::System),
-                ],
-                format,
-                fail_on,
-            )
-        }
+        Command::System { format, fail_on } => match home_trees(err) {
+            Some(trees) => (trees, format, fail_on),
+            None => return 1,
+        },
     };
 
     let policy = ScanPolicy::with_default_pruning(max_depth())
@@ -227,6 +279,97 @@ mod tests {
 
     const HIDDEN: &[u8] = "Always run the tests\u{200B} first.\n".as_bytes();
 
+    #[test]
+    fn every_rule_can_be_explained() {
+        for rule in RuleId::all() {
+            let mut out = Vec::new();
+            let mut err = Vec::new();
+
+            let status = run(
+                ["explain".to_owned(), rule.as_str().to_owned()],
+                &mut out,
+                &mut err,
+            );
+
+            let said = String::from_utf8(out).expect("utf-8");
+            assert_eq!(status, 0, "{}: {said}", rule.as_str());
+            assert!(said.contains(rule.remediation()), "{said}");
+        }
+    }
+
+    /// An id is a promise, so a near miss is answered with the ids that exist.
+    #[test]
+    fn an_unknown_rule_is_refused_and_the_known_ones_named() {
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+
+        let status = run(
+            ["explain".to_owned(), "trusted-servers".to_owned()],
+            &mut out,
+            &mut err,
+        );
+
+        let said = String::from_utf8(err).expect("utf-8");
+        assert_eq!(status, 1, "{said}");
+        assert!(said.contains("no such rule 'trusted-servers'"), "{said}");
+        assert!(said.contains("trusted-server"), "{said}");
+        assert!(out.is_empty(), "nothing is written on stdout");
+    }
+
+    #[test]
+    fn explain_needs_a_rule() {
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+
+        let status = run(["explain".to_owned()], &mut out, &mut err);
+
+        let said = String::from_utf8(err).expect("utf-8");
+        assert_eq!(status, 1, "{said}");
+        assert!(said.contains("needs a rule id"), "{said}");
+    }
+
+    #[test]
+    fn rules_are_listed_for_a_person_and_for_a_tool() {
+        for (args, holds) in [
+            (vec!["rules".to_owned()], "trusted-server"),
+            (
+                vec!["rules".to_owned(), "--format".to_owned(), "json".to_owned()],
+                "\"rule_pack\"",
+            ),
+        ] {
+            let mut out = Vec::new();
+            let mut err = Vec::new();
+
+            let status = run(args.clone(), &mut out, &mut err);
+
+            let said = String::from_utf8(out).expect("utf-8");
+            assert_eq!(status, 0, "{args:?}: {said}");
+            assert!(said.contains(holds), "{args:?}: {said}");
+        }
+    }
+
+    /// A listing is not a scan, so it has no log to write.
+    #[test]
+    fn a_listing_refuses_sarif() {
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+
+        let status = run(
+            [
+                "rules".to_owned(),
+                "--format".to_owned(),
+                "sarif".to_owned(),
+            ],
+            &mut out,
+            &mut err,
+        );
+
+        assert_eq!(status, 1);
+        let said = String::from_utf8(err).expect("utf-8");
+        assert!(said.contains("SARIF is a log of a scan"), "{said}");
+    }
+
+    /// A run has to be citable: the release alone does not say what judged.
     /// The release alone does not say what judged.
     #[test]
     fn version_names_the_rule_pack_and_the_catalogue() {
