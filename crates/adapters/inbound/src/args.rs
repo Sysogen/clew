@@ -40,6 +40,18 @@ pub enum Command {
         /// The severity at which a finding fails the run, if any.
         fail_on: Option<Severity>,
     },
+    /// List every rule clew applies.
+    Rules {
+        /// How to write the listing.
+        format: Format,
+    },
+    /// Say what one rule means and what to do about it.
+    Explain {
+        /// The rule's id.
+        id: String,
+        /// How to write it.
+        format: Format,
+    },
     /// Print usage.
     Help,
     /// Print the version.
@@ -64,6 +76,15 @@ pub enum ParseError {
     /// SARIF asked of a scan with no repository to place results in.
     #[error("SARIF places results in a repository: use it with 'clew path'")]
     SarifNeedsRepository,
+    /// SARIF asked of something that is not a scan.
+    #[error("SARIF is a log of a scan: use it with 'clew path'")]
+    SarifNeedsScan,
+    /// `explain` with no rule named.
+    #[error("'explain' needs a rule id: try 'clew rules'")]
+    MissingRule,
+    /// A threshold asked of something with no findings to weigh.
+    #[error("'--fail-on' weighs a scan's findings: use it with 'clew path'")]
+    FailOnNeedsScan,
     /// `--fail-on` with nothing after it.
     #[error("'--fail-on' needs a severity: low, medium or high")]
     MissingSeverity,
@@ -110,8 +131,43 @@ where
                 fail_on: options.fail_on,
             })
         }
+        Some("rules") => {
+            let options = listing(&args[1..])?;
+            Ok(Command::Rules {
+                format: options.format,
+            })
+        }
+        Some("explain") => {
+            let options = listing(&args[1..])?;
+            // Not validated here: which rules exist is the domain's to know.
+            let id = options
+                .positional
+                .into_iter()
+                .next()
+                .ok_or(ParseError::MissingRule)?;
+            Ok(Command::Explain {
+                id,
+                format: options.format,
+            })
+        }
         Some(other) => Err(ParseError::UnknownCommand(other.to_owned())),
     }
+}
+
+/// What follows a command that lists rather than scans.
+///
+/// A listing weighs nothing and writes no log, so the two scan-only options are
+/// refused rather than accepted and dropped: `--fail-on` promises to change the
+/// exit status, and taking it silently would break that promise.
+fn listing(args: &[String]) -> Result<Options, ParseError> {
+    let options = options(args)?;
+    if options.format == Format::Sarif {
+        return Err(ParseError::SarifNeedsScan);
+    }
+    if options.fail_on.is_some() {
+        return Err(ParseError::FailOnNeedsScan);
+    }
+    Ok(options)
 }
 
 /// What follows a command.
@@ -175,6 +231,33 @@ mod tests {
             root: root.to_owned(),
             format,
             fail_on: None,
+        }
+    }
+
+    /// `--fail-on` promises to change the exit status. A listing has nothing to
+    /// weigh, so taking the flag and dropping it would break that promise.
+    #[test]
+    fn a_listing_refuses_the_scan_only_options() {
+        for args in [
+            vec!["rules", "--fail-on", "high"],
+            vec!["rules", "--fail-on=low"],
+            vec!["explain", "trusted-server", "--fail-on", "medium"],
+        ] {
+            assert_eq!(
+                parse(args.clone()),
+                Err(ParseError::FailOnNeedsScan),
+                "{args:?}"
+            );
+        }
+        for args in [
+            vec!["rules", "--format", "sarif"],
+            vec!["explain", "trusted-server", "--format=sarif"],
+        ] {
+            assert_eq!(
+                parse(args.clone()),
+                Err(ParseError::SarifNeedsScan),
+                "{args:?}"
+            );
         }
     }
 

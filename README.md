@@ -64,25 +64,33 @@ engineer keeps under their home directory, and the rules an administrator
 deploys to the machine, such as `/etc/devin/rules`. It enters only the
 directories the catalogue names rather than walking a home directory.
 
+```sh
+clew rules
+clew explain unrestricted-shell
+```
+
+`rules` lists what clew applies, and `explain` says what one of them means,
+what to do about a finding under it, and where it is written up. Both take
+`--format json`, which is how a study records what judged: each document names
+the rule pack version. Neither takes `--fail-on` or `--format sarif`, which
+weigh and log a scan; asked for either, they say so rather than ignore it.
+
 ### Findings
 
+<!-- rules:start -->
 | Rule | Severity | What it flags |
 | --- | --- | --- |
-| `invisible-unicode` | high | A character that renders as nothing, such as a zero-width, bidirectional or tag character, in a file an agent reads as instructions or in a hook script |
-| `opaque-hook` | medium | A hook that cannot be reviewed as text: binary, larger than the file limit, or a symbolic link |
-| `download-and-execute` | high | A hook script, or a hook command in a settings file, that hands what it downloads straight to a shell or an interpreter, as `curl ... \| bash` does |
-| `decode-and-execute` | high | A hook that hands what it decodes from base64, hex or a compressed blob straight to an interpreter, as `echo ... \| base64 -d \| sh` does |
-| `credential-exfiltration` | high | A hook that sends a credential file, a token a tool prints or the whole environment over the network, as `env \| curl -d @- ...` does |
-| `unverified-download` | medium | A hook that downloads a file and later runs it, or unpacks it and runs what it held, with no checksum or signature checked in between |
-| `unpinned-remote-package` | low | A hook that runs a registry package at a tag that moves, such as `npx tool@latest`, so whatever was published last runs |
-<<<<<<< HEAD
-| `bypass-permissions` | high | A configuration file that starts an agent with nothing asking first and nothing bounding what happens: Claude Code's `permissions.defaultMode` set to `bypassPermissions`, Codex's `sandbox_mode` set to `danger-full-access`, VS Code's `chat.tools.global.autoApprove` set to `true`, or Zed's `agent.tool_permissions.default` set to `allow` |
-| `unrestricted-shell` | medium | A configuration file or skill that pre-approves the shell with nothing restricting it: Claude Code's `Bash` or Gemini CLI's `run_shell_command`, bare or at `*`, in `permissions.allow`, `tools.allowed` or `allowed-tools` |
-=======
-| `bypass-permissions` | high | A settings file that starts an agent with neither a permission prompt nor a sandbox: Claude Code's `permissions.defaultMode` set to `bypassPermissions`, or Codex's `sandbox_mode` set to `danger-full-access` |
-| `unrestricted-shell` | medium | A settings file or skill that pre-approves the shell with nothing restricting it: `Bash`, `Bash()` or `Bash(*)` in `permissions.allow` or `allowed-tools` |
-| `trusted-server` | medium | An MCP server declared with `trust: true`, which Gemini CLI documents as bypassing every tool call confirmation for that server |
->>>>>>> 6c73c75 (feat(domain): flag an unconfirmed MCP server)
+| [`invisible-unicode`](https://github.com/sysogen/clew/blob/main/docs/rules/invisible-unicode.md) | high | Non-printing Unicode in a file an agent reads as instructions |
+| [`opaque-hook`](https://github.com/sysogen/clew/blob/main/docs/rules/opaque-hook.md) | medium | A hook file clew cannot review as text |
+| [`download-and-execute`](https://github.com/sysogen/clew/blob/main/docs/rules/download-and-execute.md) | high | Code fetched from the network and handed straight to an interpreter |
+| [`decode-and-execute`](https://github.com/sysogen/clew/blob/main/docs/rules/decode-and-execute.md) | high | Code decoded from base64, hex or a compressed blob and handed straight to an interpreter |
+| [`credential-exfiltration`](https://github.com/sysogen/clew/blob/main/docs/rules/credential-exfiltration.md) | high | A credential file, a token or the whole environment sent over the network |
+| [`unverified-download`](https://github.com/sysogen/clew/blob/main/docs/rules/unverified-download.md) | medium | A downloaded file run with no checksum or signature checked first |
+| [`unpinned-remote-package`](https://github.com/sysogen/clew/blob/main/docs/rules/unpinned-remote-package.md) | low | A registry package run at a tag that moves, such as @latest |
+| [`bypass-permissions`](https://github.com/sysogen/clew/blob/main/docs/rules/bypass-permissions.md) | high | A mode that starts an agent with neither a permission prompt nor a sandbox |
+| [`unrestricted-shell`](https://github.com/sysogen/clew/blob/main/docs/rules/unrestricted-shell.md) | medium | A pre-approved shell grant with nothing restricting the commands it runs |
+| [`trusted-server`](https://github.com/sysogen/clew/blob/main/docs/rules/trusted-server.md) | medium | An MCP server whose tool calls run without being confirmed |
+<!-- rules:end -->
 
 `invisible-unicode` is the Rules File Backdoor, disclosed by Pillar Security in
 March 2025: an instruction the model reads and a reviewer cannot see. In a hook

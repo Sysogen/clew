@@ -53,6 +53,10 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: ./scripts/check-versions.sh
 
+      - name: Rule pages
+        if: matrix.os == 'ubuntu-latest'
+        run: ./scripts/rule-pages.sh --check
+
       # Against the base, because a snapshot updated together with the content
       # it pins stays equal to it. Only history says whether the number moved,
       # and one number naming two rule packs is what the number exists to stop.
