@@ -7,6 +7,11 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Each rule is one file under `crates/domain/src/rules/`, holding its id,
+  severity, wording, what it reads and what it finds. The eight matches that
+  used to spread one rule across the crate are gone, replaced by a single arm in
+  `rule::of` that the compiler still checks.
+
 - A rule is a value clew holds rather than a name threaded through every match
   that wanted to know about it. `clew_domain::rule::Rule` says what a rule reads
   and what it says about one thing, `shipped` is the registry, and one dispatcher
