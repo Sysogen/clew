@@ -191,10 +191,9 @@ mod tests {
         let path = surface("CLAUDE.md", SurfaceKind::InstructionFile).path;
         DiscoveryReport {
             surfaces: vec![surface("CLAUDE.md", SurfaceKind::InstructionFile)],
-            findings: clew_domain::rules::run(
-                &path,
+            findings: clew_domain::rule::judge(
+                &clew_domain::rule::Examined::Text { path: &path, text },
                 &[clew_domain::finding::RuleId::InvisibleUnicode],
-                text,
                 clew_domain::finding::DEFAULT_EVIDENCE_WIDTH,
             ),
             ..DiscoveryReport::default()

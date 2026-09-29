@@ -7,6 +7,15 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- A rule is a value clew holds rather than a name threaded through every match
+  that wanted to know about it. `clew_domain::rule::Rule` says what a rule reads
+  and what it says about one thing, `shipped` is the registry, and one dispatcher
+  replaces the six entry points a scan used to call. Adding a rule meant editing
+  nine places across seven matches; the compiler caught an omission, and a test
+  comparing the registry against the rule pack now does. The six functions that
+  judge are reachable only through the registry, so a rule cannot run without
+  being one.
+
 - `clew rules` lists every rule clew applies, and `clew explain RULE` says what
   one means, what to do about a finding under it, and where it is written up.
   Both take `--format json`, and each document names the rule pack, so a study

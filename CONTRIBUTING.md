@@ -141,6 +141,22 @@ than `**/hooks/**`.
 A `*` stays inside one segment and `**` crosses them, so
 `**/.agents/skills/*/SKILL.md` is one directory deep and no more.
 
+## Adding a rule
+
+A rule is a value in the registry, `shipped` in `crates/domain/src/rule.rs`.
+Write it, list it there, and nothing else in the tree has to know:
+
+1. Say what it reads, one or more of the `Subject` kinds. A rule offered
+   anything else says nothing.
+2. Say what it finds, in `check`.
+3. Add it to `shipped`, and to `rule-pack.snapshot`, raising the rule pack
+   version. `every_rule_is_registered` fails until it is registered, which is
+   what stops a rule being written and never run.
+4. Name it in the `check` list of the catalogue rows it reads.
+
+The functions in `rules.rs` are `pub(crate)` on purpose: judging goes through
+the registry, so a rule cannot be run without being one.
+
 ## Editing what a rule says
 
 `detail` and `remediation` in `crates/domain/src/explain.rs` are the only copy.
