@@ -10,7 +10,7 @@ use clew_domain::finding::{Finding, RuleId, Severity};
 use clew_domain::hook::{Action, project_of};
 use clew_domain::ports::file_contents::{FileContents, FileContentsError};
 use clew_domain::ports::file_tree::{EntryKind, FileTree, FileTreeError};
-use clew_domain::rules;
+use clew_domain::rule::{self, Examined};
 use clew_domain::scope::Scope;
 use clew_domain::{
     Autonomy, Hook, McpServer, Permission, RepoPath, ScanPolicy, Surface, SurfaceKind, catalogue,
@@ -151,12 +151,14 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
                 if let Action::Command(command) = &hook.action {
                     let occurrence = commands.iter().filter(|c| *c == command).count();
                     commands.push(command.clone());
-                    report.findings.extend(rules::hook_command(
-                        &path,
+                    report.findings.extend(rule::judge(
+                        &Examined::HookCommand {
+                            path: &path,
+                            command,
+                            source: &text,
+                            occurrence,
+                        },
                         hook_checks,
-                        command,
-                        &text,
-                        occurrence,
                         self.policy.evidence_width(),
                     ));
                 }
@@ -172,12 +174,14 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
                 let entry = permission.written();
                 let occurrence = grants.iter().filter(|g| **g == entry).count();
                 grants.push(entry);
-                report.findings.extend(rules::granted(
-                    &path,
+                report.findings.extend(rule::judge(
+                    &Examined::Grant {
+                        path: &path,
+                        grant: &permission,
+                        source: &text,
+                        occurrence,
+                    },
                     matched.check,
-                    &permission,
-                    &text,
-                    occurrence,
                     self.policy.evidence_width(),
                 ));
                 report.permissions.push(GrantedPermission {
@@ -186,11 +190,13 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
                 });
             }
             for server in found.servers {
-                report.findings.extend(rules::server(
-                    &path,
+                report.findings.extend(rule::judge(
+                    &Examined::Server {
+                        path: &path,
+                        server: &server,
+                        source: &text,
+                    },
                     matched.check,
-                    &server,
-                    &text,
                     self.policy.evidence_width(),
                 ));
                 report.servers.push(DeclaredServer {
@@ -199,11 +205,13 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
                 });
             }
             for mode in found.autonomy {
-                report.findings.extend(rules::autonomy(
-                    &path,
+                report.findings.extend(rule::judge(
+                    &Examined::Mode {
+                        path: &path,
+                        mode: &mode,
+                        source: &text,
+                    },
                     matched.check,
-                    &mode,
-                    &text,
                     self.policy.evidence_width(),
                 ));
                 report.autonomy.push(DeclaredAutonomy {
@@ -233,18 +241,26 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
                         | FileContentsError::NotARegularFile
                 );
                 let reason = error.to_string();
-                match rules::unreviewable(path, checks, &reason, self.policy.evidence_width()) {
-                    Some(finding) if there => report.findings.push(finding),
-                    _ => report.unparsed.push((path.clone(), reason)),
+                let said = rule::judge(
+                    &Examined::Unreadable {
+                        path,
+                        reason: &reason,
+                    },
+                    checks,
+                    self.policy.evidence_width(),
+                );
+                if there && !said.is_empty() {
+                    report.findings.extend(said);
+                } else {
+                    report.unparsed.push((path.clone(), reason));
                 }
                 return None;
             }
         };
 
-        report.findings.extend(rules::run(
-            path,
+        report.findings.extend(rule::judge(
+            &Examined::Text { path, text: &text },
             checks,
-            &text,
             self.policy.evidence_width(),
         ));
         Some(text)

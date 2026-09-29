@@ -2,6 +2,9 @@
 // Copyright (c) 2026 Sysogen Lda
 
 //! What clew says is wrong, as opposed to what a file declares.
+//!
+//! Reached through the registry in [`crate::rule`], never directly, so a rule
+//! cannot be run without being one.
 
 use icu_properties::CodePointSetData;
 use icu_properties::props::{DefaultIgnorableCodePoint, VariationSelector};
@@ -36,7 +39,7 @@ pub fn is_hidden(c: char) -> bool {
 /// The catalogue row names the rules, not the tool: one tool keeps prose and
 /// settings side by side, and evidence quoted from settings would print them.
 #[must_use]
-pub fn run(path: &RepoPath, checks: &[RuleId], text: &str, width: usize) -> Vec<Finding> {
+pub(crate) fn run(path: &RepoPath, checks: &[RuleId], text: &str, width: usize) -> Vec<Finding> {
     let mut found = Vec::new();
     for check in checks {
         match check {
@@ -84,7 +87,7 @@ fn in_shell(rule: RuleId) -> Option<fn(&str) -> Vec<usize>> {
 /// What the named rules say about a hook command in a settings file, placed
 /// where `source` holds its `occurrence`th copy, counting from zero.
 #[must_use]
-pub fn hook_command(
+pub(crate) fn hook_command(
     path: &RepoPath,
     checks: &[RuleId],
     command: &str,
@@ -122,7 +125,7 @@ pub fn hook_command(
 
 /// What the named rules say about the mode a file starts an agent in.
 #[must_use]
-pub fn autonomy(
+pub(crate) fn autonomy(
     path: &RepoPath,
     checks: &[RuleId],
     mode: &Autonomy,
@@ -208,7 +211,7 @@ fn about_file(path: &RepoPath, rule: RuleId, said: &str, width: usize) -> Findin
 /// What the named rules say about one operation a file pre-approves, where
 /// `source` holds its `occurrence`th copy, counting from zero.
 #[must_use]
-pub fn granted(
+pub(crate) fn granted(
     path: &RepoPath,
     checks: &[RuleId],
     permission: &Permission,
@@ -239,7 +242,7 @@ const GRANT_LISTS: &[&str] = &["allow", "allowed-tools", "allowed"];
 /// Placed at the name the server is declared under, which is the key a reader
 /// looks for, rather than at the keyword that trusts it.
 #[must_use]
-pub fn server(
+pub(crate) fn server(
     path: &RepoPath,
     checks: &[RuleId],
     server: &McpServer,
@@ -301,7 +304,7 @@ fn found_at(path: &RepoPath, rule: RuleId, text: &str, at: usize, width: usize) 
 /// saying. Without `opaque-hook` on the row there is none, and the read stays a
 /// gap.
 #[must_use]
-pub fn unreviewable(
+pub(crate) fn unreviewable(
     path: &RepoPath,
     checks: &[RuleId],
     reason: &str,
