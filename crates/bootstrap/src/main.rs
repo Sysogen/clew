@@ -16,8 +16,8 @@ use clew_adapter_fs::{StdFileContents, StdFileTree};
 use clew_application::DiscoverSurfaces;
 use clew_domain::ScanPolicy;
 use clew_domain::catalogue;
-use clew_domain::explain::RULE_PACK_VERSION;
 use clew_domain::finding::{DEFAULT_EVIDENCE_WIDTH, RuleId, Severity};
+use clew_domain::pack;
 use clew_domain::scan_policy::{DEFAULT_MAX_DEPTH, DEFAULT_MAX_FILE_BYTES};
 use clew_domain::scope::Scope;
 
@@ -88,10 +88,14 @@ fn main() -> ExitCode {
 
 /// The release, and what judged with it.
 fn version() -> String {
+    let packs: Vec<String> = pack::shipped()
+        .iter()
+        .map(|held| format!("{} {}", held.name, held.version))
+        .collect();
     format!(
-        "clew {} (rule pack {}, catalogue {})",
+        "clew {} ({}, catalogue {})",
         env!("CARGO_PKG_VERSION"),
-        RULE_PACK_VERSION,
+        packs.join(", "),
         catalogue().revision()
     )
 }
@@ -334,7 +338,7 @@ mod tests {
             (vec!["rules".to_owned()], "trusted-server"),
             (
                 vec!["rules".to_owned(), "--format".to_owned(), "json".to_owned()],
-                "\"rule_pack\"",
+                "\"packs\"",
             ),
         ] {
             let mut out = Vec::new();
@@ -372,7 +376,7 @@ mod tests {
     /// A run has to be citable: the release alone does not say what judged.
     /// The release alone does not say what judged.
     #[test]
-    fn version_names_the_rule_pack_and_the_catalogue() {
+    fn version_names_every_pack_and_the_catalogue() {
         let mut out = Vec::new();
         let mut err = Vec::new();
 
@@ -381,10 +385,12 @@ mod tests {
         let said = String::from_utf8(out).expect("utf-8");
         assert_eq!(status, 0, "{said}");
         assert!(said.contains(env!("CARGO_PKG_VERSION")), "{said}");
-        assert!(
-            said.contains(&format!("rule pack {RULE_PACK_VERSION}")),
-            "{said}"
-        );
+        for held in pack::shipped() {
+            assert!(
+                said.contains(&format!("{} {}", held.name, held.version)),
+                "{said}"
+            );
+        }
         assert!(
             said.contains(&format!("catalogue {}", catalogue().revision())),
             "{said}"

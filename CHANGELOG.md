@@ -7,6 +7,18 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Rules belong to a named pack with a version of its own, so a set can be added
+  without renumbering the rules already there and one pack can change without
+  invalidating a run that cited another. One pack ships, `core`. The pack's
+  `rules` list is where a rule is registered, and a rule in no pack, or in two,
+  fails a test rather than being quietly not run.
+
+- Every report names the packs that judged, rather than one number: a scan's
+  JSON carries `packs` where it carried `rule_pack`, the SARIF driver carries
+  `rulePacks`, `clew --version` names each pack, and a rule in `clew rules` or
+  `clew explain` carries the pack and version that judged it. One number would
+  have had a second pack's findings citing the first pack's version.
+
 - Each rule is one file under `crates/domain/src/rules/`, holding its id,
   severity, wording, what it reads and what it finds. The eight matches that
   used to spread one rule across the crate are gone, replaced by a single arm in

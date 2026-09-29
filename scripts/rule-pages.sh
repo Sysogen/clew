@@ -71,7 +71,8 @@ for rule in pack["rules"]:
     wanted.add(f"docs/rules/{rule['id']}.md")
     page = (
         f"# {rule['id']}\n\n"
-        f"Severity **{rule['severity']}**, rule pack {pack['rule_pack']}.\n\n"
+        f"Severity **{rule['severity']}**, "
+        f"pack {rule['pack']['name']} {rule['pack']['version']}.\n\n"
         f"{wrap(rule['description'])}\n\n"
         "## What it means\n\n"
         f"{wrap(rule['detail'])}\n\n"

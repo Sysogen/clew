@@ -5,14 +5,15 @@
 
 use std::fmt::Write as _;
 
-use clew_domain::explain::RULE_PACK_VERSION;
 use clew_domain::finding::RuleId;
+use clew_domain::pack;
 use serde::Serialize;
 
 /// One rule, as a machine reads it.
 #[derive(Serialize)]
 pub struct RuleOut {
     id: &'static str,
+    pack: Option<PackOut>,
     severity: &'static str,
     description: &'static str,
     detail: &'static str,
@@ -24,6 +25,7 @@ impl RuleOut {
     fn of(id: RuleId) -> Self {
         Self {
             id: id.as_str(),
+            pack: PackOut::of(id),
             severity: id.severity().as_str(),
             description: id.description(),
             detail: id.detail(),
@@ -33,23 +35,46 @@ impl RuleOut {
     }
 }
 
-/// The pack, and every rule in it.
+/// A pack, as a report names it: what judged, and at which version.
+///
+/// Owned, so a document reads back as it was written. Built once per report,
+/// not per finding.
 #[derive(Serialize)]
-struct PackOut {
-    rule_pack: u32,
+#[cfg_attr(test, derive(serde::Deserialize, Debug, PartialEq))]
+pub struct PackOut {
+    name: String,
+    version: u32,
+}
+
+impl PackOut {
+    /// Every pack clew ships.
+    #[must_use]
+    pub fn shipped() -> Vec<Self> {
+        pack::shipped()
+            .iter()
+            .map(|held| Self {
+                name: held.name.to_owned(),
+                version: held.version,
+            })
+            .collect()
+    }
+
+    fn of(id: RuleId) -> Option<Self> {
+        pack::of(id).map(|held| Self {
+            name: held.name.to_owned(),
+            version: held.version,
+        })
+    }
+}
+
+/// Every pack, and every rule in them.
+#[derive(Serialize)]
+struct RulesOut {
+    packs: Vec<PackOut>,
     rules: Vec<RuleOut>,
 }
 
-/// One rule, and the pack it belongs to. A saved explanation has to say which
-/// pack judged, the same as a listing does.
-#[derive(Serialize)]
-struct OneOut {
-    rule_pack: u32,
-    #[serde(flatten)]
-    rule: RuleOut,
-}
-
-/// Every rule, as an aligned listing.
+/// Every rule, as an aligned listing, a pack at a time.
 #[must_use]
 pub fn rules() -> String {
     let width = RuleId::all()
@@ -59,19 +84,24 @@ pub fn rules() -> String {
         .unwrap_or(0);
 
     let mut out = String::new();
-    for rule in RuleId::all() {
-        let _ = writeln!(
-            out,
-            "{:<width$}  {:<6}  {}",
-            rule.as_str(),
-            rule.severity().as_str(),
-            rule.description()
-        );
+    for pack in pack::shipped() {
+        let _ = writeln!(out, "{} {}\n", pack.name, pack.version);
+        for rule in pack.rules {
+            let _ = writeln!(
+                out,
+                "  {:<width$}  {:<6}  {}",
+                rule.name(),
+                rule.severity().as_str(),
+                rule.description()
+            );
+        }
+        let _ = writeln!(out);
     }
     let _ = writeln!(
         out,
-        "\n{} rule(s), pack {RULE_PACK_VERSION}.",
-        RuleId::all().len()
+        "{} rule(s) in {} pack(s).",
+        RuleId::all().len(),
+        pack::shipped().len()
     );
     out
 }
@@ -82,8 +112,8 @@ pub fn rules() -> String {
 ///
 /// Only when serialisation fails.
 pub fn rules_json() -> Result<String, serde_json::Error> {
-    serde_json::to_string_pretty(&PackOut {
-        rule_pack: RULE_PACK_VERSION,
+    serde_json::to_string_pretty(&RulesOut {
+        packs: PackOut::shipped(),
         rules: RuleId::all().iter().copied().map(RuleOut::of).collect(),
     })
 }
@@ -92,9 +122,13 @@ pub fn rules_json() -> Result<String, serde_json::Error> {
 #[must_use]
 pub fn explain(id: RuleId) -> String {
     format!(
-        "{}  {}\n\n{}\n\n{}\n\nWhat to do\n\n{}\n\n{}\n",
+        "{}  {}  {}\n\n{}\n\n{}\n\nWhat to do\n\n{}\n\n{}\n",
         id.as_str(),
         id.severity().as_str(),
+        pack::of(id).map_or_else(String::new, |held| format!(
+            "({} {})",
+            held.name, held.version
+        )),
         id.description(),
         id.detail(),
         id.remediation(),
@@ -102,16 +136,13 @@ pub fn explain(id: RuleId) -> String {
     )
 }
 
-/// One rule as a document.
+/// One rule as a document, naming the pack that judged it and its version.
 ///
 /// # Errors
 ///
 /// Only when serialisation fails.
 pub fn explain_json(id: RuleId) -> Result<String, serde_json::Error> {
-    serde_json::to_string_pretty(&OneOut {
-        rule_pack: RULE_PACK_VERSION,
-        rule: RuleOut::of(id),
-    })
+    serde_json::to_string_pretty(&RuleOut::of(id))
 }
 
 /// What to say when a rule id names nothing.
@@ -129,16 +160,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_listing_holds_every_rule() {
+    fn a_listing_holds_every_rule_under_its_pack() {
         let said = rules();
 
         for rule in RuleId::all() {
             assert!(said.contains(rule.as_str()), "{} missing", rule.as_str());
         }
-        assert!(
-            said.contains(&format!("pack {RULE_PACK_VERSION}")),
-            "{said}"
-        );
+        for held in pack::shipped() {
+            assert!(
+                said.contains(&format!("{} {}", held.name, held.version)),
+                "{said}"
+            );
+        }
+        assert!(said.contains("1 pack(s)"), "{said}");
+    }
+
+    #[test]
+    fn a_document_names_the_pack_a_rule_belongs_to() {
+        let written = explain_json(RuleId::TrustedServer).expect("serialises");
+        let rule: serde_json::Value = serde_json::from_str(&written).expect("parses");
+
+        assert_eq!(rule["pack"]["name"], "core");
+        assert_eq!(rule["pack"]["version"], clew_domain::pack::CORE.version);
     }
 
     #[test]
@@ -159,7 +202,8 @@ mod tests {
         let written = rules_json().expect("serialises");
         let pack: serde_json::Value = serde_json::from_str(&written).expect("parses");
 
-        assert_eq!(pack["rule_pack"], RULE_PACK_VERSION);
+        assert_eq!(pack["packs"][0]["name"], "core");
+        assert_eq!(pack["packs"][0]["version"], clew_domain::pack::CORE.version);
         let listed = pack["rules"].as_array().expect("an array");
         assert_eq!(listed.len(), RuleId::all().len());
         assert_eq!(listed[0]["id"], RuleId::all()[0].as_str());
@@ -171,7 +215,7 @@ mod tests {
         let written = explain_json(RuleId::TrustedServer).expect("serialises");
         let rule: serde_json::Value = serde_json::from_str(&written).expect("parses");
 
-        assert_eq!(rule["rule_pack"], RULE_PACK_VERSION);
+        assert_eq!(rule["pack"]["name"], "core");
         assert_eq!(rule["id"], "trusted-server");
         assert_eq!(rule["severity"], "medium");
         assert_eq!(rule["remediation"], RuleId::TrustedServer.remediation());

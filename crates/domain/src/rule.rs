@@ -160,12 +160,17 @@ pub fn of(id: RuleId) -> &'static dyn Rule {
 
 /// Every rule clew ships, in the order a listing shows them.
 ///
-/// Derived from the ids, so there is no second list to fall out of step, and
-/// built once: `judge` asks per file, per hook command and per grant.
+/// The packs hold them, so a pack's list is the one place a rule is registered.
+/// Built once: `judge` asks per file, per hook command and per grant.
 #[must_use]
 pub fn shipped() -> &'static [&'static dyn Rule] {
     static SHIPPED: OnceLock<Vec<&'static dyn Rule>> = OnceLock::new();
-    SHIPPED.get_or_init(|| RuleId::all().iter().copied().map(of).collect())
+    SHIPPED.get_or_init(|| {
+        crate::pack::shipped()
+            .iter()
+            .flat_map(|pack| pack.rules.iter().copied())
+            .collect()
+    })
 }
 
 /// What the rules a row names say about one thing.

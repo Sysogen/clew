@@ -2,18 +2,18 @@
 #
 # Pinned so a change to the set is visible in review rather than only in a
 # diff of match arms. `the_rule_pack_matches_its_snapshot` compares it, and the
-# version below is what a finding is cited against: raise it when a line
-# changes, never for a wording fix.
+# pack version below is what a finding is cited against: raise it when a line
+# under it changes, never for a wording fix.
 
-version 1
+pack core 1
 
-invisible-unicode high
-opaque-hook medium
-download-and-execute high
-decode-and-execute high
-credential-exfiltration high
-unverified-download medium
-unpinned-remote-package low
-bypass-permissions high
-unrestricted-shell medium
-trusted-server medium
+invisible-unicode high core
+opaque-hook medium core
+download-and-execute high core
+decode-and-execute high core
+credential-exfiltration high core
+unverified-download medium core
+unpinned-remote-package low core
+bypass-permissions high core
+unrestricted-shell medium core
+trusted-server medium core

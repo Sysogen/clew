@@ -25,14 +25,49 @@ if ! git rev-parse --verify --quiet "$base" >/dev/null; then
     exit 0
 fi
 
-# Each snapshot, and the line that carries its number.
-snapshots=(
-    "crates/domain/rule-pack.snapshot:version"
-    "crates/domain/catalogue.snapshot:revision"
-)
+# The rule pack snapshot carries a `pack <name> <version>` line per pack, and a
+# rule row ending in the pack that holds it. Each pack is compared on its own:
+# one pack's rows changing while another's version is raised would otherwise
+# pass, and the unchanged number would name two different sets of rules.
+check_packs() {
+    local was="$1" now="$2" file="$3" bad=0 name
+    for name in $(printf '%s\n%s\n' "$was" "$now" |
+        grep -E '^pack ' | awk '{print $2}' | sort -u); do
+        local was_rows now_rows was_version now_version
+        was_rows="$(printf '%s\n' "$was" | grep -E " ${name}\$" || true)"
+        now_rows="$(printf '%s\n' "$now" | grep -E " ${name}\$" || true)"
+        was_version="$(printf '%s\n' "$was" | grep -E "^pack ${name} " || true)"
+        now_version="$(printf '%s\n' "$now" | grep -E "^pack ${name} " || true)"
+
+        if [ "$was_rows" = "$now_rows" ]; then
+            continue
+        fi
+        if [ "$was_version" != "$now_version" ]; then
+            echo "revisions: pack ${name} changed and its version was raised"
+            continue
+        fi
+        printf 'revisions: %s: pack %s changed while its version stayed at %s\n' \
+            "$file" "$name" "$(printf '%s' "$now_version" | awk '{print $3}')" >&2
+        bad=$((bad + 1))
+    done
+    return "$bad"
+}
+
+# A snapshot with one number, and the line that carries it.
+single=("crates/domain/catalogue.snapshot:revision")
 
 stale=0
-for entry in "${snapshots[@]}"; do
+
+packs="crates/domain/rule-pack.snapshot"
+if git cat-file -e "$base:$packs" 2>/dev/null; then
+    # `$?` after `if ! cmd` is the negation, not the function's count.
+    check_packs "$(git show "$base:$packs")" "$(cat "$packs")" "$packs" ||
+        stale=$((stale + $?))
+else
+    echo "revisions: $packs is new; nothing to compare"
+fi
+
+for entry in "${single[@]}"; do
     file="${entry%%:*}"
     key="${entry##*:}"
 
@@ -44,7 +79,6 @@ for entry in "${snapshots[@]}"; do
     was="$(git show "$base:$file")"
     now="$(cat "$file")"
 
-    # The number, and everything else that is not a comment or blank.
     number_of() { printf '%s\n' "$1" | grep -E "^${key} " || true; }
     content_of() { printf '%s\n' "$1" | grep -vE "^#|^${key} |^[[:space:]]*$" || true; }
 
@@ -63,7 +97,7 @@ done
 
 if [ "$stale" -gt 0 ]; then
     printf 'A snapshot may not change without its number. One number must name\n' >&2
-    printf 'one rule pack, or a finding cannot be traced to what judged it.\n' >&2
+    printf 'one set of rules, or a finding cannot be traced to what judged it.\n' >&2
     exit 1
 fi
 printf 'revisions: every changed snapshot raised its number\n'

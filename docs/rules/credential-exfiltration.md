@@ -1,6 +1,6 @@
 # credential-exfiltration
 
-Severity **high**, rule pack 1.
+Severity **high**, pack core 1.
 
 A credential file, a token or the whole environment sent over the network
 

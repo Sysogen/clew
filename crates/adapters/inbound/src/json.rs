@@ -10,9 +10,9 @@
 
 use std::io;
 
+use crate::explain::PackOut;
 use clew_application::DiscoveryReport;
 use clew_domain::catalogue;
-use clew_domain::explain::RULE_PACK_VERSION;
 use clew_domain::hook::Action;
 use clew_domain::mcp_server::Transport;
 use clew_domain::rules::is_default_ignorable;
@@ -79,7 +79,7 @@ impl Formatter for Escaping {
 #[cfg_attr(test, derive(serde::Deserialize, Debug, PartialEq))]
 struct Document {
     version: u32,
-    rule_pack: u32,
+    packs: Vec<PackOut>,
     catalogue: u32,
     scans: Vec<ScanOut>,
 }
@@ -177,7 +177,7 @@ impl Document {
     fn of(scans: &[Scan<'_>]) -> Self {
         Self {
             version: VERSION,
-            rule_pack: RULE_PACK_VERSION,
+            packs: PackOut::shipped(),
             catalogue: catalogue().revision(),
             scans: scans.iter().map(ScanOut::of).collect(),
         }
@@ -368,7 +368,8 @@ mod tests {
         let json = written(&[repository(&report)]);
 
         assert_eq!(json["version"], 1);
-        assert_eq!(json["rule_pack"], RULE_PACK_VERSION);
+        assert_eq!(json["packs"][0]["name"], "core");
+        assert_eq!(json["packs"][0]["version"], clew_domain::pack::CORE.version);
         assert_eq!(json["catalogue"], catalogue().revision());
         let scan = &json["scans"][0];
         assert_eq!(scan["scope"], "repository");

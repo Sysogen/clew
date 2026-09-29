@@ -1,6 +1,6 @@
 # unverified-download
 
-Severity **medium**, rule pack 1.
+Severity **medium**, pack core 1.
 
 A downloaded file run with no checksum or signature checked first
 

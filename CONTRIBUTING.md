@@ -141,6 +141,23 @@ than `**/hooks/**`.
 A `*` stays inside one segment and `**` crosses them, so
 `**/.agents/skills/*/SKILL.md` is one directory deep and no more.
 
+## Adding a rule pack
+
+A pack is a named set of rules with a version of its own, so adding a set does
+not renumber the rules already there. Write a `Pack` in
+`crates/domain/src/pack.rs` and add it to `shipped`; its rules are ordinary
+rules, written as above. Ids stay unique across packs, so a catalogue row names
+a rule and never a pack.
+
+Every report names the packs rather than one number: `clew --version`, the
+`packs` list in a scan's JSON, `rulePacks` on the SARIF driver, and the `pack`
+on a rule in `clew rules` and `clew explain`. A single number would have had a
+second pack's findings citing the first pack's version, which is the whole thing
+the versioning exists to avoid.
+
+`check-revisions.sh` compares each pack on its own for the same reason: one
+pack's rows changing while another's version is raised must not pass.
+
 ## Adding a rule
 
 A rule is one file, `crates/domain/src/rules/<id>.rs`, holding everything about
@@ -153,8 +170,10 @@ it, what it reads, and what it finds.
 2. Declare the module in `rules/mod.rs`.
 3. Add the `RuleId` variant and its arm in `rule::of`. The compiler will not
    build without the arm, which is what ties an id to a rule.
-4. Add the line to `rule-pack.snapshot`, raising the rule pack version.
-5. Name it in the `check` list of the catalogue rows it reads.
+4. Add it to a pack's `rules` in `crates/domain/src/pack.rs`. A rule in no pack
+   never runs.
+5. Add the line to `rule-pack.snapshot`, raising that pack's version.
+6. Name it in the `check` list of the catalogue rows it reads.
 
 Three tests guard the wiring: `every_rule_file_is_reachable` catches a rule
 written and never reached, `no_rule_is_registered_twice` catches two rules
@@ -188,7 +207,7 @@ driver.
 
 | Number | Where | Raise it when |
 | --- | --- | --- |
-| Rule pack | `RULE_PACK_VERSION` in `crates/domain/src/explain.rs` | a rule is added or removed, an id changes meaning, or a severity changes |
+| Rule pack | `version` on the pack in `crates/domain/src/pack.rs` | one of *its* rules is added or removed, an id changes meaning, a severity changes, or a rule moves pack |
 | Catalogue | `revision` at the top of `crates/domain/catalogue.toml` | a row is added or removed, or its `scope`, `glob`, `kind`, `format`, `extract` or `check` changes |
 
 Rewording a rule's `detail`, re-dating a row's `last_verified`, or correcting

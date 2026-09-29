@@ -16,6 +16,7 @@ pub mod extract;
 pub mod finding;
 pub mod hook;
 pub mod mcp_server;
+pub mod pack;
 pub mod permission;
 pub mod ports;
 pub mod repo_path;

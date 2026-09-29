@@ -6,10 +6,10 @@
 //! A repository scan only: SARIF places a result by a path relative to the
 //! checkout, and a home or system scan has no checkout.
 
+use crate::explain::PackOut;
 use clew_application::DiscoveryReport;
 use clew_domain::RepoPath;
 use clew_domain::catalogue;
-use clew_domain::explain::RULE_PACK_VERSION;
 use clew_domain::finding::{Finding, RuleId, Severity};
 use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
 use serde::Serialize;
@@ -87,7 +87,7 @@ struct Driver {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct DriverProperties {
-    rule_pack: u32,
+    rule_packs: Vec<PackOut>,
     catalogue: u32,
 }
 
@@ -196,7 +196,7 @@ impl Log {
                         semantic_version: env!("CARGO_PKG_VERSION"),
                         information_uri: env!("CARGO_PKG_REPOSITORY"),
                         properties: DriverProperties {
-                            rule_pack: RULE_PACK_VERSION,
+                            rule_packs: PackOut::shipped(),
                             catalogue: catalogue().revision(),
                         },
                         rules: rules.iter().map(|&id| rule(id)).collect(),
@@ -571,7 +571,11 @@ mod tests {
         let log = written(&scanned());
 
         let driver = &log["runs"][0]["tool"]["driver"];
-        assert_eq!(driver["properties"]["rulePack"], RULE_PACK_VERSION);
+        assert_eq!(driver["properties"]["rulePacks"][0]["name"], "core");
+        assert_eq!(
+            driver["properties"]["rulePacks"][0]["version"],
+            clew_domain::pack::CORE.version
+        );
         assert_eq!(driver["properties"]["catalogue"], catalogue().revision());
         assert_eq!(driver["semanticVersion"], env!("CARGO_PKG_VERSION"));
     }
