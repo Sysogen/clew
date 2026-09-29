@@ -1,0 +1,15 @@
+# The rules clew applies, and how much each matters.
+#
+# Pinned so a change to the set is visible in review rather than only in a
+# diff of match arms. `the_rule_pack_matches_its_snapshot` compares it.
+
+invisible-unicode high
+opaque-hook medium
+download-and-execute high
+decode-and-execute high
+credential-exfiltration high
+unverified-download medium
+unpinned-remote-package low
+bypass-permissions high
+unrestricted-shell medium
+trusted-server medium

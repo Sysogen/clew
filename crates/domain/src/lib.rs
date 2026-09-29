@@ -11,6 +11,7 @@
 pub mod autonomy;
 pub mod catalogue;
 pub mod credential;
+pub mod explain;
 pub mod extract;
 pub mod finding;
 pub mod hook;
