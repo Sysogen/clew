@@ -8,6 +8,8 @@
 
 use clew_application::DiscoveryReport;
 use clew_domain::RepoPath;
+use clew_domain::catalogue;
+use clew_domain::explain::RULE_PACK_VERSION;
 use clew_domain::finding::{Finding, RuleId, Severity};
 use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
 use serde::Serialize;
@@ -78,6 +80,15 @@ struct Driver {
     semantic_version: &'static str,
     information_uri: &'static str,
     rules: Vec<Rule>,
+    properties: DriverProperties,
+}
+
+/// A property bag, which is where SARIF puts what it has no field for.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DriverProperties {
+    rule_pack: u32,
+    catalogue: u32,
 }
 
 #[derive(Serialize)]
@@ -183,6 +194,10 @@ impl Log {
                         name: "clew",
                         semantic_version: env!("CARGO_PKG_VERSION"),
                         information_uri: env!("CARGO_PKG_REPOSITORY"),
+                        properties: DriverProperties {
+                            rule_pack: RULE_PACK_VERSION,
+                            catalogue: catalogue().revision(),
+                        },
                         rules: rules.iter().map(|&id| rule(id)).collect(),
                     },
                 },
@@ -531,6 +546,17 @@ mod tests {
                 .contains("includeTools"),
             "{rule}"
         );
+    }
+
+    /// A log has to say what judged, or a finding cannot be traced to it.
+    #[test]
+    fn a_log_names_the_rule_pack_and_the_catalogue() {
+        let log = written(&scanned());
+
+        let driver = &log["runs"][0]["tool"]["driver"];
+        assert_eq!(driver["properties"]["rulePack"], RULE_PACK_VERSION);
+        assert_eq!(driver["properties"]["catalogue"], catalogue().revision());
+        assert_eq!(driver["semanticVersion"], env!("CARGO_PKG_VERSION"));
     }
 
     /// The log carries the domain's words. A copy in this adapter would drift

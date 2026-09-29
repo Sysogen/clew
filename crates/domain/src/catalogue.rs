@@ -28,6 +28,14 @@ pub enum CatalogueError {
     /// The file is not valid TOML, or does not match the expected shape.
     #[error("catalogue is not valid: {0}")]
     Invalid(String),
+    /// The file declares a schema this crate does not read.
+    #[error("catalogue schema {found} is not {expected}")]
+    UnknownSchema {
+        /// What the file declared.
+        found: u32,
+        /// What this crate reads.
+        expected: u32,
+    },
     /// A row carries a glob the matcher cannot compile.
     #[error("row {row} has an invalid glob {glob:?}: {reason}")]
     BadGlob {
@@ -148,16 +156,33 @@ fn default_format() -> String {
     "json".to_owned()
 }
 
+/// The schema this crate reads. Raised when the shape of the file changes, as
+/// it did when `revision` was added, so a file written for an older shape is
+/// refused rather than half read.
+const SCHEMA: u32 = 2;
+
+/// Just the schema, read before the rest: a file written for an older shape is
+/// missing fields the current one requires, and "missing field `revision`" says
+/// far less than the schema it was written for.
+#[derive(Debug, Deserialize)]
+struct Schema {
+    version: u32,
+}
+
 #[derive(Debug, Deserialize)]
 struct CatalogueFile {
     #[allow(dead_code)]
     version: u32,
+    /// Raised when a row changes what a scan finds. `version` above says how
+    /// the file is shaped; this says what it holds.
+    revision: u32,
     surface: Vec<SurfaceRule>,
 }
 
 /// Every recognised surface, and a compiled matcher over their globs.
 #[derive(Debug)]
 pub struct Catalogue {
+    revision: u32,
     rules: Vec<SurfaceRule>,
     kinds: Vec<SurfaceKind>,
     extractions: Vec<Vec<Extraction>>,
@@ -175,6 +200,15 @@ impl Catalogue {
     /// Returns an error when the file is malformed, a glob will not compile, or
     /// a row names a kind that does not exist.
     pub fn load(source: &str) -> Result<Self, CatalogueError> {
+        let declared: Schema =
+            toml::from_str(source).map_err(|e| CatalogueError::Invalid(e.to_string()))?;
+        if declared.version != SCHEMA {
+            return Err(CatalogueError::UnknownSchema {
+                found: declared.version,
+                expected: SCHEMA,
+            });
+        }
+
         let file: CatalogueFile =
             toml::from_str(source).map_err(|e| CatalogueError::Invalid(e.to_string()))?;
 
@@ -269,6 +303,7 @@ impl Catalogue {
         }
 
         Ok(Self {
+            revision: file.revision,
             globs: builder
                 .build()
                 .map_err(|e| CatalogueError::Invalid(e.to_string()))?,
@@ -279,6 +314,12 @@ impl Catalogue {
             scopes,
             formats,
         })
+    }
+
+    /// What this catalogue holds, raised when a row changes what a scan finds.
+    #[must_use]
+    pub fn revision(&self) -> u32 {
+        self.revision
     }
 
     /// The row matching `path`, if any.
@@ -605,7 +646,8 @@ mod tests {
     #[test]
     fn an_invalid_glob_is_rejected_at_load() {
         let error = Catalogue::load(
-            r#"version = 1
+            r#"version = 2
+               revision = 1
                [[surface]]
                glob = "["
                tool = "x"
@@ -621,7 +663,8 @@ mod tests {
     #[test]
     fn an_unknown_kind_is_rejected_at_load() {
         let error = Catalogue::load(
-            r#"version = 1
+            r#"version = 2
+               revision = 1
                [[surface]]
                glob = "x"
                tool = "x"
@@ -640,7 +683,8 @@ mod tests {
     #[test]
     fn an_unknown_format_is_rejected_at_load() {
         let error = Catalogue::load(
-            r#"version = 1
+            r#"version = 2
+               revision = 1
                [[surface]]
                glob = "x"
                tool = "x"
@@ -660,7 +704,8 @@ mod tests {
     #[test]
     fn an_unknown_check_is_rejected_at_load() {
         let error = Catalogue::load(
-            r#"version = 1
+            r#"version = 2
+               revision = 1
                [[surface]]
                glob = "x"
                tool = "x"
@@ -796,10 +841,79 @@ mod tests {
         }
     }
 
+    /// Provenance is left out on purpose: re-dating a row after re-reading its
+    /// documentation would churn the file and stop it being read.
+    #[test]
+    fn the_catalogue_matches_its_snapshot() {
+        let snapshot = include_str!("../catalogue.snapshot");
+        let pinned: Vec<&str> = snapshot
+            .lines()
+            .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
+            .collect();
+
+        let mut held = vec![format!("revision {}", shipped().revision())];
+        for (row, rule) in shipped().rules().iter().enumerate() {
+            let list = |names: &[String]| {
+                if names.is_empty() {
+                    "-".to_owned()
+                } else {
+                    names.join(",")
+                }
+            };
+            held.push(format!(
+                "{} {} {} {} {} {}",
+                rule.scope,
+                rule.glob,
+                rule.kind,
+                rule.format,
+                list(&rule.extract),
+                list(&rule.check),
+            ));
+            assert!(row < pinned.len(), "{} has no pinned line", rule.glob);
+        }
+
+        assert_eq!(
+            pinned,
+            held.iter().map(String::as_str).collect::<Vec<_>>(),
+            "the catalogue changed; update catalogue.snapshot and raise its \
+             revision if what a scan finds changed"
+        );
+    }
+
+    /// A file written for an older shape is refused rather than half read.
+    /// `revision` became required when it was added, which is a change of
+    /// shape, so the schema says 2.
+    #[test]
+    fn a_file_written_for_another_schema_is_refused() {
+        let error = Catalogue::load(
+            r#"version = 1
+               [[surface]]
+               glob = "x"
+               tool = "x"
+               kind = "skill"
+               last_verified = "2026-09-11"
+               source = "https://example.invalid"
+            "#,
+        )
+        .expect_err("an older schema must not load");
+
+        assert!(
+            matches!(
+                error,
+                CatalogueError::UnknownSchema {
+                    found: 1,
+                    expected: 2
+                }
+            ),
+            "{error:?}"
+        );
+    }
+
     #[test]
     fn an_unknown_extraction_is_rejected_at_load() {
         let error = Catalogue::load(
-            r#"version = 1
+            r#"version = 2
+               revision = 1
                [[surface]]
                glob = "x"
                tool = "x"
@@ -932,7 +1046,8 @@ mod tests {
     fn a_row_outside_a_repository_cannot_walk_out_of_its_root() {
         for glob in ["../outside/**", "./**", ".", ".."] {
             let error = Catalogue::load(&format!(
-                r#"version = 1
+                r#"version = 2
+               revision = 1
                    [[surface]]
                    scope = "home"
                    glob = "{glob}"
@@ -978,7 +1093,8 @@ mod tests {
     fn a_row_outside_a_repository_cannot_reach_past_its_root() {
         for glob in ["foo/../../outside/**/*.md", "a/./b/**/*.md", "a/../b"] {
             let error = Catalogue::load(&format!(
-                r#"version = 1
+                r#"version = 2
+               revision = 1
                    [[surface]]
                    scope = "home"
                    glob = "{glob}"
@@ -1191,7 +1307,8 @@ mod tests {
             "2026-13-01",
         ] {
             let toml = format!(
-                r#"version = 1
+                r#"version = 2
+               revision = 1
                    [[surface]]
                    glob = "x"
                    tool = "x"
@@ -1207,7 +1324,8 @@ mod tests {
             );
         }
 
-        let leap = r#"version = 1
+        let leap = r#"version = 2
+               revision = 1
                       [[surface]]
                       glob = "x"
                       tool = "x"
@@ -1221,7 +1339,8 @@ mod tests {
     #[test]
     fn a_row_missing_its_citation_is_rejected_at_load() {
         let error = Catalogue::load(
-            r#"version = 1
+            r#"version = 2
+               revision = 1
                [[surface]]
                glob = "x"
                tool = "x"

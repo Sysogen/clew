@@ -1,7 +1,11 @@
 # The rules clew applies, and how much each matters.
 #
 # Pinned so a change to the set is visible in review rather than only in a
-# diff of match arms. `the_rule_pack_matches_its_snapshot` compares it.
+# diff of match arms. `the_rule_pack_matches_its_snapshot` compares it, and the
+# version below is what a finding is cited against: raise it when a line
+# changes, never for a wording fix.
+
+version 1
 
 invisible-unicode high
 opaque-hook medium

@@ -53,6 +53,17 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: ./scripts/check-versions.sh
 
+      # Against the base, because a snapshot updated together with the content
+      # it pins stays equal to it. Only history says whether the number moved,
+      # and one number naming two rule packs is what the number exists to stop.
+      - name: Snapshot revisions
+        if: matrix.os == 'ubuntu-latest' && github.event_name == 'pull_request'
+        run: |
+          git fetch --no-tags --depth=1 origin "$BASE"
+          ./scripts/check-revisions.sh "$BASE"
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+
   msrv:
     name: MSRV
     runs-on: ubuntu-latest

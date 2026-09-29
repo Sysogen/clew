@@ -9,6 +9,13 @@
 
 use crate::finding::RuleId;
 
+/// The rule pack, as a number a finding can be cited against.
+///
+/// Raised when a rule is added or removed, an id changes meaning, or a severity
+/// changes. Not for a wording change, which leaves every finding the same. It
+/// names the set, not the logic inside a rule: see CONTRIBUTING.
+pub const RULE_PACK_VERSION: u32 = 1;
+
 impl RuleId {
     /// Every rule, in the order a listing shows them.
     ///
@@ -235,15 +242,19 @@ mod tests {
             .lines()
             .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
             .collect();
-        let held: Vec<String> = RuleId::all()
-            .iter()
-            .map(|r| format!("{} {}", r.as_str(), r.severity().as_str()))
-            .collect();
+
+        let mut held = vec![format!("version {RULE_PACK_VERSION}")];
+        held.extend(
+            RuleId::all()
+                .iter()
+                .map(|r| format!("{} {}", r.as_str(), r.severity().as_str())),
+        );
 
         assert_eq!(
             pinned,
             held.iter().map(String::as_str).collect::<Vec<_>>(),
-            "the rule pack changed; update rule-pack.snapshot"
+            "the rule pack changed; update rule-pack.snapshot and raise \
+             RULE_PACK_VERSION if what a scan finds changed"
         );
     }
 

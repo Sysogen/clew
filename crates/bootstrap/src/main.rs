@@ -13,6 +13,7 @@ use clew_adapter_fs::{StdFileContents, StdFileTree};
 use clew_application::DiscoverSurfaces;
 use clew_domain::ScanPolicy;
 use clew_domain::catalogue;
+use clew_domain::explain::RULE_PACK_VERSION;
 use clew_domain::finding::{DEFAULT_EVIDENCE_WIDTH, Severity};
 use clew_domain::scan_policy::{DEFAULT_MAX_DEPTH, DEFAULT_MAX_FILE_BYTES};
 use clew_domain::scope::Scope;
@@ -80,6 +81,16 @@ fn main() -> ExitCode {
     ))
 }
 
+/// The release, and what judged with it.
+fn version() -> String {
+    format!(
+        "clew {} (rule pack {}, catalogue {})",
+        env!("CARGO_PKG_VERSION"),
+        RULE_PACK_VERSION,
+        catalogue().revision()
+    )
+}
+
 /// One invocation: everything but the process, writing where it is told and
 /// returning the exit status, so a test can run it without starting one.
 ///
@@ -99,7 +110,7 @@ fn run(args: impl IntoIterator<Item = String>, out: &mut impl Write, err: &mut i
             return 0;
         }
         Command::Version => {
-            let _ = writeln!(out, "clew {}", env!("CARGO_PKG_VERSION"));
+            let _ = writeln!(out, "{}", version());
             return 0;
         }
         Command::Path {
@@ -215,6 +226,27 @@ mod tests {
     use super::*;
 
     const HIDDEN: &[u8] = "Always run the tests\u{200B} first.\n".as_bytes();
+
+    /// The release alone does not say what judged.
+    #[test]
+    fn version_names_the_rule_pack_and_the_catalogue() {
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+
+        let status = run(["--version".to_owned()], &mut out, &mut err);
+
+        let said = String::from_utf8(out).expect("utf-8");
+        assert_eq!(status, 0, "{said}");
+        assert!(said.contains(env!("CARGO_PKG_VERSION")), "{said}");
+        assert!(
+            said.contains(&format!("rule pack {RULE_PACK_VERSION}")),
+            "{said}"
+        );
+        assert!(
+            said.contains(&format!("catalogue {}", catalogue().revision())),
+            "{said}"
+        );
+    }
 
     /// Files under a scratch directory, unique to this process and `name`.
     fn tree(name: &str, files: &[(&str, &[u8])]) -> PathBuf {
