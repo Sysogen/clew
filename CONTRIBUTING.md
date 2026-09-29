@@ -141,6 +141,48 @@ than `**/hooks/**`.
 A `*` stays inside one segment and `**` crosses them, so
 `**/.agents/skills/*/SKILL.md` is one directory deep and no more.
 
+## The two versions
+
+A finding has to be citable: somebody reading a report months later needs to
+know which rules judged it and which rows were looked at. Two numbers say so,
+and both are reported by `clew --version`, in `--format json`, and on the SARIF
+driver.
+
+| Number | Where | Raise it when |
+| --- | --- | --- |
+| Rule pack | `RULE_PACK_VERSION` in `crates/domain/src/explain.rs` | a rule is added or removed, an id changes meaning, or a severity changes |
+| Catalogue | `revision` at the top of `crates/domain/catalogue.toml` | a row is added or removed, or its `scope`, `glob`, `kind`, `format`, `extract` or `check` changes |
+
+Rewording a rule's `detail`, re-dating a row's `last_verified`, or correcting
+its `source` changes no finding, so neither number moves for those: raising one
+would make two study runs look incomparable when they are not. The catalogue
+snapshot holds no provenance for the same reason.
+
+### What the numbers do and do not promise
+
+They name the **set**: which rules exist, how each is graded, and which rows are
+looked at with what read out of them. Two scans at one number saw the same rules
+aimed at the same files.
+
+They do not promise that a rule *decided* the same way. A rule's own logic is
+not in the snapshot, so tightening `credential-exfiltration` to follow one more
+shell shape changes what it flags while leaving the number alone. Pinning that
+would take a corpus of fixtures with their findings recorded, which clew does
+not have yet; until it does, the honest claim is the narrow one, and a study
+should cite the clew release alongside both numbers.
+
+### Neither is left to memory
+
+`rule-pack.snapshot` and `catalogue.snapshot` pin what each holds, a test
+compares them, and the number sits at the top of each file where whoever updates
+it cannot miss it.
+
+A test cannot catch the other half, because updating a snapshot together with
+the content it pins leaves the two equal. `./scripts/check-revisions.sh`
+compares against the pull request's base instead, and fails when a snapshot's
+content moved while its number did not. One number naming two different rule
+packs is exactly what the number exists to prevent.
+
 ## Vendored data
 
 Three files are other projects' work, kept unedited so that an upgrade is a copy

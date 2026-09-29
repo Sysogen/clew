@@ -16,7 +16,8 @@
 # scope         repository, home, or system: the tree the glob is matched
 #               against. Omitted means repository
 
-version = 1
+version = 2
+revision = 1
 
 # --- Claude Code ------------------------------------------------------------
 

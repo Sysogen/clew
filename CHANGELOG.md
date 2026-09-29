@@ -7,6 +7,21 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- A rule pack version and a catalogue revision, so a finding can be cited and
+  traced to the rules that made it. Both are reported by `clew --version`, as
+  `rule_pack` and `catalogue` in `--format json`, and on the SARIF driver's
+  properties. Each names the set of rules and rows, not the logic inside a rule:
+  rewording a rule or re-dating a row leaves both alone, so two runs stay
+  comparable when nothing about the set changed. A snapshot test compares each
+  against the code, and `check-revisions.sh` compares it against the base, which
+  is the only way to see a snapshot updated alongside its content without the
+  number moving.
+
+- The catalogue declares schema 2, and a file declaring another is refused
+  rather than half read. `revision` became required when it was added, which is
+  a change of shape, and the schema version had been parsed and ignored since it
+  was introduced.
+
 - `RuleId::all`, `RuleId::detail` and `RuleId::remediation` on `clew-domain`.
   What a rule means and what to do about it were written into the SARIF
   adapter, where the only way to read them was to generate a log; they sit
