@@ -5,6 +5,8 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-30
+
 ### Added
 
 - Rules belong to a named pack with a version of its own, so a set can be added
@@ -48,15 +50,13 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   copies of a sentence is how one rule comes to mean three things. A page no
   rule claims, left by a rule removed or renamed, is reported too.
 
-- A rule pack version and a catalogue revision, so a finding can be cited and
-  traced to the rules that made it. Both are reported by `clew --version`, as
-  `rule_pack` and `catalogue` in `--format json`, and on the SARIF driver's
-  properties. Each names the set of rules and rows, not the logic inside a rule:
-  rewording a rule or re-dating a row leaves both alone, so two runs stay
-  comparable when nothing about the set changed. A snapshot test compares each
-  against the code, and `check-revisions.sh` compares it against the base, which
-  is the only way to see a snapshot updated alongside its content without the
-  number moving.
+- A version per rule pack and a catalogue revision, so a finding can be cited
+  and traced to the rules that made it. Each names the set of rules and rows,
+  not the logic inside a rule: rewording a rule or re-dating a row leaves both
+  alone, so two runs stay comparable when nothing about the set changed. A
+  snapshot test compares each against the code, and `check-revisions.sh`
+  compares it against the base, which is the only way to see a snapshot updated
+  alongside its content without the number moving.
 
 - The catalogue declares schema 2, and a file declaring another is refused
   rather than half read. `revision` became required when it was added, which is
@@ -448,7 +448,8 @@ tagged release.
   devcontainers.
 - `CLEW_MAX_DEPTH` sets the directory recursion limit.
 
-[Unreleased]: https://github.com/sysogen/clew/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/sysogen/clew/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/sysogen/clew/releases/tag/v0.7.0
 [0.6.0]: https://github.com/sysogen/clew/releases/tag/v0.6.0
 [0.5.0]: https://github.com/sysogen/clew/releases/tag/v0.5.0
 [0.4.0]: https://github.com/sysogen/clew/releases/tag/v0.4.0
