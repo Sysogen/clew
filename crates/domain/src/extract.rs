@@ -502,10 +502,10 @@ fn non_blank(value: Option<&serde_json::Value>) -> Option<&str> {
 /// One server declaration. `None` when it reaches nothing: no command, and no
 /// url under either key a remote transport is declared with.
 fn server(name: &str, config: &serde_json::Value) -> Option<McpServer> {
-    // `url` is SSE and `httpUrl` streamable HTTP. Documented as alternatives,
-    // so a declaration carrying both is still one server, and `url` is
-    // preferred to keep what clew already reported unchanged.
-    let remote = non_blank(config.get("url")).or_else(|| non_blank(config.get("httpUrl")));
+    // A declaration carrying both keys is still one server, and `httpUrl` is
+    // the one reported: Gemini CLI connects to it and warns that it is doing
+    // so, so reporting `url` would name an endpoint nothing reaches.
+    let remote = non_blank(config.get("httpUrl")).or_else(|| non_blank(config.get("url")));
     let transport = if let Some(url) = remote {
         Transport::remote(url)
     } else {
@@ -1548,17 +1548,18 @@ env = { DATABASE_URL = "postgres://u:hunter2@h/d", PGPORT = "5432" }
     }
 
     /// The two keys are alternatives, so a declaration naming both is one
-    /// server. `url` is the one reported, which keeps every file clew already
-    /// read printing what it printed before.
+    /// server. Gemini CLI takes `httpUrl` first and warns that it is ignoring
+    /// `url`, so that is the endpoint to report: naming the other would point
+    /// a reader at a host nothing connects to.
     #[test]
-    fn a_server_naming_both_urls_is_one_server() {
+    fn the_endpoint_reported_is_the_one_a_tool_connects_to() {
         let found = servers_of(
             r#"{"mcpServers":{"a":{"url":"https://sse.example.invalid/sse",
                  "httpUrl":"https://http.example.invalid/stream"}}}"#,
         );
 
         assert_eq!(found.len(), 1, "{found:?}");
-        assert_eq!(found[0].invocation(), "https://sse.example.invalid/sse");
+        assert_eq!(found[0].invocation(), "https://http.example.invalid/stream");
     }
 
     #[test]
