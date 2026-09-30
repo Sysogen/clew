@@ -2129,6 +2129,65 @@ mod tests {
         assert!(report.is_complete());
     }
 
+    /// The row read nothing until its extraction was filled in, so a
+    /// workspace's servers were invisible however many clew held. VS Code's
+    /// own example, comment included, since it writes JSON with comments.
+    #[test]
+    fn a_vscode_mcp_file_reaches_the_report() {
+        let tree = FakeTree::default()
+            .dir("", &[(".vscode", EntryKind::Directory)])
+            .dir(".vscode", &[("mcp.json", EntryKind::File)]);
+        let contents = FakeContents::default().file(
+            ".vscode/mcp.json",
+            r#"{
+                 // what this workspace talks to
+                 "servers": {
+                   "github": {"type":"http","url":"https://api.githubcopilot.com/mcp"},
+                   "playwright": {"command":"npx","args":["-y","@microsoft/mcp-server-playwright"]}
+                 }
+               }"#,
+        );
+        let policy = ScanPolicy::default();
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &policy).run();
+
+        assert_eq!(report.servers.len(), 2, "{report:?}");
+        assert!(
+            report
+                .servers
+                .iter()
+                .all(|s| s.source.as_str() == ".vscode/mcp.json"),
+            "{report:?}"
+        );
+        assert!(report.unparsed.is_empty(), "{report:?}");
+        assert!(report.is_complete());
+    }
+
+    /// A server reached by `httpUrl` names no command, so it was discarded
+    /// before it could be ruled on. `trusted-server` never saw it, and a scan
+    /// that found nothing read as a clean one.
+    #[test]
+    fn a_trusted_streamable_server_is_judged() {
+        let tree = FakeTree::default()
+            .dir("", &[(".gemini", EntryKind::Directory)])
+            .dir(".gemini", &[("settings.json", EntryKind::File)]);
+        let contents = FakeContents::default().file(
+            ".gemini/settings.json",
+            r#"{"mcpServers":{"stream":{"httpUrl":"https://mcp.example.invalid/x","trust":true}}}"#,
+        );
+        let policy = ScanPolicy::default();
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &policy).run();
+
+        assert_eq!(report.servers.len(), 1, "{report:?}");
+        let rules: Vec<_> = report.findings.iter().map(|f| f.rule).collect();
+        assert_eq!(
+            rules,
+            vec![clew_domain::finding::RuleId::TrustedServer],
+            "{report:?}"
+        );
+    }
+
     #[test]
     fn a_malformed_file_is_still_reported_once_with_three_parsers() {
         let tree = FakeTree::default().dir("", &[(".mcp.json", EntryKind::File)]);

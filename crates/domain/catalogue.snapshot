@@ -10,7 +10,7 @@
 # The revision below is what a scan is cited against. Raise it when a line
 # changes, never when provenance does.
 
-revision 1
+revision 2
 
 repository **/.claude/settings.json claude-code json hooks,permissions,mcp-servers,autonomy bypass-permissions,unrestricted-shell
 repository **/.claude/settings.local.json claude-code json hooks,permissions,mcp-servers,autonomy bypass-permissions,unrestricted-shell
@@ -29,7 +29,7 @@ repository **/.cursor/rules/**/*.mdc cursor json - invisible-unicode
 repository **/.cursorrules cursor json - invisible-unicode
 repository **/.vscode/tasks.json vscode json - -
 repository **/.vscode/settings.json vscode jsonc autonomy bypass-permissions
-repository **/.vscode/mcp.json vscode json - -
+repository **/.vscode/mcp.json vscode jsonc mcp-servers -
 repository **/.github/copilot-instructions.md copilot json - invisible-unicode
 repository **/.zed/settings.json zed jsonc mcp-servers,autonomy bypass-permissions
 repository **/.agents/skills/*/SKILL.md zed json - invisible-unicode

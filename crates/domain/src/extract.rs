@@ -479,7 +479,7 @@ fn split_grants(line: &str) -> Vec<String> {
 fn mcp_servers(root: &serde_json::Value) -> Vec<McpServer> {
     // Every spelling is read, not the first found, or a file carrying two
     // would report only one of them.
-    let mut found: Vec<McpServer> = ["mcpServers", "mcp_servers", "context_servers"]
+    let mut found: Vec<McpServer> = ["mcpServers", "mcp_servers", "context_servers", "servers"]
         .iter()
         .filter_map(|key| root.get(key)?.as_object())
         .flatten()
@@ -499,9 +499,14 @@ fn non_blank(value: Option<&serde_json::Value>) -> Option<&str> {
         .filter(|s| !s.is_empty())
 }
 
-/// One server declaration. `None` when it names neither a command nor a url.
+/// One server declaration. `None` when it reaches nothing: no command, and no
+/// url under either key a remote transport is declared with.
 fn server(name: &str, config: &serde_json::Value) -> Option<McpServer> {
-    let transport = if let Some(url) = non_blank(config.get("url")) {
+    // `url` is SSE and `httpUrl` streamable HTTP. Documented as alternatives,
+    // so a declaration carrying both is still one server, and `url` is
+    // preferred to keep what clew already reported unchanged.
+    let remote = non_blank(config.get("url")).or_else(|| non_blank(config.get("httpUrl")));
+    let transport = if let Some(url) = remote {
         Transport::remote(url)
     } else {
         let args: Vec<String> = config
@@ -1511,6 +1516,76 @@ env = { DATABASE_URL = "postgres://u:hunter2@h/d", PGPORT = "5432" }
         );
 
         assert!(found.is_empty(), "{found:?}");
+    }
+
+    /// VS Code spells the table `servers` in `.vscode/mcp.json`, keeping
+    /// `mcpServers` for the portable `.mcp.json`. Its own example, so reading
+    /// the other spellings alone reported none of a workspace's servers.
+    #[test]
+    fn reads_vs_codes_servers_table() {
+        let found = servers_of(
+            r#"{"servers":{
+                 "github":{"type":"http","url":"https://api.githubcopilot.com/mcp"},
+                 "playwright":{"command":"npx","args":["-y","@microsoft/mcp-server-playwright"]}}}"#,
+        );
+
+        assert_eq!(found.len(), 2, "{found:?}");
+        assert!(found.iter().any(|s| s.name == "github"), "{found:?}");
+        assert!(found.iter().any(|s| s.name == "playwright"), "{found:?}");
+    }
+
+    /// Gemini CLI documents `httpUrl` for streamable HTTP beside `url` for
+    /// SSE, either of which stands in for a command. Reading only `url` left
+    /// such a server out of the inventory rather than reporting it, which
+    /// reads as a clean scan.
+    #[test]
+    fn reads_a_streamable_http_server() {
+        let found =
+            servers_of(r#"{"mcpServers":{"a":{"httpUrl":"https://mcp.example.invalid/stream"}}}"#);
+
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].invocation(), "https://mcp.example.invalid/stream");
+    }
+
+    /// The two keys are alternatives, so a declaration naming both is one
+    /// server. `url` is the one reported, which keeps every file clew already
+    /// read printing what it printed before.
+    #[test]
+    fn a_server_naming_both_urls_is_one_server() {
+        let found = servers_of(
+            r#"{"mcpServers":{"a":{"url":"https://sse.example.invalid/sse",
+                 "httpUrl":"https://http.example.invalid/stream"}}}"#,
+        );
+
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].invocation(), "https://sse.example.invalid/sse");
+    }
+
+    #[test]
+    fn a_blank_streamable_url_reaches_nothing() {
+        assert!(servers_of(r#"{"mcpServers":{"a":{"httpUrl":""}}}"#).is_empty());
+        assert!(servers_of(r#"{"mcpServers":{"a":{"httpUrl":"  "}}}"#).is_empty());
+        assert!(servers_of(r#"{"mcpServers":{"a":{"httpUrl":42}}}"#).is_empty());
+    }
+
+    /// Redaction holds on the key just added, not only on `url`.
+    #[test]
+    fn a_credential_on_a_streamable_url_is_never_recorded() {
+        let found = servers_of(
+            r#"{"servers":{"a":{
+                 "httpUrl":"https://u:pw@mcp.example.invalid/stream?token=TOKENV",
+                 "env":{"TOKEN":"hunter2"}}}}"#,
+        );
+
+        assert_eq!(found.len(), 1, "{found:?}");
+        let held = format!("{found:?}");
+        for secret in ["TOKENV", "pw@", "hunter2"] {
+            assert!(!held.contains(secret), "{secret} was recorded: {held}");
+        }
+        assert!(
+            held.contains("TOKEN"),
+            "the name is the edge to a credential: {held}"
+        );
     }
 
     /// Zed documents its settings as JSON with `//` comments, and its own

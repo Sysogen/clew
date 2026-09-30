@@ -566,6 +566,7 @@ mod tests {
             (".vscode/settings.json", &[Extraction::Autonomy][..]),
             (".kiro/hooks/lint-on-save.json", &[Extraction::Hooks][..]),
             (".cursor/mcp.json", servers),
+            (".vscode/mcp.json", servers),
             ("cline_mcp_settings.json", servers),
             (
                 ".codex/config.toml",
@@ -576,6 +577,7 @@ mod tests {
             (".codex/config.toml", Format::Toml),
             (".zed/settings.json", Format::Jsonc),
             (".vscode/settings.json", Format::Jsonc),
+            (".vscode/mcp.json", Format::Jsonc),
             (".claude/skills/a/SKILL.md", Format::Markdown),
         ];
 

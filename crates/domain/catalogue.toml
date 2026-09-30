@@ -17,7 +17,7 @@
 #               against. Omitted means repository
 
 version = 2
-revision = 1
+revision = 2
 
 # --- Claude Code ------------------------------------------------------------
 
@@ -189,9 +189,10 @@ source = "https://code.visualstudio.com/docs/agents/run/approvals"
 glob = "**/.vscode/mcp.json"
 tool = "vscode"
 kind = "vscode"
-last_verified = "2026-09-12"
+format = "jsonc"
+extract = ["mcp-servers"]
+last_verified = "2026-09-30"
 source = "https://code.visualstudio.com/docs/agent-customization/mcp-servers"
-# extract: the server key here is not `mcpServers`; shape unverified
 
 [[surface]]
 glob = "**/.github/copilot-instructions.md"
