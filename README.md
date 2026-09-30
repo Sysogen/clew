@@ -69,7 +69,8 @@ clew rules
 clew explain unrestricted-shell
 ```
 
-`rules` lists what clew applies, and `explain` says what one of them means,
+`rules` lists what clew applies, a pack at a time, and `explain` says what one
+of them means,
 what to do about a finding under it, and where it is written up. Both take
 `--format json`, which is how a study records what judged: each document names
 the rule pack version. Neither takes `--fail-on` or `--format sarif`, which

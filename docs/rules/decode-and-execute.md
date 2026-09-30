@@ -1,6 +1,6 @@
 # decode-and-execute
 
-Severity **high**, rule pack 1.
+Severity **high**, pack core 1.
 
 Code decoded from base64, hex or a compressed blob and handed straight to an
 interpreter
