@@ -37,6 +37,8 @@ pub enum RuleId {
     UnrestrictedShell,
     /// An MCP server whose tool calls are not confirmed.
     TrustedServer,
+    /// An MCP server reached over the network without encryption.
+    PlaintextTransport,
 }
 
 impl RuleId {

@@ -28,6 +28,7 @@ impl RuleId {
             Self::BypassPermissions,
             Self::UnrestrictedShell,
             Self::TrustedServer,
+            Self::PlaintextTransport,
         ]
     }
 
@@ -76,11 +77,12 @@ mod tests {
                 | RuleId::UnpinnedRemotePackage
                 | RuleId::BypassPermissions
                 | RuleId::UnrestrictedShell
-                | RuleId::TrustedServer => {}
+                | RuleId::TrustedServer
+                | RuleId::PlaintextTransport => {}
             }
         }
 
-        assert_eq!(RuleId::all().len(), 10, "{:?}", RuleId::all());
+        assert_eq!(RuleId::all().len(), 11, "{:?}", RuleId::all());
     }
 
     #[test]
