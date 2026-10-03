@@ -10,6 +10,6 @@
 pub mod discover_surfaces;
 
 pub use discover_surfaces::{
-    DeclaredAutonomy, DeclaredServer, DiscoverSurfaces, DiscoveryReport, GrantedPermission,
-    RegisteredHook,
+    DeclaredAutonomy, DeclaredServer, DeclaredTask, DiscoverSurfaces, DiscoveryReport,
+    GrantedPermission, RegisteredHook,
 };

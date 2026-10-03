@@ -567,6 +567,7 @@ mod tests {
             (".kiro/hooks/lint-on-save.json", &[Extraction::Hooks][..]),
             (".cursor/mcp.json", servers),
             (".vscode/mcp.json", servers),
+            (".vscode/tasks.json", &[Extraction::Tasks][..]),
             ("cline_mcp_settings.json", servers),
             (
                 ".codex/config.toml",
@@ -578,6 +579,7 @@ mod tests {
             (".zed/settings.json", Format::Jsonc),
             (".vscode/settings.json", Format::Jsonc),
             (".vscode/mcp.json", Format::Jsonc),
+            (".vscode/tasks.json", Format::Jsonc),
             (".claude/skills/a/SKILL.md", Format::Markdown),
         ];
 
@@ -734,141 +736,151 @@ mod tests {
         }
     }
 
-    /// A hook script is the one surface every shell rule reads, so its row
-    /// names all of them.
-    #[test]
-    fn a_hook_script_is_read_by_every_shell_rule() {
-        let m = shipped()
-            .lookup_in(&p(".claude/hooks/sync.sh"), Scope::Repository)
-            .expect("a hook script matches a row");
+    /// A group of rows and the rules that read all of them.
+    type Checked = (Vec<(Scope, &'static str)>, Vec<RuleId>);
 
-        assert_eq!(
-            m.check,
-            &[
-                RuleId::InvisibleUnicode,
-                RuleId::OpaqueHook,
-                RuleId::DownloadAndExecute,
-                RuleId::DecodeAndExecute,
-                RuleId::CredentialExfiltration,
-                RuleId::UnverifiedDownload,
-                RuleId::UnpinnedRemotePackage
-            ]
-        );
+    /// Which rules read each checked row.
+    ///
+    /// A table rather than a run of assertions, so the count below has one
+    /// place to compare against: a row that gains a check and no line here
+    /// fails, and so does a line for a row that has none.
+    fn checked_rows() -> Vec<Checked> {
+        let prose = vec![RuleId::InvisibleUnicode];
+        vec![
+            (
+                vec![
+                    (Scope::Repository, "CLAUDE.md"),
+                    (Scope::Repository, ".kiro/steering/product.md"),
+                    (Scope::Repository, "AGENTS.md"),
+                    (Scope::Repository, ".cursor/rules/react.mdc"),
+                    (Scope::Repository, ".cursorrules"),
+                    (Scope::Repository, ".github/copilot-instructions.md"),
+                    (Scope::Repository, ".agents/skills/review/SKILL.md"),
+                    (Scope::Repository, ".rules"),
+                    (Scope::Repository, ".devin/rules/a.md"),
+                    (Scope::Repository, ".windsurf/rules/a.md"),
+                    (Scope::Repository, ".windsurfrules"),
+                    (Scope::Repository, ".clinerules/coding.md"),
+                    (Scope::Repository, "GEMINI.md"),
+                    (Scope::Repository, "AGENT.md"),
+                    (Scope::Home, ".kiro/steering/product.md"),
+                    (Scope::Home, ".codeium/windsurf/memories/global_rules.md"),
+                    (Scope::Home, ".agents/skills/review/SKILL.md"),
+                    (Scope::Home, ".agents/AGENTS.md"),
+                    (Scope::System, "etc/devin/rules/policy.md"),
+                    (Scope::System, "etc/windsurf/rules/policy.md"),
+                ],
+                prose,
+            ),
+            // A hook script is the one surface every shell rule reads.
+            (
+                vec![(Scope::Repository, ".claude/hooks/sync.sh")],
+                vec![
+                    RuleId::InvisibleUnicode,
+                    RuleId::OpaqueHook,
+                    RuleId::DownloadAndExecute,
+                    RuleId::DecodeAndExecute,
+                    RuleId::CredentialExfiltration,
+                    RuleId::UnverifiedDownload,
+                    RuleId::UnpinnedRemotePackage,
+                ],
+            ),
+            // Prose that also grants tools, so both rules read it.
+            (
+                vec![(Scope::Repository, ".claude/skills/a/SKILL.md")],
+                vec![RuleId::InvisibleUnicode, RuleId::UnrestrictedShell],
+            ),
+            // A settings file decides the mode, the pre-approvals and the
+            // servers all three.
+            (
+                vec![
+                    (Scope::Repository, ".claude/settings.json"),
+                    (Scope::Repository, ".claude/settings.local.json"),
+                    (Scope::Home, ".claude/settings.json"),
+                ],
+                vec![
+                    RuleId::BypassPermissions,
+                    RuleId::UnrestrictedShell,
+                    RuleId::PlaintextTransport,
+                ],
+            ),
+            // Gemini pre-approves tools and decides whether a server it
+            // declares is confirmed, and says nothing about a mode.
+            (
+                vec![
+                    (Scope::Repository, ".gemini/settings.json"),
+                    (Scope::Home, ".gemini/settings.json"),
+                ],
+                vec![
+                    RuleId::UnrestrictedShell,
+                    RuleId::TrustedServer,
+                    RuleId::PlaintextTransport,
+                ],
+            ),
+            // The only row that sets a mode and declares no server.
+            (
+                vec![(Scope::Repository, ".vscode/settings.json")],
+                vec![RuleId::BypassPermissions],
+            ),
+            (
+                vec![
+                    (Scope::Repository, ".codex/config.toml"),
+                    (Scope::Repository, ".zed/settings.json"),
+                ],
+                vec![RuleId::BypassPermissions, RuleId::PlaintextTransport],
+            ),
+            // Nothing but servers, so a transport is all there is to judge.
+            (
+                vec![
+                    (Scope::Repository, ".mcp.json"),
+                    (Scope::Repository, ".kiro/settings/mcp.json"),
+                    (Scope::Repository, ".cursor/mcp.json"),
+                    (Scope::Repository, ".vscode/mcp.json"),
+                    (Scope::Repository, "cline_mcp_settings.json"),
+                    (Scope::Home, ".kiro/settings/mcp.json"),
+                    (Scope::Home, ".codeium/windsurf/mcp_config.json"),
+                ],
+                vec![RuleId::PlaintextTransport],
+            ),
+            // The one row that declares a task, and a trigger is all it says.
+            (
+                vec![(Scope::Repository, ".vscode/tasks.json")],
+                vec![RuleId::AutoRunTask],
+            ),
+        ]
     }
 
-    /// A rule reads prose, hook scripts, and the three things a configuration
-    /// file decides: the mode it starts an agent in, what it pre-approves, and
-    /// whether a server it declares is confirmed.
+    /// A rule reads prose, hook scripts, and the things a configuration file
+    /// decides: the mode it starts an agent in, what it pre-approves, how a
+    /// server it declares is reached, and when a task it declares runs.
     #[test]
     fn a_rule_reads_prose_hook_scripts_and_what_configuration_decides() {
-        let prose = [
-            (Scope::Repository, "CLAUDE.md"),
-            (Scope::Repository, ".kiro/steering/product.md"),
-            (Scope::Repository, "AGENTS.md"),
-            (Scope::Repository, ".cursor/rules/react.mdc"),
-            (Scope::Repository, ".cursorrules"),
-            (Scope::Repository, ".github/copilot-instructions.md"),
-            (Scope::Repository, ".agents/skills/review/SKILL.md"),
-            (Scope::Repository, ".rules"),
-            (Scope::Repository, ".devin/rules/a.md"),
-            (Scope::Repository, ".windsurf/rules/a.md"),
-            (Scope::Repository, ".windsurfrules"),
-            (Scope::Repository, ".clinerules/coding.md"),
-            (Scope::Repository, "GEMINI.md"),
-            (Scope::Repository, "AGENT.md"),
-            (Scope::Home, ".kiro/steering/product.md"),
-            (Scope::Home, ".codeium/windsurf/memories/global_rules.md"),
-            (Scope::Home, ".agents/skills/review/SKILL.md"),
-            (Scope::Home, ".agents/AGENTS.md"),
-            (Scope::System, "etc/devin/rules/policy.md"),
-            (Scope::System, "etc/windsurf/rules/policy.md"),
-        ];
-        let hooks = [(Scope::Repository, ".claude/hooks/sync.sh")];
-        // Prose that also grants tools, so both rules read it.
-        let skills = [(Scope::Repository, ".claude/skills/a/SKILL.md")];
-        // A settings file decides the mode and the pre-approvals both.
-        let settings_rules = [
-            (Scope::Repository, ".claude/settings.json"),
-            (Scope::Repository, ".claude/settings.local.json"),
-            (Scope::Home, ".claude/settings.json"),
-        ];
-        // Gemini pre-approves tools and decides whether a server it declares
-        // is confirmed, and says nothing about a mode.
-        let gemini = [
-            (Scope::Repository, ".gemini/settings.json"),
-            (Scope::Home, ".gemini/settings.json"),
-        ];
-        // These set a mode, pre-approve nothing clew reads, and declare
-        // servers.
-        let modes_with_servers = [
-            (Scope::Repository, ".codex/config.toml"),
-            (Scope::Repository, ".zed/settings.json"),
-        ];
-        // The only row that sets a mode and declares no server.
-        let modes = [(Scope::Repository, ".vscode/settings.json")];
-        // Nothing but servers, so a transport is all there is to judge.
-        let servers_only = [
-            (Scope::Repository, ".mcp.json"),
-            (Scope::Repository, ".kiro/settings/mcp.json"),
-            (Scope::Repository, ".cursor/mcp.json"),
-            (Scope::Repository, ".vscode/mcp.json"),
-            (Scope::Repository, "cline_mcp_settings.json"),
-            (Scope::Home, ".kiro/settings/mcp.json"),
-            (Scope::Home, ".codeium/windsurf/mcp_config.json"),
-        ];
+        let table = checked_rows();
+        let counted: usize = table.iter().map(|(paths, _)| paths.len()).sum();
+
         assert_eq!(
-            prose.len()
-                + hooks.len()
-                + skills.len()
-                + settings_rules.len()
-                + modes.len()
-                + modes_with_servers.len()
-                + servers_only.len()
-                + gemini.len(),
+            counted,
             shipped()
                 .rules()
                 .iter()
                 .filter(|r| !r.check.is_empty())
                 .count(),
-            "every checked row needs a case here"
+            "every checked row needs a line in checked_rows"
         );
+        for (paths, rules) in &table {
+            checked(paths, rules);
+        }
+    }
 
-        checked(&prose, &[RuleId::InvisibleUnicode]);
-        checked(
-            &skills,
-            &[RuleId::InvisibleUnicode, RuleId::UnrestrictedShell],
-        );
-        checked(
-            &settings_rules,
-            &[
-                RuleId::BypassPermissions,
-                RuleId::UnrestrictedShell,
-                RuleId::PlaintextTransport,
-            ],
-        );
-        checked(&modes, &[RuleId::BypassPermissions]);
-        checked(
-            &modes_with_servers,
-            &[RuleId::BypassPermissions, RuleId::PlaintextTransport],
-        );
-        checked(&servers_only, &[RuleId::PlaintextTransport]);
-        checked(
-            &gemini,
-            &[
-                RuleId::UnrestrictedShell,
-                RuleId::TrustedServer,
-                RuleId::PlaintextTransport,
-            ],
-        );
-
-        // Inventory: read for what it declares, with nothing to judge in it.
-        // A hook file names a command, and the script it names is what gets
-        // ruled on; an environment file is reported and never opened.
-        let inventory = [
+    /// Inventory: read for what it declares, with nothing to judge in it. A
+    /// hook file names a command, and the script it names is what gets ruled
+    /// on; an environment file is reported and never opened.
+    #[test]
+    fn a_row_with_nothing_to_judge_names_no_rule() {
+        for (scope, path) in [
             (Scope::Repository, ".kiro/hooks/lint-on-save.json"),
             (Scope::Repository, ".env"),
-        ];
-        for (scope, path) in inventory {
+        ] {
             let m = shipped()
                 .lookup_in(&p(path), scope)
                 .unwrap_or_else(|| panic!("{path} matched no row"));

@@ -5,7 +5,7 @@
 # pack version below is what a finding is cited against: raise it when a line
 # under it changes, never for a wording fix.
 
-pack core 2
+pack core 3
 
 invisible-unicode high core
 opaque-hook medium core
@@ -18,3 +18,4 @@ bypass-permissions high core
 unrestricted-shell medium core
 trusted-server medium core
 plaintext-transport medium core
+auto-run-task high core

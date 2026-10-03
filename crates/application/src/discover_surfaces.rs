@@ -13,7 +13,8 @@ use clew_domain::ports::file_tree::{EntryKind, FileTree, FileTreeError};
 use clew_domain::rule::{self, Examined};
 use clew_domain::scope::Scope;
 use clew_domain::{
-    Autonomy, Hook, McpServer, Permission, RepoPath, ScanPolicy, Surface, SurfaceKind, catalogue,
+    Autonomy, Hook, McpServer, Permission, RepoPath, ScanPolicy, Surface, SurfaceKind, Task,
+    catalogue,
 };
 
 /// An MCP server, and the file that declared it.
@@ -43,6 +44,15 @@ pub struct DeclaredAutonomy {
     pub autonomy: Autonomy,
 }
 
+/// A task, and the workspace file that declared it.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct DeclaredTask {
+    /// The configuration file it was read from.
+    pub source: RepoPath,
+    /// The task itself.
+    pub task: Task,
+}
+
 /// A hook, and the file that registered it.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct RegisteredHook {
@@ -69,6 +79,8 @@ pub struct DiscoveryReport {
     pub servers: Vec<DeclaredServer>,
     /// Modes the surfaces start an agent in, in path order.
     pub autonomy: Vec<DeclaredAutonomy>,
+    /// Tasks the surfaces declare, in path order.
+    pub tasks: Vec<DeclaredTask>,
     /// Directories that could not be listed, with the reason.
     pub unreadable: Vec<(RepoPath, FileTreeError)>,
     /// Surfaces that could not be read or understood, with the reason.
@@ -118,6 +130,74 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
     }
 
     /// Read every surface and collect the hooks it registers.
+    /// The hooks a file registers, each command judged where it was written.
+    ///
+    /// A file may register one command twice, so each copy is counted and
+    /// placed at its own entry. The rules are the hook script's, not the
+    /// declaring row's: the command is shell wherever it was written.
+    fn read_hooks(
+        &self,
+        at: &RepoPath,
+        text: &str,
+        hooks: Vec<Hook>,
+        report: &mut DiscoveryReport,
+    ) {
+        let checks = catalogue().checks_for(SurfaceKind::HookScript);
+        let mut commands: Vec<String> = Vec::new();
+        for hook in hooks {
+            if let Action::Command(command) = &hook.action {
+                let occurrence = commands.iter().filter(|c| *c == command).count();
+                commands.push(command.clone());
+                report.findings.extend(rule::judge(
+                    &Examined::HookCommand {
+                        path: at,
+                        command,
+                        source: text,
+                        occurrence,
+                    },
+                    checks,
+                    self.policy.evidence_width(),
+                ));
+            }
+            report.hooks.push(RegisteredHook {
+                source: at.clone(),
+                hook,
+            });
+        }
+    }
+
+    /// The operations a file pre-approves, counted like hook commands: a file
+    /// may grant one twice, and each copy is placed at its own entry.
+    fn read_grants(
+        &self,
+        at: &RepoPath,
+        text: &str,
+        checks: &[RuleId],
+        permissions: Vec<Permission>,
+        report: &mut DiscoveryReport,
+    ) {
+        let mut granted: Vec<String> = Vec::new();
+        for permission in permissions {
+            let entry = permission.written();
+            let occurrence = granted.iter().filter(|g| **g == entry).count();
+            granted.push(entry);
+            report.findings.extend(rule::judge(
+                &Examined::Grant {
+                    path: at,
+                    grant: &permission,
+                    source: text,
+                    occurrence,
+                },
+                checks,
+                self.policy.evidence_width(),
+            ));
+            report.permissions.push(GrantedPermission {
+                source: at.clone(),
+                permission,
+            });
+        }
+    }
+
     fn read_surfaces(&self, report: &mut DiscoveryReport) {
         let paths: Vec<RepoPath> = report.surfaces.iter().map(|s| s.path.clone()).collect();
         for path in paths {
@@ -145,50 +225,8 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
                 }
             };
 
-            let hook_checks = catalogue().checks_for(SurfaceKind::HookScript);
-            let mut commands: Vec<String> = Vec::new();
-            for hook in found.hooks {
-                if let Action::Command(command) = &hook.action {
-                    let occurrence = commands.iter().filter(|c| *c == command).count();
-                    commands.push(command.clone());
-                    report.findings.extend(rule::judge(
-                        &Examined::HookCommand {
-                            path: &path,
-                            command,
-                            source: &text,
-                            occurrence,
-                        },
-                        hook_checks,
-                        self.policy.evidence_width(),
-                    ));
-                }
-                report.hooks.push(RegisteredHook {
-                    source: path.clone(),
-                    hook,
-                });
-            }
-            // Counted like hook commands: a file may grant one operation
-            // twice, and each copy is placed at its own entry.
-            let mut grants: Vec<String> = Vec::new();
-            for permission in found.permissions {
-                let entry = permission.written();
-                let occurrence = grants.iter().filter(|g| **g == entry).count();
-                grants.push(entry);
-                report.findings.extend(rule::judge(
-                    &Examined::Grant {
-                        path: &path,
-                        grant: &permission,
-                        source: &text,
-                        occurrence,
-                    },
-                    matched.check,
-                    self.policy.evidence_width(),
-                ));
-                report.permissions.push(GrantedPermission {
-                    source: path.clone(),
-                    permission,
-                });
-            }
+            self.read_hooks(&path, &text, found.hooks, report);
+            self.read_grants(&path, &text, matched.check, found.permissions, report);
             for server in found.servers {
                 report.findings.extend(rule::judge(
                     &Examined::Server {
@@ -202,6 +240,27 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
                 report.servers.push(DeclaredServer {
                     source: path.clone(),
                     server,
+                });
+            }
+            // Counted like hook commands, and in file order: every automatic
+            // task writes the same trigger, so the copy is what places it.
+            let mut triggers: Vec<Option<String>> = Vec::new();
+            for task in found.tasks {
+                let occurrence = triggers.iter().filter(|t| **t == task.runs_on).count();
+                triggers.push(task.runs_on.clone());
+                report.findings.extend(rule::judge(
+                    &Examined::Task {
+                        path: &path,
+                        task: &task,
+                        source: &text,
+                        occurrence,
+                    },
+                    matched.check,
+                    self.policy.evidence_width(),
+                ));
+                report.tasks.push(DeclaredTask {
+                    source: path.clone(),
+                    task,
                 });
             }
             for mode in found.autonomy {
@@ -682,10 +741,10 @@ mod tests {
     #[test]
     fn a_surface_no_tool_reads_is_never_opened() {
         let tree = FakeTree::default()
-            .dir("", &[(".vscode", EntryKind::Directory)])
-            .dir(".vscode", &[("tasks.json", EntryKind::File)]);
+            .dir("", &[(".devcontainer", EntryKind::Directory)])
+            .dir(".devcontainer", &[("devcontainer.json", EntryKind::File)]);
         // Denied on read, so any attempt to open it shows up as unparsed.
-        let contents = FakeContents::default().deny(".vscode/tasks.json");
+        let contents = FakeContents::default().deny(".devcontainer/devcontainer.json");
         let policy = ScanPolicy::default();
 
         let report = DiscoverSurfaces::new(&tree, &contents, &policy).run();
@@ -2185,6 +2244,106 @@ mod tests {
             rules,
             vec![clew_domain::finding::RuleId::TrustedServer],
             "{report:?}"
+        );
+    }
+
+    /// The row read nothing until this change, so a task was invisible and the
+    /// trigger it declared was never judged.
+    #[test]
+    fn a_task_run_on_folder_open_reaches_the_report_and_is_judged() {
+        let tree = FakeTree::default()
+            .dir("", &[(".vscode", EntryKind::Directory)])
+            .dir(".vscode", &[("tasks.json", EntryKind::File)]);
+        let contents = FakeContents::default().file(
+            ".vscode/tasks.json",
+            r#"{
+                 // the editor writes this file with comments
+                 "version": "2.0.0",
+                 "tasks": [
+                   {"label":"setup","command":"npm ci","runOptions":{"runOn":"folderOpen"}},
+                   {"label":"test","command":"npm test"}
+                 ]
+               }"#,
+        );
+        let policy = ScanPolicy::default();
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &policy).run();
+
+        assert_eq!(report.tasks.len(), 2, "both are inventory: {report:?}");
+        assert!(report.unparsed.is_empty(), "{report:?}");
+        let rules: Vec<_> = report.findings.iter().map(|f| f.rule).collect();
+        assert_eq!(
+            rules,
+            vec![RuleId::AutoRunTask],
+            "only the automatic one is a finding: {report:?}"
+        );
+        assert!(report.is_complete());
+    }
+
+    /// Every automatic task writes the same trigger, so each finding has to be
+    /// placed at its own. All of them pointing at the first would say the
+    /// later ones were fine.
+    #[test]
+    fn each_automatic_task_is_placed_at_its_own_trigger() {
+        let tree = FakeTree::default()
+            .dir("", &[(".vscode", EntryKind::Directory)])
+            .dir(".vscode", &[("tasks.json", EntryKind::File)]);
+        let contents = FakeContents::default().file(
+            ".vscode/tasks.json",
+            concat!(
+                "{\n",                                                      // 1
+                "  \"tasks\": [\n",                                         // 2
+                "    { \"label\": \"one\", \"command\": \"echo a\",\n",     // 3
+                "      \"runOptions\": { \"runOn\": \"folderOpen\" } },\n", // 4
+                "    { \"label\": \"two\", \"command\": \"echo b\",\n",     // 5
+                "      \"runOptions\": { \"runOn\": \"default\" } },\n",    // 6
+                "    { \"label\": \"three\", \"command\": \"echo c\",\n",   // 7
+                "      \"runOptions\": { \"runOn\": \"folderOpen\" } }\n",  // 8
+                "  ]\n",
+                "}\n",
+            ),
+        );
+        let policy = ScanPolicy::default();
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &policy).run();
+
+        assert_eq!(report.tasks.len(), 3, "{report:?}");
+        let lines: Vec<Option<usize>> = report
+            .findings
+            .iter()
+            .map(|f| f.at.map(|at| at.line))
+            .collect();
+        assert_eq!(lines, vec![Some(4), Some(8)], "{report:?}");
+    }
+
+    /// A compound task runs no command of its own, so it used to be dropped
+    /// before anything could judge the trigger on it.
+    #[test]
+    fn a_compound_task_run_on_folder_open_is_a_finding() {
+        let tree = FakeTree::default()
+            .dir("", &[(".vscode", EntryKind::Directory)])
+            .dir(".vscode", &[("tasks.json", EntryKind::File)]);
+        let contents = FakeContents::default().file(
+            ".vscode/tasks.json",
+            r#"{
+                 "version": "2.0.0",
+                 "tasks": [
+                   {"label":"Client Build","command":"gulp"},
+                   {"label":"Build","dependsOn":["Client Build"],
+                    "runOptions":{"runOn":"folderOpen"}}
+                 ]
+               }"#,
+        );
+        let policy = ScanPolicy::default();
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &policy).run();
+
+        assert_eq!(report.tasks.len(), 2, "{report:?}");
+        let rules: Vec<_> = report.findings.iter().map(|f| f.rule).collect();
+        assert_eq!(rules, vec![RuleId::AutoRunTask], "{report:?}");
+        assert!(
+            report.findings[0].at.is_some(),
+            "placed at its trigger: {report:?}"
         );
     }
 

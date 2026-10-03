@@ -1,6 +1,6 @@
 # trusted-server
 
-Severity **medium**, pack core 2.
+Severity **medium**, pack core 3.
 
 An MCP server whose tool calls run without being confirmed
 

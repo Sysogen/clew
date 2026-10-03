@@ -89,6 +89,21 @@ fn declared(out: &mut String, report: &DiscoveryReport, surface: &Surface) {
         }
     }
 
+    for declared in report.tasks.iter().filter(|d| d.source == surface.path) {
+        let when = declared
+            .task
+            .runs_on
+            .as_deref()
+            .map_or_else(|| "when chosen".to_owned(), |on| format!("on {on}"));
+        let _ = writeln!(
+            out,
+            "  task \"{}\" runs {}: {}",
+            shown(&declared.task.label),
+            shown(&when),
+            shown(&declared.task.invocation())
+        );
+    }
+
     for declared in report.autonomy.iter().filter(|d| d.source == surface.path) {
         let _ = writeln!(
             out,
@@ -295,6 +310,7 @@ mod tests {
             permissions: vec![],
             servers: vec![],
             autonomy: vec![],
+            tasks: vec![],
             unreadable: vec![],
             unparsed: vec![],
             findings: vec![],
@@ -327,6 +343,7 @@ mod tests {
                 },
             }],
             autonomy: vec![],
+            tasks: vec![],
             unreadable: vec![],
             unparsed: vec![],
             findings: vec![],
@@ -351,6 +368,7 @@ mod tests {
                     value: "bypassPermissions".to_owned(),
                 },
             }],
+            tasks: vec![],
             unreadable: vec![],
             unparsed: vec![],
             findings: vec![],
@@ -381,6 +399,7 @@ mod tests {
             permissions: vec![],
             servers: vec![],
             autonomy: vec![],
+            tasks: vec![],
             unreadable: vec![],
             unparsed: vec![],
             findings: vec![],
@@ -403,6 +422,7 @@ mod tests {
             permissions: vec![],
             servers: vec![],
             autonomy: vec![],
+            tasks: vec![],
             unreadable: vec![(
                 RepoPath::root().join("secret"),
                 FileTreeError::PermissionDenied,
@@ -426,6 +446,7 @@ mod tests {
             permissions: vec![],
             servers: vec![],
             autonomy: vec![],
+            tasks: vec![],
             unreadable: vec![],
             unparsed: vec![],
             findings: vec![],
@@ -442,6 +463,7 @@ mod tests {
             permissions: vec![],
             servers: vec![],
             autonomy: vec![],
+            tasks: vec![],
             unreadable: vec![(RepoPath::root().join("a"), FileTreeError::NotFound)],
             unparsed: vec![],
             findings: vec![],
@@ -454,6 +476,7 @@ mod tests {
             permissions: vec![],
             servers: vec![],
             autonomy: vec![],
+            tasks: vec![],
             unreadable: vec![
                 (RepoPath::root().join("a"), FileTreeError::NotFound),
                 (RepoPath::root().join("b"), FileTreeError::NotFound),
@@ -481,6 +504,7 @@ mod tests {
             permissions: vec![],
             servers: vec![],
             autonomy: vec![],
+            tasks: vec![],
             unreadable: vec![],
             unparsed: vec![],
             findings: vec![],
@@ -505,6 +529,7 @@ mod tests {
             permissions: vec![],
             servers: vec![],
             autonomy: vec![],
+            tasks: vec![],
             unreadable: vec![],
             unparsed: vec![(
                 RepoPath::root().join(".claude").join("settings.json"),
@@ -540,6 +565,7 @@ mod tests {
             ],
             servers: vec![],
             autonomy: vec![],
+            tasks: vec![],
             unreadable: vec![],
             unparsed: vec![],
             findings: vec![],
@@ -578,6 +604,7 @@ mod tests {
                 },
             }],
             autonomy: vec![],
+            tasks: vec![],
             unreadable: vec![],
             unparsed: vec![],
             findings: vec![],
@@ -786,6 +813,7 @@ mod tests {
                 },
             }],
             autonomy: vec![],
+            tasks: vec![],
             unreadable: vec![],
             unparsed: vec![],
             findings: vec![],
