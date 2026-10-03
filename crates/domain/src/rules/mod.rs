@@ -403,6 +403,28 @@ mod tests {
         }
     }
 
+    /// The URL Standard removes tabs and newlines before it parses a url, so a
+    /// scheme can be mangled in a file and still fetched as plain http. The
+    /// rule reads the canonical form, or the evasion is free.
+    #[test]
+    fn an_endpoint_mangled_to_hide_its_scheme_is_still_a_finding() {
+        let tab = char::from(9);
+        let newline = char::from(10);
+        for url in [
+            format!("h{tab}ttp://remote.example/mcp"),
+            format!("ht{newline}tp://remote.example/mcp"),
+            format!("http:/{tab}/remote.example/mcp"),
+            "http:\\\\remote.example/mcp".to_owned(),
+        ] {
+            let source = "{\"mcpServers\":{\"pg\":{\"url\":\"...\"}}}";
+
+            assert!(
+                transport_found_in(&reached_at("pg", &url), source).is_some(),
+                "{url:?} is fetched over plain http"
+            );
+        }
+    }
+
     /// An endpoint clew could not read is reported redacted and has no scheme
     /// left. A rule may not guess at what it cannot see.
     #[test]
