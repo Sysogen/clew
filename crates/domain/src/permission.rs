@@ -49,6 +49,18 @@ impl Permission {
         }
     }
 
+    /// The same grant with any credential value in it taken out.
+    ///
+    /// The tool as well as the scope: an MCP tool is named after the server
+    /// that offers it, and that name comes out of the same file.
+    #[must_use]
+    pub fn redacted(&self) -> Self {
+        Self {
+            tool: crate::credential::redacted(&self.tool),
+            scope: self.scope.as_deref().map(crate::credential::redacted),
+        }
+    }
+
     /// Whether this grants the whole tool rather than one use of it.
     #[must_use]
     pub fn is_unscoped(&self) -> bool {
@@ -179,6 +191,41 @@ mod tests {
         }
         // Nor does it come back.
         assert_eq!(parsed("  Bash(ls)  ").written(), "Bash(ls)");
+    }
+
+    #[test]
+    fn a_credential_in_a_grant_is_not_reported() {
+        let secret = concat!("ghp_", "aB3dE5gH7jK9mN1pQ3sT5vW7yZ9bC1dF3hJ5");
+        let grant =
+            Permission::parse(&format!("Bash(gh login --with-token {secret})")).expect("a grant");
+
+        let held = format!("{:?}", grant.redacted());
+
+        assert!(!held.contains(secret), "{held}");
+        assert!(held.contains("Bash"), "{held}");
+    }
+
+    /// A report reads these off the redacted copy, so redaction must not
+    /// change what a grant is taken to allow.
+    #[test]
+    fn redacting_leaves_what_a_grant_allows_alone() {
+        for entry in [
+            "Bash",
+            "Bash(*)",
+            "Bash()",
+            "Bash(cargo test:*)",
+            "WebSearch",
+        ] {
+            let grant = Permission::parse(entry).expect(entry);
+            let shown = grant.redacted();
+
+            assert_eq!(shown.is_unscoped(), grant.is_unscoped(), "{entry}");
+            assert_eq!(
+                shown.is_unrestricted_shell(),
+                grant.is_unrestricted_shell(),
+                "{entry}"
+            );
+        }
     }
 
     #[test]

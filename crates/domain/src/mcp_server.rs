@@ -70,6 +70,21 @@ impl Transport {
 }
 
 impl McpServer {
+    /// The same server with any credential value in its name taken out.
+    ///
+    /// The transport and the environment names were redacted when they were
+    /// read, since neither is needed again. A name is: a rule finds the
+    /// declaration in its file by looking for it.
+    #[must_use]
+    pub fn redacted(&self) -> Self {
+        Self {
+            name: crate::credential::redacted(&self.name),
+            transport: self.transport.clone(),
+            env: self.env.clone(),
+            trusted: self.trusted,
+        }
+    }
+
     /// How the server would be invoked, for display.
     #[must_use]
     pub fn invocation(&self) -> String {

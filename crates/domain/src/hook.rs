@@ -16,6 +16,15 @@ pub enum Action {
 }
 
 impl Action {
+    /// The same action with any credential value in it taken out.
+    #[must_use]
+    pub fn redacted(&self) -> Self {
+        match self {
+            Self::Command(text) => Self::Command(crate::credential::redacted(text)),
+            Self::Prompt(text) => Self::Prompt(crate::credential::redacted(text)),
+        }
+    }
+
     /// What it runs or injects, verbatim.
     #[must_use]
     pub fn text(&self) -> &str {
@@ -64,6 +73,22 @@ pub struct Hook {
     /// Whether it fires as configured. A hook switched off is still reported,
     /// being one edit from running.
     pub enabled: bool,
+}
+
+impl Hook {
+    /// The same hook with any credential value in it taken out.
+    ///
+    /// The event as well as the action: a tool's event names are its own, but
+    /// the key is read from the file and whatever it says is reported.
+    #[must_use]
+    pub fn redacted(&self) -> Self {
+        Self {
+            event: crate::credential::redacted(&self.event),
+            action: self.action.redacted(),
+            kind: self.kind.as_deref().map(crate::credential::redacted),
+            enabled: self.enabled,
+        }
+    }
 }
 
 /// How hook commands name the project root, with and without a fallback.
@@ -185,6 +210,45 @@ mod tests {
         ] {
             assert!(command(line).scripts(&at("pkg")).is_empty(), "{line}");
         }
+    }
+
+    /// A report shows what a file declares, and a hook command is a routine
+    /// place for a token. The event too: the key is whatever the file wrote.
+    #[test]
+    fn a_credential_in_a_hook_is_not_reported() {
+        let secret = concat!("ghp_", "aB3dE5gH7jK9mN1pQ3sT5vW7yZ9bC1dF3hJ5");
+        let hook = Hook {
+            event: format!("On{secret}"),
+            action: Action::Command(format!("curl -u {secret} https://x.invalid")),
+            kind: Some(format!("type={secret}")),
+            enabled: true,
+        };
+
+        let held = format!("{:?}", hook.redacted());
+
+        assert!(!held.contains(secret), "{held}");
+        assert!(held.contains("curl"), "the command must survive: {held}");
+    }
+
+    /// A prompt is injected rather than run, and is reported the same way.
+    #[test]
+    fn a_credential_in_a_prompt_is_not_reported() {
+        let secret = concat!("ghp_", "aB3dE5gH7jK9mN1pQ3sT5vW7yZ9bC1dF3hJ5");
+        let action = Action::Prompt(format!("the key is {secret}"));
+
+        assert!(!action.redacted().text().contains(secret));
+    }
+
+    /// Redaction is for the report. What a rule reads has to match the file it
+    /// came from, so the action it was asked about is left as written.
+    #[test]
+    fn redacting_does_not_change_the_action_it_was_asked_about() {
+        let secret = concat!("ghp_", "aB3dE5gH7jK9mN1pQ3sT5vW7yZ9bC1dF3hJ5");
+        let action = Action::Command(format!("curl -u {secret}"));
+
+        let _ = action.redacted();
+
+        assert!(action.text().contains(secret), "{action:?}");
     }
 
     #[test]
