@@ -29,6 +29,7 @@ impl RuleId {
             Self::UnrestrictedShell,
             Self::TrustedServer,
             Self::PlaintextTransport,
+            Self::AutoRunTask,
         ]
     }
 
@@ -78,11 +79,12 @@ mod tests {
                 | RuleId::BypassPermissions
                 | RuleId::UnrestrictedShell
                 | RuleId::TrustedServer
-                | RuleId::PlaintextTransport => {}
+                | RuleId::PlaintextTransport
+                | RuleId::AutoRunTask => {}
             }
         }
 
-        assert_eq!(RuleId::all().len(), 11, "{:?}", RuleId::all());
+        assert_eq!(RuleId::all().len(), 12, "{:?}", RuleId::all());
     }
 
     #[test]

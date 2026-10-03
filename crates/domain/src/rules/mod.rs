@@ -6,6 +6,7 @@
 //! Reached through the registry in [`crate::rule`], never directly, so a rule
 //! cannot be run without being one.
 
+pub(crate) mod auto_run_task;
 pub(crate) mod bypass_permissions;
 pub(crate) mod credential_exfiltration;
 pub(crate) mod decode_and_execute;
@@ -294,6 +295,98 @@ mod tests {
         // The name, not the keyword two lines below it.
         assert_eq!(found.at.map(|p| p.line), Some(3), "{found:?}");
         assert!(found.evidence.as_str().contains("pg"));
+    }
+
+    fn declared_task(label: &str, runs_on: Option<&str>) -> crate::task::Task {
+        crate::task::Task::new(
+            label.to_owned(),
+            "npm run setup",
+            runs_on.map(ToOwned::to_owned),
+        )
+    }
+
+    fn task_found_in(task: &crate::task::Task, source: &str) -> Option<Finding> {
+        judge(
+            &Examined::Task {
+                path: &RepoPath::root().join(".vscode").join("tasks.json"),
+                task,
+                source,
+            },
+            &[RuleId::AutoRunTask],
+            DEFAULT_EVIDENCE_WIDTH,
+        )
+        .into_iter()
+        .next()
+    }
+
+    #[test]
+    fn a_task_run_when_the_folder_opens_is_a_finding() {
+        let source = "{\n  \"tasks\": [\n    {\n      \"label\": \"setup\",\n      \"runOptions\": { \"runOn\": \"folderOpen\" }\n    }\n  ]\n}\n";
+
+        let found =
+            task_found_in(&declared_task("setup", Some("folderOpen")), source).expect("a finding");
+
+        assert_eq!(found.rule, RuleId::AutoRunTask);
+        assert_eq!(found.severity, Severity::High);
+        // The trigger, which is what makes it a finding.
+        assert_eq!(found.at.map(|p| p.line), Some(5), "{found:?}");
+        assert!(found.evidence.as_str().contains("folderOpen"), "{found:?}");
+    }
+
+    /// The other documented trigger, and no trigger at all, both wait for
+    /// somebody to choose the task.
+    #[test]
+    fn a_task_run_by_hand_is_not() {
+        for runs_on in [Some("default"), None] {
+            let source = "{\"tasks\":[{\"label\":\"setup\"}]}";
+            assert!(
+                task_found_in(&declared_task("setup", runs_on), source).is_none(),
+                "{runs_on:?}"
+            );
+        }
+    }
+
+    /// VS Code matches the spelling in its schema, so a value written any
+    /// other way selects no trigger and starts nothing. Flagging one would
+    /// report an execution that cannot happen.
+    #[test]
+    fn a_trigger_spelled_differently_is_not_a_finding() {
+        for spelling in ["folderopen", "FolderOpen", "folder-open", "onFolderOpen"] {
+            let source = format!("{{\"tasks\":[{{\"runOn\":\"{spelling}\"}}]}}");
+            assert!(
+                task_found_in(&declared_task("setup", Some(spelling)), &source).is_none(),
+                "{spelling}"
+            );
+        }
+    }
+
+    /// A file clew cannot place the trigger in still reports the task, named,
+    /// rather than dropping the finding.
+    #[test]
+    fn a_finding_that_cannot_be_placed_names_the_task() {
+        let found =
+            task_found_in(&declared_task("setup", Some("folderOpen")), "{}").expect("a finding");
+
+        assert!(found.at.is_none(), "{found:?}");
+        assert!(found.evidence.as_str().contains("setup"), "{found:?}");
+    }
+
+    /// A task's command is a routine place for a token, and it is reported as
+    /// inventory, so the value must never have been kept.
+    #[test]
+    fn a_credential_in_a_task_is_never_recorded() {
+        let task = crate::task::Task::new(
+            "deploy".to_owned(),
+            "curl -H 'Authorization: Bearer sk-live-ABCDEFGHIJKLMNOP' https://h.invalid",
+            Some("folderOpen".to_owned()),
+        );
+        let source = "{\"tasks\":[{\"runOn\":\"folderOpen\"}]}";
+
+        let found = task_found_in(&task, source).expect("a finding");
+
+        for held in [format!("{task:?}"), found.evidence.as_str().to_owned()] {
+            assert!(!held.contains("sk-live-ABCDEFGHIJKLMNOP"), "{held}");
+        }
     }
 
     fn reached_at(name: &str, url: &str) -> McpServer {

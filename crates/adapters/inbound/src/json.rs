@@ -11,8 +11,9 @@
 use std::io;
 
 use crate::explain::PackOut;
-use clew_application::DiscoveryReport;
+use clew_application::{DeclaredAutonomy, DeclaredServer, DeclaredTask, DiscoveryReport};
 use clew_domain::catalogue;
+use clew_domain::finding::Finding;
 use clew_domain::hook::Action;
 use clew_domain::mcp_server::Transport;
 use clew_domain::rules::is_default_ignorable;
@@ -95,6 +96,7 @@ struct ScanOut {
     permissions: Vec<PermissionOut>,
     servers: Vec<ServerOut>,
     autonomy: Vec<AutonomyOut>,
+    tasks: Vec<TaskOut>,
     findings: Vec<FindingOut>,
     unreadable: Vec<Problem>,
     unparsed: Vec<Problem>,
@@ -126,6 +128,16 @@ struct PermissionOut {
     tool: String,
     scope: Option<String>,
     unscoped: bool,
+}
+
+#[derive(Serialize)]
+#[cfg_attr(test, derive(serde::Deserialize, Debug, PartialEq))]
+struct TaskOut {
+    source: String,
+    label: String,
+    command: String,
+    runs_on: Option<String>,
+    on_open: bool,
 }
 
 #[derive(Serialize)]
@@ -171,6 +183,60 @@ struct FindingOut {
 struct Problem {
     path: String,
     reason: String,
+}
+
+impl ServerOut {
+    fn of(declared: &DeclaredServer) -> Self {
+        Self {
+            source: declared.source.as_str().to_owned(),
+            name: declared.server.name.clone(),
+            transport: match &declared.server.transport {
+                Transport::Local { command, args } => TransportOut::Local {
+                    command: command.clone(),
+                    args: args.clone(),
+                },
+                Transport::Remote { url } => TransportOut::Remote { url: url.clone() },
+            },
+            env: declared.server.env.clone(),
+            trusted: declared.server.trusted,
+        }
+    }
+}
+
+impl AutonomyOut {
+    fn of(declared: &DeclaredAutonomy) -> Self {
+        Self {
+            source: declared.source.as_str().to_owned(),
+            key: declared.autonomy.key.clone(),
+            value: declared.autonomy.value.clone(),
+            unchecked: declared.autonomy.is_unchecked(),
+        }
+    }
+}
+
+impl TaskOut {
+    fn of(declared: &DeclaredTask) -> Self {
+        Self {
+            source: declared.source.as_str().to_owned(),
+            label: declared.task.label.clone(),
+            command: declared.task.command.clone(),
+            runs_on: declared.task.runs_on.clone(),
+            on_open: declared.task.runs_on_open(),
+        }
+    }
+}
+
+impl FindingOut {
+    fn of(finding: &Finding) -> Self {
+        Self {
+            path: finding.path.as_str().to_owned(),
+            line: finding.at.map(|p| p.line),
+            column: finding.at.map(|p| p.column),
+            rule: finding.rule.as_str().to_owned(),
+            severity: finding.severity.as_str().to_owned(),
+            evidence: finding.evidence.as_str().to_owned(),
+        }
+    }
 }
 
 impl Document {
@@ -225,45 +291,10 @@ impl ScanOut {
                     unscoped: g.permission.is_unscoped(),
                 })
                 .collect(),
-            servers: report
-                .servers
-                .iter()
-                .map(|d| ServerOut {
-                    source: d.source.as_str().to_owned(),
-                    name: d.server.name.clone(),
-                    transport: match &d.server.transport {
-                        Transport::Local { command, args } => TransportOut::Local {
-                            command: command.clone(),
-                            args: args.clone(),
-                        },
-                        Transport::Remote { url } => TransportOut::Remote { url: url.clone() },
-                    },
-                    env: d.server.env.clone(),
-                    trusted: d.server.trusted,
-                })
-                .collect(),
-            autonomy: report
-                .autonomy
-                .iter()
-                .map(|d| AutonomyOut {
-                    source: d.source.as_str().to_owned(),
-                    key: d.autonomy.key.clone(),
-                    value: d.autonomy.value.clone(),
-                    unchecked: d.autonomy.is_unchecked(),
-                })
-                .collect(),
-            findings: report
-                .findings
-                .iter()
-                .map(|f| FindingOut {
-                    path: f.path.as_str().to_owned(),
-                    line: f.at.map(|p| p.line),
-                    column: f.at.map(|p| p.column),
-                    rule: f.rule.as_str().to_owned(),
-                    severity: f.severity.as_str().to_owned(),
-                    evidence: f.evidence.as_str().to_owned(),
-                })
-                .collect(),
+            servers: report.servers.iter().map(ServerOut::of).collect(),
+            autonomy: report.autonomy.iter().map(AutonomyOut::of).collect(),
+            tasks: report.tasks.iter().map(TaskOut::of).collect(),
+            findings: report.findings.iter().map(FindingOut::of).collect(),
             unreadable: report
                 .unreadable
                 .iter()
@@ -293,8 +324,9 @@ mod tests {
     use serde_json::Value;
 
     use super::*;
-    use clew_application::DeclaredAutonomy;
+    use clew_application::{DeclaredAutonomy, DeclaredTask};
     use clew_domain::Autonomy;
+    use clew_domain::Task;
 
     fn path(p: &str) -> RepoPath {
         p.split('/').fold(RepoPath::root(), |acc, s| acc.join(s))
@@ -337,6 +369,14 @@ mod tests {
                     key: "permissions.defaultMode".to_owned(),
                     value: "bypassPermissions".to_owned(),
                 },
+            }],
+            tasks: vec![DeclaredTask {
+                source: path(".vscode/tasks.json"),
+                task: Task::new(
+                    "setup".to_owned(),
+                    "npm ci --token sk-live-SECRET",
+                    Some("folderOpen".to_owned()),
+                ),
             }],
             unreadable: vec![(path("secret"), FileTreeError::PermissionDenied)],
             unparsed: vec![],

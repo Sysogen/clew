@@ -39,6 +39,8 @@ pub enum RuleId {
     TrustedServer,
     /// An MCP server reached over the network without encryption.
     PlaintextTransport,
+    /// A task a workspace asks to run when the folder is opened.
+    AutoRunTask,
 }
 
 impl RuleId {

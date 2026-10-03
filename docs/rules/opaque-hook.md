@@ -1,6 +1,6 @@
 # opaque-hook
 
-Severity **medium**, pack core 2.
+Severity **medium**, pack core 3.
 
 A hook file clew cannot review as text
 

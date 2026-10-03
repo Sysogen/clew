@@ -15,10 +15,11 @@ use crate::mcp_server::McpServer;
 use crate::permission::Permission;
 use crate::repo_path::RepoPath;
 use crate::rules::{
-    bypass_permissions, credential_exfiltration, decode_and_execute, download_and_execute,
-    invisible_unicode, opaque_hook, plaintext_transport, trusted_server, unpinned_remote_package,
-    unrestricted_shell, unverified_download,
+    auto_run_task, bypass_permissions, credential_exfiltration, decode_and_execute,
+    download_and_execute, invisible_unicode, opaque_hook, plaintext_transport, trusted_server,
+    unpinned_remote_package, unrestricted_shell, unverified_download,
 };
+use crate::task::Task;
 
 /// A kind of thing clew judges.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,6 +34,8 @@ pub enum Subject {
     Grant,
     /// One MCP server a file declares.
     Server,
+    /// One task a workspace declares.
+    Task,
     /// A file that is there and cannot be read.
     Unreadable,
 }
@@ -88,6 +91,15 @@ pub enum Examined<'a> {
         /// The file's text, for placing the finding.
         source: &'a str,
     },
+    /// One task a workspace declares.
+    Task {
+        /// The file.
+        path: &'a RepoPath,
+        /// The task.
+        task: &'a Task,
+        /// The file's text, for placing the finding.
+        source: &'a str,
+    },
     /// A file that is there and cannot be read, and why.
     Unreadable {
         /// The file.
@@ -107,6 +119,7 @@ impl Examined<'_> {
             Self::Mode { .. } => Subject::Mode,
             Self::Grant { .. } => Subject::Grant,
             Self::Server { .. } => Subject::Server,
+            Self::Task { .. } => Subject::Task,
             Self::Unreadable { .. } => Subject::Unreadable,
         }
     }
@@ -156,6 +169,7 @@ pub fn of(id: RuleId) -> &'static dyn Rule {
         RuleId::UnrestrictedShell => &unrestricted_shell::UnrestrictedShell,
         RuleId::TrustedServer => &trusted_server::TrustedServer,
         RuleId::PlaintextTransport => &plaintext_transport::PlaintextTransport,
+        RuleId::AutoRunTask => &auto_run_task::AutoRunTask,
     }
 }
 

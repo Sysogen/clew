@@ -92,6 +92,7 @@ weigh and log a scan; asked for either, they say so rather than ignore it.
 | [`unrestricted-shell`](https://github.com/sysogen/clew/blob/main/docs/rules/unrestricted-shell.md) | medium | A pre-approved shell grant with nothing restricting the commands it runs |
 | [`trusted-server`](https://github.com/sysogen/clew/blob/main/docs/rules/trusted-server.md) | medium | An MCP server whose tool calls run without being confirmed |
 | [`plaintext-transport`](https://github.com/sysogen/clew/blob/main/docs/rules/plaintext-transport.md) | medium | An MCP server reached over plain HTTP |
+| [`auto-run-task`](https://github.com/sysogen/clew/blob/main/docs/rules/auto-run-task.md) | high | A task a workspace runs when the folder is opened |
 <!-- rules:end -->
 
 `invisible-unicode` is the Rules File Backdoor, disclosed by Pillar Security in
