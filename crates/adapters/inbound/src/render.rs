@@ -3,12 +3,40 @@
 
 //! Turning a discovery report into text.
 
+use std::borrow::Cow;
 use std::fmt::Write as _;
 
 use clew_application::DiscoveryReport;
 use clew_domain::finding::Finding;
 use clew_domain::hook::Hook;
 use clew_domain::surface::Surface;
+
+/// Untrusted text as a single line of a report.
+///
+/// Every name, path and command below is read out of a file under review, and
+/// the report is read by a person. A newline in a server name forges a line of
+/// it, a carriage return overwrites one, and an escape starts a terminal
+/// sequence. None of that reaches the output.
+///
+/// A tab is left alone, which is the same character evidence treats as
+/// printing, so a quoted line and a name read the same way. It can shift a
+/// column; it cannot invent a line.
+fn shown(text: &str) -> Cow<'_, str> {
+    if !text.contains(|c: char| c.is_control() && c != '\t') {
+        return Cow::Borrowed(text);
+    }
+    Cow::Owned(
+        text.chars()
+            .map(|c| {
+                if c.is_control() && c != '\t' {
+                    format!("<U+{:04X}>", c as u32)
+                } else {
+                    c.to_string()
+                }
+            })
+            .collect(),
+    )
+}
 
 /// One hook as a line. An injected prompt is not run, and a hook switched off
 /// does not fire, so neither is written as though it did.
@@ -19,14 +47,18 @@ fn hook_line(hook: &Hook) -> String {
         "runs on"
     };
     let state = if hook.enabled { "" } else { " (disabled)" };
-    format!("  {does} {}{state}: {}", hook.event, hook.action.text())
+    format!(
+        "  {does} {}{state}: {}",
+        shown(&hook.event),
+        shown(hook.action.text())
+    )
 }
 
 /// One finding as two lines: where and what, then the evidence.
 fn finding_line(finding: &Finding) -> String {
     let at = finding.at.map_or_else(
-        || finding.path.as_str().to_owned(),
-        |p| format!("{}:{}:{}", finding.path.as_str(), p.line, p.column),
+        || shown(finding.path.as_str()).into_owned(),
+        |p| format!("{}:{}:{}", shown(finding.path.as_str()), p.line, p.column),
     );
     format!(
         "  {at}  {}  {}\n    {}",
@@ -46,14 +78,14 @@ fn declared(out: &mut String, report: &DiscoveryReport, surface: &Surface) {
         let _ = writeln!(
             out,
             "  server \"{}\": {}",
-            declared.server.name,
-            declared.server.invocation()
+            shown(&declared.server.name),
+            shown(&declared.server.invocation())
         );
         if declared.server.trusted {
             let _ = writeln!(out, "    declared trusted");
         }
         if !declared.server.env.is_empty() {
-            let _ = writeln!(out, "    reads {}", declared.server.env.join(", "));
+            let _ = writeln!(out, "    reads {}", shown(&declared.server.env.join(", ")));
         }
     }
 
@@ -61,7 +93,8 @@ fn declared(out: &mut String, report: &DiscoveryReport, surface: &Surface) {
         let _ = writeln!(
             out,
             "  sets {} to {}",
-            declared.autonomy.key, declared.autonomy.value
+            shown(&declared.autonomy.key),
+            shown(&declared.autonomy.value)
         );
     }
 
@@ -87,7 +120,7 @@ fn declared(out: &mut String, report: &DiscoveryReport, surface: &Surface) {
         unscoped.len()
     );
     for tool in unscoped {
-        let _ = writeln!(out, "    any use of {tool}");
+        let _ = writeln!(out, "    any use of {}", shown(tool));
     }
 }
 
@@ -100,19 +133,23 @@ pub fn report(report: &DiscoveryReport, root: &str) -> String {
     let mut out = String::new();
 
     if report.surfaces.is_empty() {
-        let _ = writeln!(out, "No agent surfaces found under {root}.");
+        let _ = writeln!(out, "No agent surfaces found under {}.", shown(root));
     } else {
+        // Measured on the escaped form, since that is what is printed, and in
+        // characters, which is what the padding below counts. Bytes would
+        // still line up, because every line is padded to the same width; the
+        // column would just be wider than the longest path.
         let width = report
             .surfaces
             .iter()
-            .map(|s| s.path.as_str().len())
+            .map(|s| shown(s.path.as_str()).chars().count())
             .max()
             .unwrap_or(0);
         for surface in &report.surfaces {
             let _ = writeln!(
                 out,
                 "{:<width$}  {}",
-                surface.path.as_str(),
+                shown(surface.path.as_str()),
                 surface.kind.label()
             );
             declared(&mut out, report, surface);
@@ -148,7 +185,12 @@ pub fn report(report: &DiscoveryReport, root: &str) -> String {
             report.unreadable.len()
         );
         for (path, error) in &report.unreadable {
-            let _ = writeln!(out, "    {}  ({error})", path.as_str());
+            let _ = writeln!(
+                out,
+                "    {}  ({})",
+                shown(path.as_str()),
+                shown(&error.to_string())
+            );
         }
     }
 
@@ -159,7 +201,7 @@ pub fn report(report: &DiscoveryReport, root: &str) -> String {
             report.unparsed.len()
         );
         for (path, reason) in &report.unparsed {
-            let _ = writeln!(out, "    {}  ({reason})", path.as_str());
+            let _ = writeln!(out, "    {}  ({})", shown(path.as_str()), shown(reason));
         }
     }
 
@@ -550,6 +592,179 @@ mod tests {
             "the server must sit under its source: {out}"
         );
         assert!(lines[2].contains("reads DATABASE_URL"), "{out}");
+    }
+
+    /// A report is what a reviewer reads, so a file under review must not be
+    /// able to write a line of it. A newline in a declared name used to split
+    /// the output, and the forged line named a server nothing declared.
+    #[test]
+    fn a_name_cannot_forge_a_line_of_the_report() {
+        let newline = char::from(10);
+        let path = surface(".mcp.json", SurfaceKind::McpServers).path;
+        let found = DiscoveryReport {
+            surfaces: vec![surface(".mcp.json", SurfaceKind::McpServers)],
+            servers: vec![DeclaredServer {
+                source: path,
+                server: McpServer {
+                    name: format!("evil{newline}  server \"trustworthy\""),
+                    transport: Transport::remote("http://evil.invalid/mcp"),
+                    env: vec![format!("TOKEN{newline}    declared trusted")],
+                    trusted: false,
+                },
+            }],
+            ..DiscoveryReport::default()
+        };
+
+        let out = report(&found, ".");
+
+        assert!(out.contains("<U+000A>"), "the newline must be shown: {out}");
+        // The forged text stays on the line it was written into.
+        let carrying: Vec<&str> = out.lines().filter(|l| l.contains("evil")).collect();
+        assert_eq!(carrying.len(), 1, "{out}");
+        assert!(carrying[0].contains("trustworthy"), "{out}");
+        assert!(
+            !out.lines().any(|l| l.trim() == "declared trusted"),
+            "a trust nothing granted was forged: {out}"
+        );
+        assert_eq!(
+            out.lines().filter(|l| l.contains("server \"")).count(),
+            1,
+            "one server was declared: {out}"
+        );
+    }
+
+    /// The same for a path, which a filesystem lets carry a newline, and for
+    /// the message beside it.
+    #[test]
+    fn a_path_cannot_forge_a_line_of_the_report() {
+        let newline = char::from(10);
+        let forged = RepoPath::root().join(&format!("a{newline}  .mcp.json"));
+        let found = DiscoveryReport {
+            unparsed: vec![(forged, format!("bad{newline}    0 file(s) could not"))],
+            ..DiscoveryReport::default()
+        };
+
+        let out = report(&found, ".");
+
+        assert!(out.contains("<U+000A>"), "{out}");
+        // The whole entry is one line: the path, the newline inside it shown,
+        // and the reason. Unescaped, the path would break across two, and the
+        // tail would read as an entry of its own.
+        let carrying: Vec<&str> = out.lines().filter(|l| l.contains(".mcp.json")).collect();
+        assert_eq!(carrying.len(), 1, "{out}");
+        assert!(
+            carrying[0].contains("a<U+000A>") && carrying[0].contains("bad"),
+            "the path must not split: {out}"
+        );
+        // The forged summary is inert: it sits inside the path's own line
+        // rather than standing as a line of its own.
+        assert!(
+            !out.lines().any(|l| l.trim_start().starts_with("0 file(s)")),
+            "a summary line was forged: {out}"
+        );
+    }
+
+    /// A carriage return overwrites a line rather than adding one, and an
+    /// escape starts a terminal sequence. Neither reaches the output.
+    #[test]
+    fn no_control_character_reaches_the_report() {
+        let path = surface(".mcp.json", SurfaceKind::McpServers).path;
+        for code in [13u8, 27, 8, 11, 12, 0] {
+            let hidden = char::from(code);
+            let found = DiscoveryReport {
+                surfaces: vec![surface(".mcp.json", SurfaceKind::McpServers)],
+                servers: vec![DeclaredServer {
+                    source: path.clone(),
+                    server: McpServer {
+                        name: format!("a{hidden}b"),
+                        transport: Transport::local("srv".to_owned(), &[]),
+                        env: vec![],
+                        trusted: false,
+                    },
+                }],
+                ..DiscoveryReport::default()
+            };
+
+            let out = report(&found, ".");
+
+            assert!(
+                !out.contains(hidden),
+                "U+{code:04X} reached the report: {out}"
+            );
+            assert!(out.contains(&format!("<U+{code:04X}>")), "{out}");
+        }
+    }
+
+    /// A tab is the one control character evidence calls printing, so a name
+    /// keeps it too rather than the two disagreeing.
+    #[test]
+    fn a_tab_in_a_name_is_left_as_written() {
+        assert_eq!(shown("a\tb"), "a\tb");
+    }
+
+    /// Where a line's label starts, counted in characters, which is what the
+    /// padding counts. `rfind` alone would answer in bytes and read a
+    /// multibyte path as a wider one.
+    fn label_starts_at(line: &str, label: &str) -> usize {
+        let byte = line.rfind(label).expect("a labelled line");
+        line[..byte].chars().count()
+    }
+
+    /// Escaping widens what is printed, and the column is padded to what is
+    /// printed, so the two must be measured on the same text.
+    #[test]
+    fn the_table_stays_aligned_when_a_path_is_escaped() {
+        let newline = char::from(10);
+        let found = DiscoveryReport {
+            surfaces: vec![
+                Surface {
+                    path: RepoPath::root().join(&format!("a{newline}b")),
+                    kind: SurfaceKind::McpServers,
+                },
+                surface("CLAUDE.md", SurfaceKind::InstructionFile),
+            ],
+            ..DiscoveryReport::default()
+        };
+
+        let out = report(&found, ".");
+
+        let lines: Vec<&str> = out.lines().take(2).collect();
+        assert_eq!(
+            label_starts_at(lines[0], SurfaceKind::McpServers.label()),
+            label_starts_at(lines[1], SurfaceKind::InstructionFile.label()),
+            "columns must line up: {out}"
+        );
+    }
+
+    /// A path of 14 characters is 17 bytes here, and measuring the bytes still
+    /// lines the labels up, because every line is padded to the same width. It
+    /// pads them all three characters further than the longest path, so the
+    /// exact offset is what tells one measure from the other.
+    #[test]
+    fn the_column_is_as_wide_as_the_longest_path_in_characters() {
+        let accented = "unicode-\u{e9}\u{e9}\u{e9}.md";
+        assert_eq!(accented.chars().count(), 14);
+        assert_eq!(accented.len(), 17);
+        let found = DiscoveryReport {
+            surfaces: vec![
+                Surface {
+                    path: RepoPath::root().join(accented),
+                    kind: SurfaceKind::InstructionFile,
+                },
+                surface("CLAUDE.md", SurfaceKind::InstructionFile),
+            ],
+            ..DiscoveryReport::default()
+        };
+
+        let out = report(&found, ".");
+
+        for line in out.lines().take(2) {
+            assert_eq!(
+                label_starts_at(line, SurfaceKind::InstructionFile.label()),
+                16,
+                "the longest path is 14 characters, and two spaces follow it: {out}"
+            );
+        }
     }
 
     #[test]
