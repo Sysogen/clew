@@ -734,6 +734,28 @@ mod tests {
         }
     }
 
+    /// A hook script is the one surface every shell rule reads, so its row
+    /// names all of them.
+    #[test]
+    fn a_hook_script_is_read_by_every_shell_rule() {
+        let m = shipped()
+            .lookup_in(&p(".claude/hooks/sync.sh"), Scope::Repository)
+            .expect("a hook script matches a row");
+
+        assert_eq!(
+            m.check,
+            &[
+                RuleId::InvisibleUnicode,
+                RuleId::OpaqueHook,
+                RuleId::DownloadAndExecute,
+                RuleId::DecodeAndExecute,
+                RuleId::CredentialExfiltration,
+                RuleId::UnverifiedDownload,
+                RuleId::UnpinnedRemotePackage
+            ]
+        );
+    }
+
     /// A rule reads prose, hook scripts, and the three things a configuration
     /// file decides: the mode it starts an agent in, what it pre-approves, and
     /// whether a server it declares is confirmed.
@@ -776,11 +798,23 @@ mod tests {
             (Scope::Repository, ".gemini/settings.json"),
             (Scope::Home, ".gemini/settings.json"),
         ];
-        // These set a mode and pre-approve nothing clew reads.
-        let modes = [
+        // These set a mode, pre-approve nothing clew reads, and declare
+        // servers.
+        let modes_with_servers = [
             (Scope::Repository, ".codex/config.toml"),
-            (Scope::Repository, ".vscode/settings.json"),
             (Scope::Repository, ".zed/settings.json"),
+        ];
+        // The only row that sets a mode and declares no server.
+        let modes = [(Scope::Repository, ".vscode/settings.json")];
+        // Nothing but servers, so a transport is all there is to judge.
+        let servers_only = [
+            (Scope::Repository, ".mcp.json"),
+            (Scope::Repository, ".kiro/settings/mcp.json"),
+            (Scope::Repository, ".cursor/mcp.json"),
+            (Scope::Repository, ".vscode/mcp.json"),
+            (Scope::Repository, "cline_mcp_settings.json"),
+            (Scope::Home, ".kiro/settings/mcp.json"),
+            (Scope::Home, ".codeium/windsurf/mcp_config.json"),
         ];
         assert_eq!(
             prose.len()
@@ -788,6 +822,8 @@ mod tests {
                 + skills.len()
                 + settings_rules.len()
                 + modes.len()
+                + modes_with_servers.len()
+                + servers_only.len()
                 + gemini.len(),
             shipped()
                 .rules()
@@ -798,48 +834,45 @@ mod tests {
         );
 
         checked(&prose, &[RuleId::InvisibleUnicode]);
-        for (scope, path) in hooks {
-            let m = shipped()
-                .lookup_in(&p(path), scope)
-                .unwrap_or_else(|| panic!("{path} matched no row"));
-            assert_eq!(
-                m.check,
-                &[
-                    RuleId::InvisibleUnicode,
-                    RuleId::OpaqueHook,
-                    RuleId::DownloadAndExecute,
-                    RuleId::DecodeAndExecute,
-                    RuleId::CredentialExfiltration,
-                    RuleId::UnverifiedDownload,
-                    RuleId::UnpinnedRemotePackage
-                ],
-                "{path}"
-            );
-        }
         checked(
             &skills,
             &[RuleId::InvisibleUnicode, RuleId::UnrestrictedShell],
         );
         checked(
             &settings_rules,
-            &[RuleId::BypassPermissions, RuleId::UnrestrictedShell],
+            &[
+                RuleId::BypassPermissions,
+                RuleId::UnrestrictedShell,
+                RuleId::PlaintextTransport,
+            ],
         );
         checked(&modes, &[RuleId::BypassPermissions]);
-        checked(&gemini, &[RuleId::UnrestrictedShell, RuleId::TrustedServer]);
+        checked(
+            &modes_with_servers,
+            &[RuleId::BypassPermissions, RuleId::PlaintextTransport],
+        );
+        checked(&servers_only, &[RuleId::PlaintextTransport]);
+        checked(
+            &gemini,
+            &[
+                RuleId::UnrestrictedShell,
+                RuleId::TrustedServer,
+                RuleId::PlaintextTransport,
+            ],
+        );
 
-        let settings = [
-            (Scope::Repository, ".kiro/settings/mcp.json"),
+        // Inventory: read for what it declares, with nothing to judge in it.
+        // A hook file names a command, and the script it names is what gets
+        // ruled on; an environment file is reported and never opened.
+        let inventory = [
             (Scope::Repository, ".kiro/hooks/lint-on-save.json"),
-            (Scope::Repository, ".cursor/mcp.json"),
             (Scope::Repository, ".env"),
-            (Scope::Home, ".kiro/settings/mcp.json"),
-            (Scope::Home, ".codeium/windsurf/mcp_config.json"),
         ];
-        for (scope, path) in settings {
+        for (scope, path) in inventory {
             let m = shipped()
                 .lookup_in(&p(path), scope)
                 .unwrap_or_else(|| panic!("{path} matched no row"));
-            assert!(m.check.is_empty(), "{path} sets no mode and is not prose");
+            assert!(m.check.is_empty(), "{path} has nothing to judge");
         }
     }
 

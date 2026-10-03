@@ -10,28 +10,28 @@
 # The revision below is what a scan is cited against. Raise it when a line
 # changes, never when provenance does.
 
-revision 2
+revision 3
 
-repository **/.claude/settings.json claude-code json hooks,permissions,mcp-servers,autonomy bypass-permissions,unrestricted-shell
-repository **/.claude/settings.local.json claude-code json hooks,permissions,mcp-servers,autonomy bypass-permissions,unrestricted-shell
-repository **/.mcp.json mcp-servers json mcp-servers -
+repository **/.claude/settings.json claude-code json hooks,permissions,mcp-servers,autonomy bypass-permissions,unrestricted-shell,plaintext-transport
+repository **/.claude/settings.local.json claude-code json hooks,permissions,mcp-servers,autonomy bypass-permissions,unrestricted-shell,plaintext-transport
+repository **/.mcp.json mcp-servers json mcp-servers plaintext-transport
 repository **/.claude/**/hooks/** hook-script json - invisible-unicode,opaque-hook,download-and-execute,decode-and-execute,credential-exfiltration,unverified-download,unpinned-remote-package
 repository **/.claude/skills/**/SKILL.md skill markdown permissions invisible-unicode,unrestricted-shell
 repository **/CLAUDE.md instruction json - invisible-unicode
-repository **/.kiro/settings/mcp.json kiro json mcp-servers -
+repository **/.kiro/settings/mcp.json kiro json mcp-servers plaintext-transport
 repository **/.kiro/steering/**/*.md kiro json - invisible-unicode
 repository **/.kiro/hooks/**/*.json kiro json hooks -
-repository **/.codex/config.toml codex toml mcp-servers,autonomy bypass-permissions
+repository **/.codex/config.toml codex toml mcp-servers,autonomy bypass-permissions,plaintext-transport
 repository **/AGENTS.md instruction json - invisible-unicode
-repository **/.gemini/settings.json gemini json mcp-servers,permissions unrestricted-shell,trusted-server
-repository **/.cursor/mcp.json cursor json mcp-servers -
+repository **/.gemini/settings.json gemini json mcp-servers,permissions unrestricted-shell,trusted-server,plaintext-transport
+repository **/.cursor/mcp.json cursor json mcp-servers plaintext-transport
 repository **/.cursor/rules/**/*.mdc cursor json - invisible-unicode
 repository **/.cursorrules cursor json - invisible-unicode
 repository **/.vscode/tasks.json vscode json - -
 repository **/.vscode/settings.json vscode jsonc autonomy bypass-permissions
-repository **/.vscode/mcp.json vscode jsonc mcp-servers -
+repository **/.vscode/mcp.json vscode jsonc mcp-servers plaintext-transport
 repository **/.github/copilot-instructions.md copilot json - invisible-unicode
-repository **/.zed/settings.json zed jsonc mcp-servers,autonomy bypass-permissions
+repository **/.zed/settings.json zed jsonc mcp-servers,autonomy bypass-permissions,plaintext-transport
 repository **/.agents/skills/*/SKILL.md zed json - invisible-unicode
 repository **/.rules zed json - invisible-unicode
 repository **/.devin/rules/**/*.md windsurf json - invisible-unicode
@@ -39,18 +39,18 @@ repository **/.windsurf/rules/**/*.md windsurf json - invisible-unicode
 repository **/.windsurfrules windsurf json - invisible-unicode
 repository **/.continue/config.json continue json - -
 repository **/.clinerules/**/*.{md,txt} cline json - invisible-unicode
-repository **/cline_mcp_settings.json cline json mcp-servers -
+repository **/cline_mcp_settings.json cline json mcp-servers plaintext-transport
 repository **/.aider.conf.yml aider json - -
 repository **/.devcontainer/devcontainer.json devcontainer json - -
 repository **/GEMINI.md instruction json - invisible-unicode
 repository **/AGENT.md instruction json - invisible-unicode
 repository **/.env env json - -
 repository **/.env.* env json - -
-home .claude/settings.json claude-code json hooks,permissions,mcp-servers,autonomy bypass-permissions,unrestricted-shell
-home .gemini/settings.json gemini json mcp-servers,permissions unrestricted-shell,trusted-server
-home .kiro/settings/mcp.json kiro json mcp-servers -
+home .claude/settings.json claude-code json hooks,permissions,mcp-servers,autonomy bypass-permissions,unrestricted-shell,plaintext-transport
+home .gemini/settings.json gemini json mcp-servers,permissions unrestricted-shell,trusted-server,plaintext-transport
+home .kiro/settings/mcp.json kiro json mcp-servers plaintext-transport
 home .kiro/steering/**/*.md kiro json - invisible-unicode
-home .codeium/windsurf/mcp_config.json windsurf json mcp-servers -
+home .codeium/windsurf/mcp_config.json windsurf json mcp-servers plaintext-transport
 home .codeium/windsurf/memories/global_rules.md windsurf json - invisible-unicode
 home .agents/skills/*/SKILL.md zed json - invisible-unicode
 home .agents/AGENTS.md instruction json - invisible-unicode

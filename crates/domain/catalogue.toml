@@ -17,7 +17,7 @@
 #               against. Omitted means repository
 
 version = 2
-revision = 2
+revision = 3
 
 # --- Claude Code ------------------------------------------------------------
 
@@ -26,7 +26,7 @@ glob = "**/.claude/settings.json"
 tool = "claude-code"
 kind = "claude-code"
 extract = ["hooks", "permissions", "mcp-servers", "autonomy"]
-check = ["bypass-permissions", "unrestricted-shell"]
+check = ["bypass-permissions", "unrestricted-shell", "plaintext-transport"]
 last_verified = "2026-09-17"
 source = "https://code.claude.com/docs/en/settings-reference#permissions-defaultmode"
 
@@ -35,7 +35,7 @@ glob = "**/.claude/settings.local.json"
 tool = "claude-code"
 kind = "claude-code"
 extract = ["hooks", "permissions", "mcp-servers", "autonomy"]
-check = ["bypass-permissions", "unrestricted-shell"]
+check = ["bypass-permissions", "unrestricted-shell", "plaintext-transport"]
 last_verified = "2026-09-17"
 source = "https://code.claude.com/docs/en/settings-reference#permissions-defaultmode"
 
@@ -44,6 +44,7 @@ glob = "**/.mcp.json"
 tool = "claude-code"
 kind = "mcp-servers"
 extract = ["mcp-servers"]
+check = ["plaintext-transport"]
 last_verified = "2026-09-11"
 source = "https://code.claude.com/docs/en/mcp"
 
@@ -88,6 +89,7 @@ glob = "**/.kiro/settings/mcp.json"
 tool = "kiro"
 kind = "kiro"
 extract = ["mcp-servers"]
+check = ["plaintext-transport"]
 last_verified = "2026-09-12"
 source = "https://kiro.dev/docs/mcp/configuration/"
 
@@ -115,7 +117,7 @@ tool = "codex"
 kind = "codex"
 format = "toml"
 extract = ["mcp-servers", "autonomy"]
-check = ["bypass-permissions"]
+check = ["bypass-permissions", "plaintext-transport"]
 last_verified = "2026-09-17"
 source = "https://learn.chatgpt.com/docs/config-file/config-basic"
 
@@ -134,7 +136,7 @@ glob = "**/.gemini/settings.json"
 tool = "gemini-cli"
 kind = "gemini"
 extract = ["mcp-servers", "permissions"]
-check = ["unrestricted-shell", "trusted-server"]
+check = ["unrestricted-shell", "trusted-server", "plaintext-transport"]
 last_verified = "2026-09-17"
 source = "https://github.com/google-gemini/gemini-cli/blob/main/docs/reference/configuration.md"
 
@@ -145,6 +147,7 @@ glob = "**/.cursor/mcp.json"
 tool = "cursor"
 kind = "cursor"
 extract = ["mcp-servers"]
+check = ["plaintext-transport"]
 last_verified = "2026-09-12"
 source = "https://cursor.com/docs/mcp"
 
@@ -191,6 +194,7 @@ tool = "vscode"
 kind = "vscode"
 format = "jsonc"
 extract = ["mcp-servers"]
+check = ["plaintext-transport"]
 last_verified = "2026-09-30"
 source = "https://code.visualstudio.com/docs/agent-customization/mcp-servers"
 
@@ -210,7 +214,7 @@ tool = "zed"
 kind = "zed"
 format = "jsonc"
 extract = ["mcp-servers", "autonomy"]
-check = ["bypass-permissions"]
+check = ["bypass-permissions", "plaintext-transport"]
 last_verified = "2026-09-17"
 source = "https://github.com/zed-industries/zed/blob/main/docs/src/ai/mcp.md"
 
@@ -284,6 +288,7 @@ glob = "**/cline_mcp_settings.json"
 tool = "cline"
 kind = "cline"
 extract = ["mcp-servers"]
+check = ["plaintext-transport"]
 last_verified = "2026-09-12"
 source = "https://docs.cline.bot/getting-started/config"
 
@@ -346,7 +351,7 @@ glob = ".claude/settings.json"
 tool = "claude-code"
 kind = "claude-code"
 extract = ["hooks", "permissions", "mcp-servers", "autonomy"]
-check = ["bypass-permissions", "unrestricted-shell"]
+check = ["bypass-permissions", "unrestricted-shell", "plaintext-transport"]
 last_verified = "2026-09-17"
 source = "https://code.claude.com/docs/en/settings-reference#permissions-defaultmode"
 
@@ -356,7 +361,7 @@ glob = ".gemini/settings.json"
 tool = "gemini-cli"
 kind = "gemini"
 extract = ["mcp-servers", "permissions"]
-check = ["unrestricted-shell", "trusted-server"]
+check = ["unrestricted-shell", "trusted-server", "plaintext-transport"]
 last_verified = "2026-09-17"
 source = "https://github.com/google-gemini/gemini-cli/blob/main/docs/reference/configuration.md"
 
@@ -366,6 +371,7 @@ glob = ".kiro/settings/mcp.json"
 tool = "kiro"
 kind = "kiro"
 extract = ["mcp-servers"]
+check = ["plaintext-transport"]
 last_verified = "2026-09-12"
 source = "https://kiro.dev/docs/mcp/configuration/"
 
@@ -384,6 +390,7 @@ glob = ".codeium/windsurf/mcp_config.json"
 tool = "windsurf"
 kind = "windsurf"
 extract = ["mcp-servers"]
+check = ["plaintext-transport"]
 last_verified = "2026-09-12"
 source = "https://docs.windsurf.com/windsurf/cascade/mcp"
 

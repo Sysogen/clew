@@ -16,8 +16,8 @@ use crate::permission::Permission;
 use crate::repo_path::RepoPath;
 use crate::rules::{
     bypass_permissions, credential_exfiltration, decode_and_execute, download_and_execute,
-    invisible_unicode, opaque_hook, trusted_server, unpinned_remote_package, unrestricted_shell,
-    unverified_download,
+    invisible_unicode, opaque_hook, plaintext_transport, trusted_server, unpinned_remote_package,
+    unrestricted_shell, unverified_download,
 };
 
 /// A kind of thing clew judges.
@@ -155,6 +155,7 @@ pub fn of(id: RuleId) -> &'static dyn Rule {
         RuleId::BypassPermissions => &bypass_permissions::BypassPermissions,
         RuleId::UnrestrictedShell => &unrestricted_shell::UnrestrictedShell,
         RuleId::TrustedServer => &trusted_server::TrustedServer,
+        RuleId::PlaintextTransport => &plaintext_transport::PlaintextTransport,
     }
 }
 

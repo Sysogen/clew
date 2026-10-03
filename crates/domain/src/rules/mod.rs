@@ -12,6 +12,7 @@ pub(crate) mod decode_and_execute;
 pub(crate) mod download_and_execute;
 pub(crate) mod invisible_unicode;
 pub(crate) mod opaque_hook;
+pub(crate) mod plaintext_transport;
 pub(crate) mod trusted_server;
 pub(crate) mod unpinned_remote_package;
 pub(crate) mod unrestricted_shell;
@@ -170,7 +171,8 @@ pub(crate) const GRANT_LISTS: &[&str] = &["allow", "allowed-tools", "allowed"];
 /// The keys a tool declares its servers under. A name is looked for only after
 /// one of them, so a name repeated in a description is not taken for the
 /// declaration.
-pub(crate) const SERVER_BLOCKS: &[&str] = &["mcpServers", "mcp_servers", "context_servers"];
+pub(crate) const SERVER_BLOCKS: &[&str] =
+    &["mcpServers", "mcp_servers", "context_servers", "servers"];
 
 /// Whether `text` is a shell script, by its extension or its `#!` line.
 pub(crate) fn is_shell(path: &RepoPath, text: &str) -> bool {
@@ -292,6 +294,184 @@ mod tests {
         // The name, not the keyword two lines below it.
         assert_eq!(found.at.map(|p| p.line), Some(3), "{found:?}");
         assert!(found.evidence.as_str().contains("pg"));
+    }
+
+    fn reached_at(name: &str, url: &str) -> McpServer {
+        McpServer {
+            name: name.to_owned(),
+            transport: crate::mcp_server::Transport::remote(url),
+            env: Vec::new(),
+            trusted: false,
+        }
+    }
+
+    fn transport_found_in(server: &McpServer, source: &str) -> Option<Finding> {
+        judge(
+            &Examined::Server {
+                path: &RepoPath::root().join(".mcp.json"),
+                server,
+                source,
+            },
+            &[RuleId::PlaintextTransport],
+            DEFAULT_EVIDENCE_WIDTH,
+        )
+        .into_iter()
+        .next()
+    }
+
+    #[test]
+    fn a_plaintext_endpoint_is_a_finding() {
+        let source = "{\n  \"mcpServers\": {\n    \"pg\": {\n      \"url\": \"http://mcp.example.invalid/sse\"\n    }\n  }\n}\n";
+
+        let found = transport_found_in(&reached_at("pg", "http://mcp.example.invalid/sse"), source)
+            .expect("a finding");
+
+        assert_eq!(found.rule, RuleId::PlaintextTransport);
+        assert_eq!(found.severity, Severity::Medium);
+        // The name, not the endpoint on the line below it.
+        assert_eq!(found.at.map(|p| p.line), Some(3), "{found:?}");
+        assert!(found.evidence.as_str().contains("pg"), "{found:?}");
+    }
+
+    #[test]
+    fn an_encrypted_endpoint_is_not() {
+        let source = "{\"mcpServers\":{\"pg\":{\"url\":\"https://mcp.example.invalid/sse\"}}}";
+
+        assert!(
+            transport_found_in(&reached_at("pg", "https://mcp.example.invalid/sse"), source)
+                .is_none()
+        );
+    }
+
+    /// A local server is launched, not reached, so there is no hop to judge.
+    #[test]
+    fn a_locally_launched_server_is_not() {
+        let source = "{\"mcpServers\":{\"pg\":{\"command\":\"srv\"}}}";
+
+        assert!(transport_found_in(&declared("pg", false), source).is_none());
+    }
+
+    /// Traffic that never reaches a network is not carried in the clear. This
+    /// is the case Gemini CLI's own documentation shows, `http://localhost`.
+    #[test]
+    fn an_endpoint_that_stays_on_the_machine_is_not() {
+        for url in [
+            "http://localhost:8080/sse",
+            "http://LocalHost/sse",
+            "http://127.0.0.1:3000/mcp",
+            "http://127.1.2.3/mcp",
+            "http://[::1]:8080/mcp",
+            "http://0.0.0.0:8080/mcp",
+        ] {
+            let source = format!("{{\"mcpServers\":{{\"pg\":{{\"url\":\"{url}\"}}}}}}");
+            assert!(
+                transport_found_in(&reached_at("pg", url), &source).is_none(),
+                "{url} leaves nothing to intercept"
+            );
+        }
+    }
+
+    /// A name is not an address. Matching a prefix would have let any of these
+    /// past, and each one resolves wherever its owner says.
+    #[test]
+    fn a_host_that_only_looks_local_is_a_finding() {
+        for url in [
+            "http://localhost.example.invalid/sse",
+            "http://127.0.0.1.example.invalid/sse",
+            "http://not-localhost/sse",
+        ] {
+            let source = format!("{{\"mcpServers\":{{\"pg\":{{\"url\":\"{url}\"}}}}}}");
+            assert!(
+                transport_found_in(&reached_at("pg", url), &source).is_some(),
+                "{url} reaches a network"
+            );
+        }
+    }
+
+    /// A scheme is case insensitive, and a file may write any casing of it.
+    #[test]
+    fn a_scheme_is_read_whatever_its_casing() {
+        for url in [
+            "HTTP://mcp.example.invalid/x",
+            "Http://mcp.example.invalid/x",
+        ] {
+            let source = format!("{{\"mcpServers\":{{\"pg\":{{\"url\":\"{url}\"}}}}}}");
+            assert!(
+                transport_found_in(&reached_at("pg", url), &source).is_some(),
+                "{url}"
+            );
+        }
+    }
+
+    /// The URL Standard removes tabs and newlines before it parses a url, so a
+    /// scheme can be mangled in a file and still fetched as plain http. The
+    /// rule reads the canonical form, or the evasion is free.
+    #[test]
+    fn an_endpoint_mangled_to_hide_its_scheme_is_still_a_finding() {
+        let tab = char::from(9);
+        let newline = char::from(10);
+        for url in [
+            format!("h{tab}ttp://remote.example/mcp"),
+            format!("ht{newline}tp://remote.example/mcp"),
+            format!("http:/{tab}/remote.example/mcp"),
+            "http:\\\\remote.example/mcp".to_owned(),
+        ] {
+            let source = "{\"mcpServers\":{\"pg\":{\"url\":\"...\"}}}";
+
+            assert!(
+                transport_found_in(&reached_at("pg", &url), source).is_some(),
+                "{url:?} is fetched over plain http"
+            );
+        }
+    }
+
+    /// An endpoint clew could not read is reported redacted and has no scheme
+    /// left. A rule may not guess at what it cannot see.
+    #[test]
+    fn an_endpoint_that_is_not_a_url_is_not_judged() {
+        let source = "{\"mcpServers\":{\"pg\":{\"url\":\"mcp.example.invalid\"}}}";
+
+        assert!(transport_found_in(&reached_at("pg", "mcp.example.invalid"), source).is_none());
+    }
+
+    /// Every spelling a tool declares its servers under, including VS Code's,
+    /// which extraction reads but which placement did not look for.
+    ///
+    /// Named here rather than read from `SERVER_BLOCKS`, because a test that
+    /// iterates the list it is checking passes by dropping a case whenever
+    /// the list loses one.
+    #[test]
+    fn a_finding_is_placed_under_each_server_key() {
+        let keys = ["mcpServers", "mcp_servers", "context_servers", "servers"];
+        assert_eq!(keys.len(), SERVER_BLOCKS.len(), "a key has no case here");
+        for key in keys {
+            let source = format!(
+                "{{\n  \"{key}\": {{\n    \"pg\": {{\n      \"url\": \"http://h.invalid/x\"\n    }}\n  }}\n}}\n"
+            );
+
+            let found = transport_found_in(&reached_at("pg", "http://h.invalid/x"), &source)
+                .expect("a finding");
+
+            assert_eq!(found.at.map(|p| p.line), Some(3), "{key}: {found:?}");
+        }
+    }
+
+    /// The endpoint's query is a routine place for a token, and the evidence
+    /// quotes the file rather than the reported url.
+    #[test]
+    fn transport_evidence_beside_a_secret_is_masked() {
+        let source = "{\"mcpServers\":{\"pg\":{\"url\":\"http://h.invalid/x?token=sk-live-ABCDEFGHIJKLMNOP\"}}}";
+
+        let found = transport_found_in(
+            &reached_at("pg", "http://h.invalid/x?token=sk-live-ABCDEFGHIJKLMNOP"),
+            source,
+        )
+        .expect("a finding");
+
+        assert!(
+            !found.evidence.as_str().contains("sk-live-ABCDEFGHIJKLMNOP"),
+            "{found:?}"
+        );
     }
 
     #[test]

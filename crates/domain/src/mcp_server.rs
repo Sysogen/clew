@@ -81,11 +81,48 @@ impl McpServer {
     }
 }
 
+/// Schemes the URL Standard calls special, for which a backslash is read as a
+/// slash.
+const SPECIAL_SCHEMES: &[&str] = &["http", "https", "ws", "wss", "ftp", "file"];
+
+/// A url as the client that reads it will see it.
+///
+/// The URL Standard strips leading and trailing C0 controls and spaces, then
+/// removes every ASCII tab and newline anywhere in the input, before it parses
+/// anything. So a value written with a tab inside its scheme is still fetched
+/// over plain HTTP, and every tool here that reads a url with `new URL` or the
+/// `url` crate does the same thing with it.
+///
+/// Canonicalised before anything reads a scheme or a host, because otherwise a
+/// mangled url reads as a scheme no rule knows while the tool connects in the
+/// clear. It also means no control character reaches a report, where a newline
+/// in a url could forge a line of output.
+fn canonical(url: &str) -> String {
+    let mut out: String = url
+        .trim_matches(|c: char| c <= ' ')
+        .chars()
+        .filter(|c| !matches!(c, '\t' | '\n' | '\r'))
+        .collect();
+    if out.split_once(':').is_some_and(|(scheme, _)| {
+        SPECIAL_SCHEMES
+            .iter()
+            .any(|s| scheme.eq_ignore_ascii_case(s))
+    }) {
+        // Only ahead of the query, which is where the standard reads a
+        // backslash as a slash. One inside a query stays as written, though
+        // the query is withheld anyway.
+        let split = out.find(['?', '#']).unwrap_or(out.len());
+        out = out[..split].replace('\\', "/") + &out[split..];
+    }
+    out
+}
+
 /// A url as a reference: where it points, not what it carries.
 ///
 /// The query is marked rather than dropped, so a reader can see the url
 /// carries something.
 fn redact_url(url: &str) -> String {
+    let url = &canonical(url);
     let head = url.split('#').next().unwrap_or(url);
     let (head, has_query) = head
         .split_once('?')
@@ -268,6 +305,49 @@ mod tests {
     #[test]
     fn a_remote_that_is_not_a_url_is_withheld() {
         assert_eq!(remote("sk-live-not-really-a-url"), REDACTED);
+    }
+
+    /// Every one of these is fetched as `http://remote.example/mcp` by the
+    /// URL Standard, so each must read as that url and not as whatever the
+    /// bytes spell. Checked against `new URL` in Node, which is what the
+    /// JavaScript tools here parse a url with.
+    #[test]
+    fn a_url_reads_as_the_client_will_fetch_it() {
+        let tab = char::from(9);
+        let newline = char::from(10);
+        let carriage = char::from(13);
+        let control = char::from(1);
+        let mangled = [
+            format!("h{tab}ttp://remote.example/mcp"),
+            format!("ht{newline}tp://remote.example/mcp"),
+            format!("htt{carriage}p://remote.example/mcp"),
+            format!("http:/{tab}/remote.example/mcp"),
+            format!("{control}http://remote.example/mcp"),
+            "  http://remote.example/mcp".to_owned(),
+            "http:\\\\remote.example/mcp".to_owned(),
+        ];
+
+        for url in mangled {
+            assert_eq!(
+                remote(&url),
+                "http://remote.example/mcp",
+                "{url:?} is fetched as plain http"
+            );
+        }
+    }
+
+    /// A url is printed into a report, so a newline in one could forge a line
+    /// of it. Canonicalisation is what stops that.
+    #[test]
+    fn no_control_character_survives_into_a_url() {
+        let newline = char::from(10);
+        let forged =
+            format!("http://remote.example/{newline}  server \"safe\": https://ok.invalid");
+
+        let shown = remote(&forged);
+
+        assert!(!shown.contains(char::from(10)), "{shown:?}");
+        assert!(!shown.contains(char::from(9)), "{shown:?}");
     }
 
     #[test]

@@ -91,6 +91,7 @@ weigh and log a scan; asked for either, they say so rather than ignore it.
 | [`bypass-permissions`](https://github.com/sysogen/clew/blob/main/docs/rules/bypass-permissions.md) | high | A mode that starts an agent with neither a permission prompt nor a sandbox |
 | [`unrestricted-shell`](https://github.com/sysogen/clew/blob/main/docs/rules/unrestricted-shell.md) | medium | A pre-approved shell grant with nothing restricting the commands it runs |
 | [`trusted-server`](https://github.com/sysogen/clew/blob/main/docs/rules/trusted-server.md) | medium | An MCP server whose tool calls run without being confirmed |
+| [`plaintext-transport`](https://github.com/sysogen/clew/blob/main/docs/rules/plaintext-transport.md) | medium | An MCP server reached over plain HTTP |
 <!-- rules:end -->
 
 `invisible-unicode` is the Rules File Backdoor, disclosed by Pillar Security in
