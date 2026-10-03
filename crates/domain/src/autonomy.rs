@@ -17,6 +17,15 @@ pub struct Autonomy {
 }
 
 impl Autonomy {
+    /// The same mode with any credential value in it taken out.
+    #[must_use]
+    pub fn redacted(&self) -> Self {
+        Self {
+            key: crate::credential::redacted(&self.key),
+            value: crate::credential::redacted(&self.value),
+        }
+    }
+
     /// Whether the mode leaves nothing asking first and nothing bounding what
     /// happens.
     ///
@@ -83,6 +92,35 @@ mod tests {
     fn a_value_under_the_wrong_key_is_silent() {
         assert!(!mode("sandbox_mode", "bypassPermissions").is_unchecked());
         assert!(!mode("permissions.defaultMode", "danger-full-access").is_unchecked());
+    }
+
+    #[test]
+    fn a_credential_in_a_mode_is_not_reported() {
+        let secret = concat!("ghp_", "aB3dE5gH7jK9mN1pQ3sT5vW7yZ9bC1dF3hJ5");
+        let held = mode(&format!("key={secret}"), &format!("value={secret}"));
+
+        assert!(!format!("{:?}", held.redacted()).contains(secret));
+    }
+
+    /// A report reads this off the redacted copy, so redaction must not change
+    /// which modes are unchecked.
+    #[test]
+    fn redacting_leaves_an_unchecked_mode_unchecked() {
+        for (key, value) in [
+            ("permissions.defaultMode", "bypassPermissions"),
+            ("sandbox_mode", "danger-full-access"),
+            ("chat.tools.global.autoApprove", "true"),
+            ("agent.tool_permissions.default", "allow"),
+            ("permissions.defaultMode", "acceptEdits"),
+        ] {
+            let held = mode(key, value);
+
+            assert_eq!(
+                held.redacted().is_unchecked(),
+                held.is_unchecked(),
+                "{key}={value}"
+            );
+        }
     }
 
     #[test]

@@ -70,6 +70,30 @@ impl Transport {
 }
 
 impl McpServer {
+    /// The same server with every credential value in it taken out.
+    ///
+    /// Every string kept, not only the name. Reading a server drops the
+    /// values that are certainly credentials, an argument behind a flag and
+    /// an environment value, but what it keeps is still read out of the file:
+    /// an executable, the path an endpoint names, an environment key. Any of
+    /// them can be credential shaped, and all of them are reported.
+    #[must_use]
+    pub fn redacted(&self) -> Self {
+        let redacted = crate::credential::redacted;
+        Self {
+            name: redacted(&self.name),
+            transport: match &self.transport {
+                Transport::Local { command, args } => Transport::Local {
+                    command: redacted(command),
+                    args: args.iter().map(|arg| redacted(arg)).collect(),
+                },
+                Transport::Remote { url } => Transport::Remote { url: redacted(url) },
+            },
+            env: self.env.iter().map(|name| redacted(name)).collect(),
+            trusted: self.trusted,
+        }
+    }
+
     /// How the server would be invoked, for display.
     #[must_use]
     pub fn invocation(&self) -> String {

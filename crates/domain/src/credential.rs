@@ -29,6 +29,20 @@ pub fn names_a_credential(name: &str) -> bool {
         })
 }
 
+/// Text a report may carry: every credential value's visible characters
+/// replaced by `*`.
+///
+/// Configuration text reaches a report as a name, a command, a mode or a
+/// grant, and any of them can have a credential written into it. Masking is
+/// length preserving, so a column counted against the original still lands in
+/// the same place.
+#[must_use]
+pub fn redacted(text: &str) -> String {
+    mask(&text.chars().collect::<Vec<char>>())
+        .into_iter()
+        .collect()
+}
+
 /// The line with every credential value's visible characters replaced by `*`.
 ///
 /// The whole line, not the quoted window, so a secret cut at the window's edge
