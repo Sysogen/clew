@@ -485,28 +485,58 @@ fn split_grants(line: &str) -> Vec<String> {
 /// Tasks a workspace declares.
 ///
 /// A list under `tasks`, each entry naming what it runs and, in
-/// `runOptions.runOn`, when. The trigger is recorded verbatim: a spelling the
-/// editor does not match selects nothing, and saying so is the row's job, not
-/// this one's.
+/// `runOptions.runOn`, when. A task runs a command, or depends on other tasks,
+/// or both, so an entry naming only `dependsOn` is a task: VS Code's compound
+/// example is exactly that, and a trigger on it starts its dependencies.
+///
+/// Kept in the order the file lists them rather than sorted. A finding is
+/// placed by counting which copy of a trigger it is, and sorting would count
+/// in an order the file does not have.
 fn tasks(root: &serde_json::Value) -> Vec<Task> {
     let Some(entries) = root.get("tasks").and_then(serde_json::Value::as_array) else {
         return Vec::new();
     };
-    let mut found: Vec<Task> = entries
+    entries
         .iter()
         .filter_map(|entry| {
-            let command = non_blank(entry.get("command"))?;
-            let label = non_blank(entry.get("label")).unwrap_or(command);
-            let runs_on = entry
-                .get("runOptions")
-                .and_then(|options| non_blank(options.get("runOn")))
-                .map(ToOwned::to_owned);
-            Some(Task::new(label.to_owned(), command, runs_on))
+            let command = non_blank(entry.get("command"));
+            let depends_on: Vec<String> = entry
+                .get("dependsOn")
+                .and_then(serde_json::Value::as_array)
+                .map(|names| {
+                    names
+                        .iter()
+                        .filter_map(|name| non_blank(Some(name)))
+                        .map(ToOwned::to_owned)
+                        .collect()
+                })
+                .unwrap_or_default();
+            // An entry that neither runs nor depends on anything reaches
+            // nothing, whatever else it says.
+            if command.is_none() && depends_on.is_empty() {
+                return None;
+            }
+            Some(Task::new(
+                non_blank(entry.get("label")),
+                command,
+                &depends_on,
+                trigger(entry),
+            ))
         })
-        .collect();
-    found.sort();
-    found.dedup();
-    found
+        .collect()
+}
+
+/// The trigger an entry sets, exactly as written.
+///
+/// Not trimmed: the editor matches the value its schema names, so
+/// `" folderOpen"` selects no trigger. Trimming would report an automatic task
+/// where the file declares a manual one.
+fn trigger(entry: &serde_json::Value) -> Option<String> {
+    entry
+        .get("runOptions")?
+        .get("runOn")?
+        .as_str()
+        .map(ToOwned::to_owned)
 }
 
 /// MCP servers declared.
@@ -1403,7 +1433,7 @@ env = { DATABASE_URL = "postgres://u:hunter2@h/d", PGPORT = "5432" }
 
         assert_eq!(found.len(), 1, "{found:?}");
         assert_eq!(found[0].label, "setup");
-        assert_eq!(found[0].command, "npm ci");
+        assert_eq!(found[0].command.as_deref(), Some("npm ci"));
         assert_eq!(found[0].runs_on.as_deref(), Some("folderOpen"));
         assert!(found[0].runs_on_open());
     }
@@ -1440,6 +1470,90 @@ env = { DATABASE_URL = "postgres://u:hunter2@h/d", PGPORT = "5432" }
 
     /// The label is what a report names, and VS Code lists a task by its
     /// command when it carries no label.
+    /// The trigger is matched as the editor matches it, so padding selects
+    /// nothing. Read through the extraction, because trimming it there would
+    /// turn a manual task into an automatic one before a rule ever saw it.
+    #[test]
+    fn a_padded_trigger_is_not_the_trigger() {
+        for padded in [
+            " folderOpen".to_owned(),
+            "folderOpen ".to_owned(),
+            format!("{}folderOpen", char::from(9)),
+            format!("folderOpen{}", char::from(10)),
+        ] {
+            // Encoded rather than interpolated, so the file carries exactly
+            // the padding this asserts on.
+            let written = serde_json::to_string(&padded).expect("a string");
+            let found = tasks_of(&format!(
+                r#"{{"tasks":[{{"command":"x","runOptions":{{"runOn":{written}}}}}]}}"#
+            ));
+
+            assert_eq!(found.len(), 1, "{padded:?}");
+            assert_eq!(
+                found[0].runs_on.as_deref(),
+                Some(padded.as_str()),
+                "kept as written"
+            );
+            assert!(!found[0].runs_on_open(), "{padded:?} starts nothing");
+        }
+    }
+
+    /// VS Code's own compound example: a task that runs no command of its own
+    /// and depends on others. A trigger on it starts them, so dropping it lost
+    /// the finding entirely.
+    #[test]
+    fn a_compound_task_with_no_command_is_still_a_task() {
+        let found = tasks_of(
+            r#"{"tasks":[{"label":"Build","dependsOn":["Client Build","Server Build"],
+                 "runOptions":{"runOn":"folderOpen"}}]}"#,
+        );
+
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].command, None);
+        assert_eq!(found[0].depends_on, ["Client Build", "Server Build"]);
+        assert!(found[0].runs_on_open());
+    }
+
+    /// A task may list dependencies and run a command of its own, which is
+    /// the second shape the documentation shows.
+    #[test]
+    fn a_task_may_depend_on_others_and_run_its_own_command() {
+        let found = tasks_of(
+            r#"{"tasks":[{"label":"One","command":"echo Hello",
+                 "dependsOrder":"sequence","dependsOn":["Two","Three"]}]}"#,
+        );
+
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].command.as_deref(), Some("echo Hello"));
+        assert_eq!(found[0].depends_on, ["Two", "Three"]);
+    }
+
+    /// A task with no label is listed by what it runs, so the command reaches
+    /// a report twice and both have to be redacted.
+    #[test]
+    fn a_credential_in_an_unlabelled_command_reaches_no_field() {
+        let secret = concat!("ghp_", "aB3dE5gH7jK9mN1pQ3sT5vW7yZ9bC1dF3hJ5");
+        let found = tasks_of(&format!(
+            r#"{{"tasks":[{{"command":"npm publish --token {secret}"}}]}}"#
+        ));
+
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(!format!("{found:?}").contains(secret), "{found:?}");
+        assert!(found[0].label.contains("npm publish"), "{found:?}");
+    }
+
+    /// File order, not sorted: a finding is placed by counting which copy of a
+    /// trigger it is, and the count has to follow the file.
+    #[test]
+    fn tasks_keep_the_order_the_file_lists_them_in() {
+        let found = tasks_of(
+            r#"{"tasks":[{"label":"zebra","command":"x"},{"label":"alpha","command":"y"}]}"#,
+        );
+
+        let labels: Vec<&str> = found.iter().map(|t| t.label.as_str()).collect();
+        assert_eq!(labels, ["zebra", "alpha"], "{found:?}");
+    }
+
     #[test]
     fn a_task_without_a_label_is_named_by_its_command() {
         let found = tasks_of(r#"{"tasks":[{"command":"make test"}]}"#);

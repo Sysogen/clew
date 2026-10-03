@@ -135,7 +135,8 @@ struct PermissionOut {
 struct TaskOut {
     source: String,
     label: String,
-    command: String,
+    command: Option<String>,
+    depends_on: Vec<String>,
     runs_on: Option<String>,
     on_open: bool,
 }
@@ -220,6 +221,7 @@ impl TaskOut {
             source: declared.source.as_str().to_owned(),
             label: declared.task.label.clone(),
             command: declared.task.command.clone(),
+            depends_on: declared.task.depends_on.clone(),
             runs_on: declared.task.runs_on.clone(),
             on_open: declared.task.runs_on_open(),
         }
@@ -373,8 +375,9 @@ mod tests {
             tasks: vec![DeclaredTask {
                 source: path(".vscode/tasks.json"),
                 task: Task::new(
-                    "setup".to_owned(),
-                    "npm ci --token sk-live-SECRET",
+                    Some("setup"),
+                    Some("npm ci --token sk-live-SECRET"),
+                    &[],
                     Some("folderOpen".to_owned()),
                 ),
             }],

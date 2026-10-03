@@ -91,7 +91,8 @@ pub enum Examined<'a> {
         /// The file's text, for placing the finding.
         source: &'a str,
     },
-    /// One task a workspace declares.
+    /// One task a workspace declares, where `source` holds the
+    /// `occurrence`th task carrying the same trigger.
     Task {
         /// The file.
         path: &'a RepoPath,
@@ -99,6 +100,8 @@ pub enum Examined<'a> {
         task: &'a Task,
         /// The file's text, for placing the finding.
         source: &'a str,
+        /// Which task carrying this trigger it is, counted in file order.
+        occurrence: usize,
     },
     /// A file that is there and cannot be read, and why.
     Unreadable {

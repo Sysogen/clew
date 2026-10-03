@@ -242,12 +242,18 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
                     server,
                 });
             }
+            // Counted like hook commands, and in file order: every automatic
+            // task writes the same trigger, so the copy is what places it.
+            let mut triggers: Vec<Option<String>> = Vec::new();
             for task in found.tasks {
+                let occurrence = triggers.iter().filter(|t| **t == task.runs_on).count();
+                triggers.push(task.runs_on.clone());
                 report.findings.extend(rule::judge(
                     &Examined::Task {
                         path: &path,
                         task: &task,
                         source: &text,
+                        occurrence,
                     },
                     matched.check,
                     self.policy.evidence_width(),
@@ -2272,6 +2278,73 @@ mod tests {
             "only the automatic one is a finding: {report:?}"
         );
         assert!(report.is_complete());
+    }
+
+    /// Every automatic task writes the same trigger, so each finding has to be
+    /// placed at its own. All of them pointing at the first would say the
+    /// later ones were fine.
+    #[test]
+    fn each_automatic_task_is_placed_at_its_own_trigger() {
+        let tree = FakeTree::default()
+            .dir("", &[(".vscode", EntryKind::Directory)])
+            .dir(".vscode", &[("tasks.json", EntryKind::File)]);
+        let contents = FakeContents::default().file(
+            ".vscode/tasks.json",
+            concat!(
+                "{\n",                                                      // 1
+                "  \"tasks\": [\n",                                         // 2
+                "    { \"label\": \"one\", \"command\": \"echo a\",\n",     // 3
+                "      \"runOptions\": { \"runOn\": \"folderOpen\" } },\n", // 4
+                "    { \"label\": \"two\", \"command\": \"echo b\",\n",     // 5
+                "      \"runOptions\": { \"runOn\": \"default\" } },\n",    // 6
+                "    { \"label\": \"three\", \"command\": \"echo c\",\n",   // 7
+                "      \"runOptions\": { \"runOn\": \"folderOpen\" } }\n",  // 8
+                "  ]\n",
+                "}\n",
+            ),
+        );
+        let policy = ScanPolicy::default();
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &policy).run();
+
+        assert_eq!(report.tasks.len(), 3, "{report:?}");
+        let lines: Vec<Option<usize>> = report
+            .findings
+            .iter()
+            .map(|f| f.at.map(|at| at.line))
+            .collect();
+        assert_eq!(lines, vec![Some(4), Some(8)], "{report:?}");
+    }
+
+    /// A compound task runs no command of its own, so it used to be dropped
+    /// before anything could judge the trigger on it.
+    #[test]
+    fn a_compound_task_run_on_folder_open_is_a_finding() {
+        let tree = FakeTree::default()
+            .dir("", &[(".vscode", EntryKind::Directory)])
+            .dir(".vscode", &[("tasks.json", EntryKind::File)]);
+        let contents = FakeContents::default().file(
+            ".vscode/tasks.json",
+            r#"{
+                 "version": "2.0.0",
+                 "tasks": [
+                   {"label":"Client Build","command":"gulp"},
+                   {"label":"Build","dependsOn":["Client Build"],
+                    "runOptions":{"runOn":"folderOpen"}}
+                 ]
+               }"#,
+        );
+        let policy = ScanPolicy::default();
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &policy).run();
+
+        assert_eq!(report.tasks.len(), 2, "{report:?}");
+        let rules: Vec<_> = report.findings.iter().map(|f| f.rule).collect();
+        assert_eq!(rules, vec![RuleId::AutoRunTask], "{report:?}");
+        assert!(
+            report.findings[0].at.is_some(),
+            "placed at its trigger: {report:?}"
+        );
     }
 
     #[test]

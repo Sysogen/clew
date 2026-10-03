@@ -100,7 +100,7 @@ fn declared(out: &mut String, report: &DiscoveryReport, surface: &Surface) {
             "  task \"{}\" runs {}: {}",
             shown(&declared.task.label),
             shown(&when),
-            shown(&declared.task.command)
+            shown(&declared.task.invocation())
         );
     }
 

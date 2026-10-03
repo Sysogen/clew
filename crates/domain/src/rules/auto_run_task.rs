@@ -31,7 +31,8 @@ impl Rule for AutoRunTask {
         "A task sets runOptions.runOn to folderOpen, which VS Code documents as running \
                 it when the containing folder is opened. Opening a repository is what a \
                 reviewer does before reading any of it, so the command runs before anyone \
-                has looked at what it is. Two limits apply and neither is a reason to ignore \
+                has looked at what it is. A task naming no command of its own still runs \
+                the ones it depends on. Two limits apply and neither is a reason to ignore \
                 this: an automatic task never runs in a workspace that is not trusted, and \
                 task.allowAutomaticTasks defaults to off, which prompts once rather than \
                 running. What the file asks for is still arbitrary execution on open, in a \
@@ -55,21 +56,25 @@ impl Rule for AutoRunTask {
     }
 
     fn check(&self, at: &Examined<'_>, width: usize) -> Vec<Finding> {
-        let Examined::Task { path, task, source } = at else {
+        let Examined::Task {
+            path,
+            task,
+            source,
+            occurrence,
+        } = at
+        else {
             return Vec::new();
         };
         if !task.runs_on_open() {
             return Vec::new();
         }
+        // A file may declare several automatic tasks, and every trigger is
+        // written the same way, so the copy is what tells them apart.
+        let trigger = task.runs_on.as_deref().unwrap_or_default();
         vec![
-            after_key(
-                source,
-                "runOn",
-                task.runs_on.as_deref().unwrap_or_default(),
-                0,
-            )
-            .and_then(|at| found_at(path, self.id(), source, at, width))
-            .unwrap_or_else(|| about_file(path, self.id(), &task.label, width)),
+            after_key(source, "runOn", trigger, *occurrence)
+                .and_then(|at| found_at(path, self.id(), source, at, width))
+                .unwrap_or_else(|| about_file(path, self.id(), &task.label, width)),
         ]
     }
 }

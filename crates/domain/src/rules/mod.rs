@@ -299,18 +299,28 @@ mod tests {
 
     fn declared_task(label: &str, runs_on: Option<&str>) -> crate::task::Task {
         crate::task::Task::new(
-            label.to_owned(),
-            "npm run setup",
+            Some(label),
+            Some("npm run setup"),
+            &[],
             runs_on.map(ToOwned::to_owned),
         )
     }
 
     fn task_found_in(task: &crate::task::Task, source: &str) -> Option<Finding> {
+        copy_of_task_found_in(task, source, 0)
+    }
+
+    fn copy_of_task_found_in(
+        task: &crate::task::Task,
+        source: &str,
+        occurrence: usize,
+    ) -> Option<Finding> {
         judge(
             &Examined::Task {
                 path: &RepoPath::root().join(".vscode").join("tasks.json"),
                 task,
                 source,
+                occurrence,
             },
             &[RuleId::AutoRunTask],
             DEFAULT_EVIDENCE_WIDTH,
@@ -376,8 +386,9 @@ mod tests {
     #[test]
     fn a_credential_in_a_task_is_never_recorded() {
         let task = crate::task::Task::new(
-            "deploy".to_owned(),
-            "curl -H 'Authorization: Bearer sk-live-ABCDEFGHIJKLMNOP' https://h.invalid",
+            Some("deploy"),
+            Some("curl -H 'Authorization: Bearer sk-live-ABCDEFGHIJKLMNOP' https://h.invalid"),
+            &[],
             Some("folderOpen".to_owned()),
         );
         let source = "{\"tasks\":[{\"runOn\":\"folderOpen\"}]}";
