@@ -5,6 +5,90 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-04
+
+### Added
+
+- `plaintext-transport` flags a remote MCP server declared with an `http`
+  endpoint, so the session that carries the agent's arguments, the results it
+  reads back and whatever header authenticates it crosses the network in the
+  clear. Fourteen catalogue rows across nine tools run it, the broadest reach
+  any one rule has. Silent on `https`, on a server launched locally, and on an
+  endpoint that stays on the machine, which is what keeps it quiet on Gemini
+  CLI's own documented `http://localhost:8080` example. Loopback is decided by
+  parsing the host rather than matching a prefix, so
+  `127.0.0.1.example.invalid` is still a finding.
+
+  The first rule whose backing is a specification rather than an incident: the
+  MCP Streamable HTTP transport requires a server to validate `Origin`, asks it
+  to bind loopback rather than every interface, and says it should authenticate
+  every connection. The specification never requires TLS, so the rule says this
+  is a weakness in how a server is deployed rather than a breach of the
+  protocol.
+
+- `auto-run-task` flags a task whose `runOptions.runOn` is `folderOpen`, which
+  VS Code runs when the containing folder is opened. Opening a repository is
+  what a reviewer does before reading any of it, so the command runs before
+  anyone has looked at what it is, and a task naming no command of its own
+  still runs the ones it depends on. CVE-2026-10591 is where this led: AWS
+  fixed Kiro IDE 0.11 because its file write tool let crafted instructions
+  write this trigger. The rule's own text carries the two limits rather than
+  discounting them from its grade, that an automatic task never runs in an
+  untrusted workspace and that `task.allowAutomaticTasks` defaults to prompting
+  once.
+
+- `**/.vscode/tasks.json` is read for the tasks it declares, each reported with
+  what it runs and when, including a compound task that names only
+  `dependsOn`. A task's command is masked as it is read, since a deploy task is
+  a routine place for a token.
+
+- `**/.vscode/mcp.json` is read for the servers it declares. The row had been
+  inventory only, and filling it in alone would still have found none of them:
+  VS Code spells the table `servers`, keeping `mcpServers` for the portable
+  `.mcp.json`.
+
+- A server declared with `httpUrl`, which Gemini CLI documents for streamable
+  HTTP, is reported. Such a server names no command, so it used to be discarded
+  rather than reported, and `trusted-server` never saw the ones that declared
+  `trust`. A scan that lists nothing reads as a clean result.
+
+### Changed
+
+- The `core` pack is at version 3 and the catalogue at revision 4.
+
+### Fixed
+
+- A server declaring both `url` and `httpUrl` is reported at the endpoint a
+  tool actually connects to. Gemini CLI takes `httpUrl` first and logs that it
+  is ignoring `url`, so naming the other pointed a reader at a host nothing
+  reaches.
+
+- A url is read the way the client that fetches it will read it. The URL
+  Standard strips leading controls and spaces, removes every tab and newline
+  anywhere in the input, and reads a backslash as a slash for a special scheme,
+  all before parsing, so a value written with a tab inside its scheme is
+  fetched as plain `http`. Six of seven such forms went unreported, two of them
+  because redaction could find no scheme and withheld the url entirely.
+
+### Security
+
+- No report carries a credential a scanned file holds. A hook's event, type and
+  command, a grant's tool and scope, a mode's key and value, and a server's
+  name, executable, endpoint path and environment keys were all reported as
+  written, so a token inline in a hook command was printed in full by the text
+  output and carried verbatim in the JSON one. Each is redacted as it enters the
+  report, after the rules have read what the file wrote, so a finding still
+  lands where the declaration sits and the files a hook names are still
+  followed.
+
+- A scanned file cannot write a line of a report. Every name, path and command
+  the text output prints is read out of a file under review, and none was
+  escaped, so a newline in a declared value split the output and the forged half
+  read as a line clew had written. A server named
+  `evil\n  server "trustworthy": https://safe` rendered as two entries, the
+  second naming a server nothing declared. `json` and `sarif` were never
+  affected, since both escape a control character on the way out.
+
 ## [0.7.0] - 2026-09-30
 
 ### Added
@@ -448,7 +532,8 @@ tagged release.
   devcontainers.
 - `CLEW_MAX_DEPTH` sets the directory recursion limit.
 
-[Unreleased]: https://github.com/sysogen/clew/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/sysogen/clew/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/sysogen/clew/releases/tag/v0.8.0
 [0.7.0]: https://github.com/sysogen/clew/releases/tag/v0.7.0
 [0.6.0]: https://github.com/sysogen/clew/releases/tag/v0.6.0
 [0.5.0]: https://github.com/sysogen/clew/releases/tag/v0.5.0
