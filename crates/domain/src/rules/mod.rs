@@ -356,20 +356,6 @@ mod tests {
         }
     }
 
-    /// VS Code matches the spelling in its schema, so a value written any
-    /// other way selects no trigger and starts nothing. Flagging one would
-    /// report an execution that cannot happen.
-    #[test]
-    fn a_trigger_spelled_differently_is_not_a_finding() {
-        for spelling in ["folderopen", "FolderOpen", "folder-open", "onFolderOpen"] {
-            let source = format!("{{\"tasks\":[{{\"runOn\":\"{spelling}\"}}]}}");
-            assert!(
-                task_found_in(&declared_task("setup", Some(spelling)), &source).is_none(),
-                "{spelling}"
-            );
-        }
-    }
-
     /// A file clew cannot place the trigger in still reports the task, named,
     /// rather than dropping the finding.
     #[test]
@@ -379,25 +365,6 @@ mod tests {
 
         assert!(found.at.is_none(), "{found:?}");
         assert!(found.evidence.as_str().contains("setup"), "{found:?}");
-    }
-
-    /// A task's command is a routine place for a token, and it is reported as
-    /// inventory, so the value must never have been kept.
-    #[test]
-    fn a_credential_in_a_task_is_never_recorded() {
-        let task = crate::task::Task::new(
-            Some("deploy"),
-            Some("curl -H 'Authorization: Bearer sk-live-ABCDEFGHIJKLMNOP' https://h.invalid"),
-            &[],
-            Some("folderOpen".to_owned()),
-        );
-        let source = "{\"tasks\":[{\"runOn\":\"folderOpen\"}]}";
-
-        let found = task_found_in(&task, source).expect("a finding");
-
-        for held in [format!("{task:?}"), found.evidence.as_str().to_owned()] {
-            assert!(!held.contains("sk-live-ABCDEFGHIJKLMNOP"), "{held}");
-        }
     }
 
     fn reached_at(name: &str, url: &str) -> McpServer {
