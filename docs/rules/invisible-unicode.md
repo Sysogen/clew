@@ -21,4 +21,4 @@ character unless it was put there on purpose. The evidence shows it as
 ---
 
 Generated from the rule pack by `./scripts/rule-pages.sh`. Edit the rule
-in `crates/domain/src/explain.rs`, not this page.
+in `crates/domain/src/rules/invisible_unicode.rs`, not this page.

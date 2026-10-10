@@ -19,4 +19,4 @@ CLEW_MAX_FILE_BYTES.
 ---
 
 Generated from the rule pack by `./scripts/rule-pages.sh`. Edit the rule
-in `crates/domain/src/explain.rs`, not this page.
+in `crates/domain/src/rules/opaque_hook.rs`, not this page.
