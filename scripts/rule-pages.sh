@@ -80,7 +80,7 @@ for rule in pack["rules"]:
         f"{wrap(rule['remediation'])}\n\n"
         "---\n\n"
         "Generated from the rule pack by `./scripts/rule-pages.sh`. Edit the rule\n"
-        "in `crates/domain/src/explain.rs`, not this page.\n"
+        f"in `crates/domain/src/rules/{rule['id'].replace('-', '_')}.rs`, not this page.\n"
     )
     settle(f"docs/rules/{rule['id']}.md", page)
 

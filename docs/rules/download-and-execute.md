@@ -22,4 +22,4 @@ time it runs.
 ---
 
 Generated from the rule pack by `./scripts/rule-pages.sh`. Edit the rule
-in `crates/domain/src/explain.rs`, not this page.
+in `crates/domain/src/rules/download_and_execute.rs`, not this page.
