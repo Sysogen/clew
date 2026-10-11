@@ -443,6 +443,10 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
         report.permissions.sort();
         report.servers.sort();
         report.autonomy.sort();
+        // `tasks` is not sorted, and must not be. A task finding is placed by
+        // counting which copy of its trigger it is, which only means anything
+        // in the order the file lists them, so `extract::tasks` returns them
+        // unsorted and they stay that way.
         report.unreadable.sort_by(|a, b| a.0.cmp(&b.0));
         report.unparsed.sort_by(|a, b| a.0.cmp(&b.0));
         report.findings.sort();

@@ -23,4 +23,4 @@ it, and read what it does before anything runs it.
 ---
 
 Generated from the rule pack by `./scripts/rule-pages.sh`. Edit the rule
-in `crates/domain/src/explain.rs`, not this page.
+in `crates/domain/src/rules/decode_and_execute.rs`, not this page.

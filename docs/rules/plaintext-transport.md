@@ -28,4 +28,4 @@ rather than 0.0.0.0, so that a page in a browser cannot reach it at all.
 ---
 
 Generated from the rule pack by `./scripts/rule-pages.sh`. Edit the rule
-in `crates/domain/src/explain.rs`, not this page.
+in `crates/domain/src/rules/plaintext_transport.rs`, not this page.

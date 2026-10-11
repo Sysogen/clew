@@ -31,4 +31,4 @@ trusting a workspace you are only reading stops the task outright.
 ---
 
 Generated from the rule pack by `./scripts/rule-pages.sh`. Edit the rule
-in `crates/domain/src/explain.rs`, not this page.
+in `crates/domain/src/rules/auto_run_task.rs`, not this page.
