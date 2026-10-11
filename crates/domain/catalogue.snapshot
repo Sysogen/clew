@@ -10,7 +10,7 @@
 # The revision below is what a scan is cited against. Raise it when a line
 # changes, never when provenance does.
 
-revision 4
+revision 5
 
 repository **/.claude/settings.json claude-code json hooks,permissions,mcp-servers,autonomy bypass-permissions,unrestricted-shell,plaintext-transport
 repository **/.claude/settings.local.json claude-code json hooks,permissions,mcp-servers,autonomy bypass-permissions,unrestricted-shell,plaintext-transport
@@ -21,7 +21,9 @@ repository **/CLAUDE.md instruction json - invisible-unicode
 repository **/.kiro/settings/mcp.json kiro json mcp-servers plaintext-transport
 repository **/.kiro/steering/**/*.md kiro json - invisible-unicode
 repository **/.kiro/hooks/**/*.json kiro json hooks -
-repository **/.codex/config.toml codex toml mcp-servers,autonomy bypass-permissions,plaintext-transport
+repository **/.codex/config.toml codex toml mcp-servers,autonomy,hooks bypass-permissions,plaintext-transport
+repository **/.codex/hooks.json codex json hooks -
+repository **/.codex/hooks/** hook-script json - invisible-unicode,opaque-hook,download-and-execute,decode-and-execute,credential-exfiltration,unverified-download,unpinned-remote-package
 repository **/AGENTS.md instruction json - invisible-unicode
 repository **/.gemini/settings.json gemini json mcp-servers,permissions unrestricted-shell,trusted-server,plaintext-transport
 repository **/.cursor/mcp.json cursor json mcp-servers plaintext-transport
@@ -47,6 +49,9 @@ repository **/AGENT.md instruction json - invisible-unicode
 repository **/.env env json - -
 repository **/.env.* env json - -
 home .claude/settings.json claude-code json hooks,permissions,mcp-servers,autonomy bypass-permissions,unrestricted-shell,plaintext-transport
+home .codex/config.toml codex toml mcp-servers,autonomy,hooks bypass-permissions,plaintext-transport
+home .codex/hooks.json codex json hooks -
+home .codex/hooks/** hook-script json - invisible-unicode,opaque-hook,download-and-execute,decode-and-execute,credential-exfiltration,unverified-download,unpinned-remote-package
 home .gemini/settings.json gemini json mcp-servers,permissions unrestricted-shell,trusted-server,plaintext-transport
 home .kiro/settings/mcp.json kiro json mcp-servers plaintext-transport
 home .kiro/steering/**/*.md kiro json - invisible-unicode

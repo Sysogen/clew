@@ -17,7 +17,7 @@
 #               against. Omitted means repository
 
 version = 2
-revision = 4
+revision = 5
 
 # --- Claude Code ------------------------------------------------------------
 
@@ -111,15 +111,46 @@ source = "https://kiro.dev/docs/hooks/"
 
 # --- Codex ------------------------------------------------------------------
 
+# Codex loads lifecycle hooks from `hooks.json` beside a config layer or from
+# an inline `[hooks]` table here, and both parse to one shape. `features.hooks`
+# can switch them off, and a hook needs persisted trust before it runs; a hook
+# behind either is still reported, being one edit or one approval from running,
+# which is how a hook with `enabled: false` is already treated.
 [[surface]]
 glob = "**/.codex/config.toml"
 tool = "codex"
 kind = "codex"
 format = "toml"
-extract = ["mcp-servers", "autonomy"]
+extract = ["mcp-servers", "autonomy", "hooks"]
 check = ["bypass-permissions", "plaintext-transport"]
-last_verified = "2026-09-17"
-source = "https://learn.chatgpt.com/docs/config-file/config-basic"
+last_verified = "2026-10-11"
+source = "https://developers.openai.com/codex/config-reference"
+
+[[surface]]
+glob = "**/.codex/hooks.json"
+tool = "codex"
+kind = "codex"
+extract = ["hooks"]
+last_verified = "2026-10-11"
+source = "https://developers.openai.com/codex/hooks"
+
+# The directory the documented hooks run from. A script here is read even when
+# no hook names it yet, as `.claude/**/hooks/**` is.
+[[surface]]
+glob = "**/.codex/hooks/**"
+tool = "codex"
+kind = "hook-script"
+check = [
+  "invisible-unicode",
+  "opaque-hook",
+  "download-and-execute",
+  "decode-and-execute",
+  "credential-exfiltration",
+  "unverified-download",
+  "unpinned-remote-package",
+]
+last_verified = "2026-10-11"
+source = "https://developers.openai.com/codex/hooks"
 
 [[surface]]
 glob = "**/AGENTS.md"
@@ -357,6 +388,43 @@ extract = ["hooks", "permissions", "mcp-servers", "autonomy"]
 check = ["bypass-permissions", "unrestricted-shell", "plaintext-transport"]
 last_verified = "2026-09-17"
 source = "https://code.claude.com/docs/en/settings-reference#permissions-defaultmode"
+
+[[surface]]
+scope = "home"
+glob = ".codex/config.toml"
+tool = "codex"
+kind = "codex"
+format = "toml"
+extract = ["mcp-servers", "autonomy", "hooks"]
+check = ["bypass-permissions", "plaintext-transport"]
+last_verified = "2026-10-11"
+source = "https://developers.openai.com/codex/config-reference"
+
+[[surface]]
+scope = "home"
+glob = ".codex/hooks.json"
+tool = "codex"
+kind = "codex"
+extract = ["hooks"]
+last_verified = "2026-10-11"
+source = "https://developers.openai.com/codex/hooks"
+
+[[surface]]
+scope = "home"
+glob = ".codex/hooks/**"
+tool = "codex"
+kind = "hook-script"
+check = [
+  "invisible-unicode",
+  "opaque-hook",
+  "download-and-execute",
+  "decode-and-execute",
+  "credential-exfiltration",
+  "unverified-download",
+  "unpinned-remote-package",
+]
+last_verified = "2026-10-11"
+source = "https://developers.openai.com/codex/hooks"
 
 [[surface]]
 scope = "home"
