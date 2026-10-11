@@ -36,6 +36,7 @@ pub mod secrets;
 pub mod shell;
 pub mod surface;
 pub mod task;
+pub mod workflow;
 
 pub use autonomy::Autonomy;
 pub use catalogue::{Catalogue, shipped as catalogue};
@@ -46,3 +47,4 @@ pub use repo_path::RepoPath;
 pub use scan_policy::ScanPolicy;
 pub use surface::{Surface, SurfaceKind};
 pub use task::Task;
+pub use workflow::Step;

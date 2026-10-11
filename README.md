@@ -43,7 +43,8 @@ CLAUDE.md                instruction file
 
 `path` reports every file an agent reads as configuration, across Claude Code,
 Codex, Crush, Cursor, VS Code, Gemini CLI, Kiro, Zed, Windsurf, Cline,
-Continue, Aider, Copilot and devcontainers, plus `.env` files. From those it reads:
+Continue, Aider, Copilot and devcontainers, plus `.env` files and the GitHub
+Actions workflows that run an agent on a push. From those it reads:
 
 - the hooks each registers, the event each runs on, and whether it runs a
   command or injects a prompt, a hook switched off included;
@@ -93,6 +94,7 @@ weigh and log a scan; asked for either, they say so rather than ignore it.
 | [`trusted-server`](https://github.com/sysogen/clew/blob/main/docs/rules/trusted-server.md) | medium | An MCP server whose tool calls run without being confirmed |
 | [`plaintext-transport`](https://github.com/sysogen/clew/blob/main/docs/rules/plaintext-transport.md) | medium | An MCP server reached over plain HTTP |
 | [`auto-run-task`](https://github.com/sysogen/clew/blob/main/docs/rules/auto-run-task.md) | high | A task a workspace runs when the folder is opened |
+| [`agent-runs-unattended`](https://github.com/sysogen/clew/blob/main/docs/rules/agent-runs-unattended.md) | high | An agent invoked with the flag that removes its permission prompt |
 <!-- rules:end -->
 
 `invisible-unicode` is the Rules File Backdoor, disclosed by Pillar Security in

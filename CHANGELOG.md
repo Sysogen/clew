@@ -7,6 +7,54 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- GitHub Actions workflows are read, which no row covered. A workflow is
+  configuration that runs code on every push, in a job holding the
+  repository's secrets, with nobody at the keyboard. Each `run:` step is
+  judged as the shell it is, so the six rules that already read a hook's
+  command read a CI step too: a `curl | sh` in a workflow is
+  `download-and-execute` without a new rule, and `credential-exfiltration`
+  already knows what a token looks like.
+
+  `agent-runs-unattended`, severity high, flags a step that runs an agent CLI
+  with the flag waiving every permission prompt. Each flag was read from that
+  tool's own reference or its argument definitions: Claude Code's
+  `--dangerously-skip-permissions` and `--permission-mode bypassPermissions`,
+  Codex's `--dangerously-bypass-approvals-and-sandbox`, and Gemini CLI's
+  `--yolo`, `-y` and `--approval-mode yolo`.
+
+  The near misses are deliberately absent, which is most of what reading the
+  references bought. Claude Code's `--allow-dangerously-skip-permissions` adds
+  the bypass mode to the mode cycle without starting in it, so an unattended
+  run never reaches it. Codex's `--ask-for-approval never` on its own leaves
+  the sandbox at its read-only default, which is the same line
+  `bypass-permissions` already draws; only the flag that waives the sandbox
+  too is listed, and Codex's source confirms it sets both. Gemini CLI's
+  `--approval-mode auto_edit` auto-approves edit tools alone. `dontAsk` is not
+  listed because the reference names it without saying what it does.
+
+  A flag belongs to the tool that defines it. Reading them as one set would
+  have `-y`, which is `yes` to most of the world, waive a prompt Claude Code
+  never offered, and would fire on `npx -y` answering npx rather than the
+  agent it goes on to run. The rule reads the parsed commands rather than the
+  text, so `echo claude --dangerously-skip-permissions` runs no agent and a
+  lint forbidding the flag is not itself a finding. A word the file does not
+  hold, such as `$FLAGS`, is not read as a flag.
+
+- `Format::Yaml`, which the workflow rows need and which nothing else uses
+  yet. It is deliberately not folded in with JSON the way JSONC is: no tool
+  writes a mode or a grant in YAML, and folding it in would have clew report a
+  mode out of a workflow that happened to carry the key path. A CI workflow
+  has a `permissions:` block of its own, which means something else entirely.
+
+### Fixed
+
+- A command written bare rather than as a JSON string yielded its finding
+  about the file rather than at the line, since placement looked only for the
+  quoted form a settings file writes. Every finding in a YAML `run:` block
+  would have been a path and nothing else to go on.
+
+### Added
+
 - Crush is read, which it was not at all. Five rows cover both forms it loads:
   `crushrc`, which is Bash that runs with the user's shell privileges before
   the UI appears, and the deprecated `crush.json`, which is still discovered

@@ -1,6 +1,6 @@
 # unrestricted-shell
 
-Severity **medium**, pack core 3.
+Severity **medium**, pack core 4.
 
 A pre-approved shell grant with nothing restricting the commands it runs
 

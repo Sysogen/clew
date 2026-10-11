@@ -11,7 +11,9 @@
 use std::io;
 
 use crate::explain::PackOut;
-use clew_application::{DeclaredAutonomy, DeclaredServer, DeclaredTask, DiscoveryReport};
+use clew_application::{
+    DeclaredAutonomy, DeclaredServer, DeclaredTask, DiscoveryReport, WorkflowStep,
+};
 use clew_domain::catalogue;
 use clew_domain::finding::Finding;
 use clew_domain::hook::Action;
@@ -97,6 +99,7 @@ struct ScanOut {
     servers: Vec<ServerOut>,
     autonomy: Vec<AutonomyOut>,
     tasks: Vec<TaskOut>,
+    steps: Vec<StepOut>,
     findings: Vec<FindingOut>,
     unreadable: Vec<Problem>,
     unparsed: Vec<Problem>,
@@ -139,6 +142,14 @@ struct TaskOut {
     depends_on: Vec<String>,
     runs_on: Option<String>,
     on_open: bool,
+}
+
+#[derive(Serialize)]
+#[cfg_attr(test, derive(serde::Deserialize, Debug, PartialEq))]
+struct StepOut {
+    source: String,
+    job: String,
+    run: String,
 }
 
 #[derive(Serialize)]
@@ -228,6 +239,16 @@ impl TaskOut {
     }
 }
 
+impl StepOut {
+    fn of(declared: &WorkflowStep) -> Self {
+        Self {
+            source: declared.source.as_str().to_owned(),
+            job: declared.step.job.clone(),
+            run: declared.step.run.clone(),
+        }
+    }
+}
+
 impl FindingOut {
     fn of(finding: &Finding) -> Self {
         Self {
@@ -296,6 +317,7 @@ impl ScanOut {
             servers: report.servers.iter().map(ServerOut::of).collect(),
             autonomy: report.autonomy.iter().map(AutonomyOut::of).collect(),
             tasks: report.tasks.iter().map(TaskOut::of).collect(),
+            steps: report.steps.iter().map(StepOut::of).collect(),
             findings: report.findings.iter().map(FindingOut::of).collect(),
             unreadable: report
                 .unreadable
@@ -371,6 +393,13 @@ mod tests {
                     key: "permissions.defaultMode".to_owned(),
                     value: "bypassPermissions".to_owned(),
                 },
+            }],
+            steps: vec![WorkflowStep {
+                source: path(".github/workflows/ci.yml"),
+                step: clew_domain::Step::new(
+                    "review",
+                    "claude -p x --dangerously-skip-permissions",
+                ),
             }],
             tasks: vec![DeclaredTask {
                 source: path(".vscode/tasks.json"),

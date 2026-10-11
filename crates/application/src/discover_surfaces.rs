@@ -13,7 +13,7 @@ use clew_domain::ports::file_tree::{EntryKind, FileTree, FileTreeError};
 use clew_domain::rule::{self, Examined};
 use clew_domain::scope::Scope;
 use clew_domain::{
-    Autonomy, Hook, McpServer, Permission, RepoPath, ScanPolicy, Surface, SurfaceKind, Task,
+    Autonomy, Hook, McpServer, Permission, RepoPath, ScanPolicy, Step, Surface, SurfaceKind, Task,
     catalogue,
 };
 
@@ -53,6 +53,15 @@ pub struct DeclaredTask {
     pub task: Task,
 }
 
+/// A CI step, and the workflow that runs it.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct WorkflowStep {
+    /// The workflow file it was read from.
+    pub source: RepoPath,
+    /// The step itself.
+    pub step: Step,
+}
+
 /// A hook, and the file that registered it.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct RegisteredHook {
@@ -81,6 +90,8 @@ pub struct DiscoveryReport {
     pub autonomy: Vec<DeclaredAutonomy>,
     /// Tasks the surfaces declare, in path order.
     pub tasks: Vec<DeclaredTask>,
+    /// Steps the CI workflows run, in path order.
+    pub steps: Vec<WorkflowStep>,
     /// Directories that could not be listed, with the reason.
     pub unreadable: Vec<(RepoPath, FileTreeError)>,
     /// Surfaces that could not be read or understood, with the reason.
@@ -261,6 +272,28 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
                 report.tasks.push(DeclaredTask {
                     source: path.clone(),
                     task,
+                });
+            }
+            // A `run:` block is shell, so it is judged the way a hook's
+            // command is: one file may run the same block twice, and the copy
+            // is what places the finding.
+            let mut ran: Vec<String> = Vec::new();
+            for step in found.steps {
+                let occurrence = ran.iter().filter(|r| **r == step.run).count();
+                ran.push(step.run.clone());
+                report.findings.extend(rule::judge(
+                    &Examined::HookCommand {
+                        path: &path,
+                        command: &step.run,
+                        source: &text,
+                        occurrence,
+                    },
+                    matched.check,
+                    self.policy.evidence_width(),
+                ));
+                report.steps.push(WorkflowStep {
+                    source: path.clone(),
+                    step,
                 });
             }
             for mode in found.autonomy {

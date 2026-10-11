@@ -15,9 +15,9 @@ use crate::mcp_server::McpServer;
 use crate::permission::Permission;
 use crate::repo_path::RepoPath;
 use crate::rules::{
-    auto_run_task, bypass_permissions, credential_exfiltration, decode_and_execute,
-    download_and_execute, invisible_unicode, opaque_hook, plaintext_transport, trusted_server,
-    unpinned_remote_package, unrestricted_shell, unverified_download,
+    agent_runs_unattended, auto_run_task, bypass_permissions, credential_exfiltration,
+    decode_and_execute, download_and_execute, invisible_unicode, opaque_hook, plaintext_transport,
+    trusted_server, unpinned_remote_package, unrestricted_shell, unverified_download,
 };
 use crate::task::Task;
 
@@ -173,6 +173,7 @@ pub fn of(id: RuleId) -> &'static dyn Rule {
         RuleId::TrustedServer => &trusted_server::TrustedServer,
         RuleId::PlaintextTransport => &plaintext_transport::PlaintextTransport,
         RuleId::AutoRunTask => &auto_run_task::AutoRunTask,
+        RuleId::AgentRunsUnattended => &agent_runs_unattended::AgentRunsUnattended,
     }
 }
 

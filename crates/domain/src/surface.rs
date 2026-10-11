@@ -46,6 +46,8 @@ pub enum SurfaceKind {
     HookScript,
     /// A skill definition an agent loads.
     Skill,
+    /// A continuous integration workflow, which runs on a push.
+    Workflow,
 }
 
 impl SurfaceKind {
@@ -72,6 +74,7 @@ impl SurfaceKind {
             "instruction" => Self::InstructionFile,
             "hook-script" => Self::HookScript,
             "skill" => Self::Skill,
+            "workflow" => Self::Workflow,
             _ => return None,
         })
     }
@@ -99,6 +102,7 @@ impl SurfaceKind {
             Self::InstructionFile => "instruction",
             Self::HookScript => "hook-script",
             Self::Skill => "skill",
+            Self::Workflow => "workflow",
         }
     }
 
@@ -125,6 +129,7 @@ impl SurfaceKind {
             Self::InstructionFile => "instruction file",
             Self::HookScript => "hook script",
             Self::Skill => "skill",
+            Self::Workflow => "CI workflow",
         }
     }
 }

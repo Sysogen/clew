@@ -30,6 +30,7 @@ impl RuleId {
             Self::TrustedServer,
             Self::PlaintextTransport,
             Self::AutoRunTask,
+            Self::AgentRunsUnattended,
         ]
     }
 
@@ -80,11 +81,12 @@ mod tests {
                 | RuleId::UnrestrictedShell
                 | RuleId::TrustedServer
                 | RuleId::PlaintextTransport
-                | RuleId::AutoRunTask => {}
+                | RuleId::AutoRunTask
+                | RuleId::AgentRunsUnattended => {}
             }
         }
 
-        assert_eq!(RuleId::all().len(), 12, "{:?}", RuleId::all());
+        assert_eq!(RuleId::all().len(), 13, "{:?}", RuleId::all());
     }
 
     #[test]

@@ -1,6 +1,6 @@
 # auto-run-task
 
-Severity **high**, pack core 3.
+Severity **high**, pack core 4.
 
 A task a workspace runs when the folder is opened
 

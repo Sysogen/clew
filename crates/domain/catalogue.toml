@@ -17,7 +17,7 @@
 #               against. Omitted means repository
 
 version = 2
-revision = 6
+revision = 7
 
 # --- Claude Code ------------------------------------------------------------
 
@@ -390,6 +390,32 @@ tool = "devcontainer"
 kind = "devcontainer"
 last_verified = "2026-09-11"
 source = "https://containers.dev/implementors/json_reference/"
+
+# --- Continuous integration ------------------------------------------------
+#
+# A workflow is configuration that runs code on every push, in a job holding
+# the repository's secrets, with nobody at the keyboard. Only `run:` steps are
+# read: a step naming an action with `uses` runs whatever that action runs,
+# which this file does not say, so the official agent actions are not reached
+# this way. GitHub Actions alone for now; the other providers are the same
+# shape in a different schema.
+[[surface]]
+glob = "**/.github/workflows/*.{yml,yaml}"
+tool = "any"
+kind = "workflow"
+format = "yaml"
+extract = ["workflow"]
+check = [
+  "agent-runs-unattended",
+  "invisible-unicode",
+  "download-and-execute",
+  "decode-and-execute",
+  "credential-exfiltration",
+  "unverified-download",
+  "unpinned-remote-package",
+]
+last_verified = "2026-10-11"
+source = "https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax"
 
 # --- Read by more than one tool ----------------------------------------------
 #

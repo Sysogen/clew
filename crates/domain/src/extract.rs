@@ -11,6 +11,7 @@ use crate::autonomy::Autonomy;
 use crate::hook::{Action, Hook};
 use crate::mcp_server::{McpServer, Transport};
 use crate::task::Task;
+use crate::workflow::Step;
 use yaml_rust2::{Yaml, YamlLoader};
 
 use crate::permission::Permission;
@@ -27,6 +28,9 @@ pub enum ParseError {
     /// The file opens a frontmatter block that is not closed or not YAML.
     #[error("frontmatter is not closed or not valid YAML")]
     NotFrontmatter,
+    /// The file is not valid YAML.
+    #[error("not valid YAML")]
+    NotYaml,
 }
 
 /// How a file is written.
@@ -44,6 +48,8 @@ pub enum Format {
     Jsonc,
     /// A Markdown file whose declarations live in a leading YAML block.
     Markdown,
+    /// YAML, which every CI workflow is written in.
+    Yaml,
     /// A `crushrc`, which declares by calling Crush's builtins rather than by
     /// holding keys. It is Bash, so it never fails to parse: a line that is
     /// not a builtin call declares nothing.
@@ -59,6 +65,7 @@ impl Format {
             "toml" => Self::Toml,
             "jsonc" => Self::Jsonc,
             "markdown" => Self::Markdown,
+            "yaml" => Self::Yaml,
             "crushrc" => Self::Crushrc,
             _ => return None,
         })
@@ -72,9 +79,22 @@ impl Format {
                 serde_json::from_str(&without_comments(contents)).map_err(|_| ParseError::NotJson)
             }
             Self::Markdown => frontmatter(contents),
+            Self::Yaml => yaml(contents),
             Self::Crushrc => Ok(crate::crushrc::parse(contents)),
         }
     }
+}
+
+/// A whole YAML document, where frontmatter reads a fenced block of one.
+///
+/// An empty file is an empty document rather than an error, as a workflow
+/// being added one commit at a time will be.
+fn yaml(contents: &str) -> Result<serde_json::Value, ParseError> {
+    let docs = YamlLoader::load_from_str(contents).map_err(|_| ParseError::NotYaml)?;
+    docs.first().map_or_else(
+        || Ok(serde_json::Value::Object(serde_json::Map::new())),
+        |doc| Ok(to_value(doc)),
+    )
 }
 
 /// The same text without its comments.
@@ -213,6 +233,8 @@ pub enum Extraction {
     Autonomy,
     /// Tasks a workspace declares, and when each runs.
     Tasks,
+    /// Steps a CI workflow runs.
+    Workflow,
 }
 
 impl Extraction {
@@ -225,6 +247,7 @@ impl Extraction {
             "mcp-servers" => Self::McpServers,
             "autonomy" => Self::Autonomy,
             "tasks" => Self::Tasks,
+            "workflow" => Self::Workflow,
             _ => return None,
         })
     }
@@ -243,6 +266,8 @@ pub struct Findings {
     pub autonomy: Vec<Autonomy>,
     /// Tasks the file declares.
     pub tasks: Vec<Task>,
+    /// Steps a CI workflow runs.
+    pub steps: Vec<Step>,
 }
 
 /// Run `wanted` over `contents`, parsing it once.
@@ -269,6 +294,7 @@ pub fn run(wanted: &[Extraction], format: Format, contents: &str) -> Result<Find
             Extraction::McpServers => found.servers = mcp_servers(&root),
             Extraction::Autonomy => found.autonomy = autonomy(&root, format),
             Extraction::Tasks => found.tasks = tasks(&root),
+            Extraction::Workflow => found.steps = workflow(&root),
         }
     }
     Ok(found)
@@ -389,6 +415,10 @@ fn permissions(root: &serde_json::Value, format: Format) -> Vec<Permission> {
             claude.or(gemini).map(listed_grants)
         }
         Format::Markdown => root.get("allowed-tools").map(grants),
+        // No tool reads a grant list out of YAML. Folding YAML in with the
+        // others would have clew read one from any YAML file that happened to
+        // carry the key path, a CI workflow included.
+        Format::Yaml => None,
     };
 
     let mut found: Vec<Permission> = entries
@@ -586,6 +616,26 @@ fn non_blank(value: Option<&serde_json::Value>) -> Option<&str> {
         .and_then(serde_json::Value::as_str)
         .map(str::trim)
         .filter(|s| !s.is_empty())
+}
+
+/// The steps a CI workflow runs, in job order then file order.
+///
+/// Only `jobs.<id>.steps[].run` is read. A step naming an action with `uses`
+/// runs whatever that action runs, which this file does not say, and a
+/// reusable workflow called with `jobs.<id>.uses` has no steps here at all.
+fn workflow(root: &serde_json::Value) -> Vec<Step> {
+    let Some(jobs) = root.get("jobs").and_then(serde_json::Value::as_object) else {
+        return Vec::new();
+    };
+    jobs.iter()
+        .flat_map(|(job, body)| {
+            body.get("steps")
+                .and_then(serde_json::Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(move |step| Some(Step::new(job, non_blank(step.get("run"))?)))
+        })
+        .collect()
 }
 
 /// One server declaration. `None` when it reaches nothing: no command, and no
@@ -1253,6 +1303,103 @@ env = { DATABASE_URL = "postgres://u:hunter2@h/d", PGPORT = "5432" }
             )
             .is_empty()
         );
+    }
+
+    fn steps_of(yaml: &str) -> Vec<Step> {
+        run(&[Extraction::Workflow], Format::Yaml, yaml)
+            .expect("valid yaml")
+            .steps
+    }
+
+    /// Every `run:` step of every job, which is what a workflow causes to run.
+    #[test]
+    fn reads_the_steps_a_workflow_runs() {
+        let found = steps_of(
+            "name: ci\non: [push]\njobs:\n  build:\n    steps:\n      - uses: actions/checkout@v4\n      - name: Install\n        run: npm ci\n      - run: npm test\n",
+        );
+
+        assert_eq!(found.len(), 2, "{found:?}");
+        assert!(found.iter().all(|s| s.job == "build"), "{found:?}");
+        assert!(found.iter().any(|s| s.run == "npm ci"), "{found:?}");
+        assert!(found.iter().any(|s| s.run == "npm test"), "{found:?}");
+    }
+
+    /// A step naming an action runs whatever that action runs, which this file
+    /// does not say, so there is no command here to judge.
+    #[test]
+    fn a_step_that_runs_nothing_itself_is_not_a_step() {
+        assert!(
+            steps_of("jobs:\n  a:\n    steps:\n      - uses: actions/checkout@v4\n").is_empty()
+        );
+        assert!(steps_of("jobs:\n  a:\n    uses: ./.github/workflows/other.yml\n").is_empty());
+        assert!(steps_of("jobs:\n  a:\n    steps:\n      - run: \"   \"\n").is_empty());
+        assert!(steps_of("on: [push]\n").is_empty());
+    }
+
+    /// A block scalar is one command of several lines, not several commands.
+    #[test]
+    fn a_block_step_is_one_command() {
+        let found = steps_of(
+            "jobs:\n  a:\n    steps:\n      - run: |\n          echo one\n          echo two\n",
+        );
+
+        assert_eq!(found.len(), 1, "{found:?}");
+        // Trimmed on the way in, as every value a row reads is.
+        assert_eq!(found[0].run, "echo one\necho two");
+    }
+
+    /// Anything that is not a workflow declares no step rather than failing,
+    /// since a row reads the whole file and a repository holds other YAML.
+    #[test]
+    fn yaml_that_is_not_a_workflow_declares_no_step() {
+        assert!(steps_of("").is_empty());
+        assert!(steps_of("jobs: not-a-map\n").is_empty());
+        assert!(steps_of("jobs:\n  a:\n    steps: not-a-list\n").is_empty());
+        assert!(steps_of("- just\n- a\n- list\n").is_empty());
+    }
+
+    #[test]
+    fn malformed_yaml_is_its_own_error() {
+        assert_eq!(
+            run(
+                &[Extraction::Workflow],
+                Format::Yaml,
+                "a:\n  - b\n c: broken\n"
+            )
+            .map(|f| f.steps),
+            Err(ParseError::NotYaml)
+        );
+    }
+
+    /// No tool writes a mode or a grant in YAML, and a CI workflow is full of
+    /// keys that look like other tools'. Folding YAML in with JSON would have
+    /// clew report a mode out of a workflow that sets none.
+    #[test]
+    fn yaml_declares_no_mode_and_no_grant() {
+        let text = "permissions:\n  defaultMode: bypassPermissions\n  allow:\n    - Bash\ntools:\n  allowed:\n    - run_shell_command\n";
+
+        let found = run(
+            &[
+                Extraction::Autonomy,
+                Extraction::Permissions,
+                Extraction::McpServers,
+            ],
+            Format::Yaml,
+            text,
+        )
+        .expect("valid yaml");
+
+        assert!(found.autonomy.is_empty(), "{:?}", found.autonomy);
+        assert!(found.permissions.is_empty(), "{:?}", found.permissions);
+        // The same keys in JSON are read, so the test is about the format.
+        let json = run(
+            &[Extraction::Autonomy, Extraction::Permissions],
+            Format::Json,
+            r#"{"permissions":{"defaultMode":"bypassPermissions","allow":["Bash"]}}"#,
+        )
+        .expect("valid json");
+        assert_eq!(json.autonomy.len(), 1, "{:?}", json.autonomy);
+        assert_eq!(json.permissions.len(), 1, "{:?}", json.permissions);
     }
 
     fn perms_of(json: &str) -> Vec<Permission> {
