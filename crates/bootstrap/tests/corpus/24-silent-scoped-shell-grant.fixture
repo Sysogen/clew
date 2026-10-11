@@ -1,0 +1,6 @@
+A shell grant with the commands it covers written out. This is the entry the
+rule exists to ask for, so finding it here would be the rule arguing with
+itself.
+
+>>> .claude/settings.json
+{"permissions":{"allow":["Bash(cargo test:*)","Bash(git status)","WebSearch"]}}

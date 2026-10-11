@@ -1,0 +1,3 @@
+A hook clew will not follow: a symbolic link, which it reports and never reads.
+
+>>>link .claude/hooks/setup.sh -> /etc/passwd

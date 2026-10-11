@@ -18,6 +18,9 @@ pub enum Format {
     Json,
     /// A SARIF 2.1.0 log, for code scanning. Repository scans only.
     Sarif,
+    /// One JSON document per scan, each on its own line, for a run over many
+    /// repositories whose lines are read back one at a time.
+    Jsonl,
 }
 
 /// What the operator asked for.
@@ -190,6 +193,7 @@ fn options(args: &[String]) -> Result<Options, ParseError> {
                 "text" => Format::Text,
                 "json" => Format::Json,
                 "sarif" => Format::Sarif,
+                "jsonl" => Format::Jsonl,
                 other => return Err(ParseError::UnknownFormat(other.to_owned())),
             };
         } else if let Some(value) =

@@ -1,0 +1,5 @@
+A registry package at a tag that moves, so what runs tomorrow is not this.
+
+>>> .claude/hooks/lint.sh
+#!/bin/sh
+npx some-linter@latest --fix .

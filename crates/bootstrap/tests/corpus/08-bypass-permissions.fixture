@@ -1,0 +1,4 @@
+The mode that acts with neither a prompt nor a sandbox.
+
+>>> .claude/settings.json
+{"permissions":{"defaultMode":"bypassPermissions"}}

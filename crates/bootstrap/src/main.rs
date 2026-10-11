@@ -9,8 +9,8 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use clew_adapter_cli::{
-    Command, Format, Scan, document, explain, explain_json, no_such_rule, parse, report, rules,
-    rules_json, sarif,
+    Command, Format, Scan, document, explain, explain_json, lines, no_such_rule, parse, report,
+    rules, rules_json, sarif,
 };
 use clew_adapter_fs::{StdFileContents, StdFileTree};
 use clew_application::DiscoverSurfaces;
@@ -33,8 +33,9 @@ USAGE:
     clew --help
 
 OPTIONS:
-    --format FORMAT     text, the default; json, one document for tools; or
-                        sarif, a code scanning log, for a path only
+    --format FORMAT     text, the default; json, one document for tools; jsonl,
+                        one document per scan on its own line; or sarif, a
+                        code scanning log, for a path only
     --fail-on LEVEL     exit 2 when a finding is LEVEL or worse: low, medium,
                         or high
 
@@ -228,7 +229,7 @@ fn run(args: impl IntoIterator<Item = String>, out: &mut impl Write, err: &mut i
 
     let written = match format {
         Format::Text => None,
-        Format::Json => {
+        Format::Json | Format::Jsonl => {
             let scans: Vec<Scan<'_>> = scans
                 .iter()
                 .zip(&found)
@@ -238,7 +239,11 @@ fn run(args: impl IntoIterator<Item = String>, out: &mut impl Write, err: &mut i
                     report,
                 })
                 .collect();
-            Some(document(&scans))
+            Some(if format == Format::Json {
+                document(&scans)
+            } else {
+                lines(&scans)
+            })
         }
         // `parse` takes SARIF for a path alone, which is one scan.
         Format::Sarif => found.first().map(sarif),

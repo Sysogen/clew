@@ -1,0 +1,4 @@
+The shell pre-approved with nothing restricting what it runs.
+
+>>> .claude/settings.json
+{"permissions":{"allow":["Bash","WebSearch"]}}

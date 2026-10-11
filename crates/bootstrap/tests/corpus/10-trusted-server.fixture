@@ -1,0 +1,4 @@
+An MCP server whose tool calls are not confirmed.
+
+>>> .gemini/settings.json
+{"mcpServers":{"local":{"command":"./server","trust":true}}}

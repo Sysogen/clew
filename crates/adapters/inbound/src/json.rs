@@ -47,6 +47,25 @@ pub fn document(scans: &[Scan<'_>]) -> Result<String, serde_json::Error> {
     escaped(&Document::of(scans))
 }
 
+/// One document per scan, each on its own line.
+///
+/// Every line repeats the version numbers rather than naming them once at the
+/// top, because a line is read on its own: a finding without the pack that
+/// judged it and the catalogue that found it cannot be cited later.
+///
+/// # Errors
+///
+/// Returns the serializer's error, which plain strings, numbers and booleans
+/// should never cause.
+pub fn lines(scans: &[Scan<'_>]) -> Result<String, serde_json::Error> {
+    let mut out = String::new();
+    for scan in scans {
+        out.push_str(&escaped(&Document::of(std::slice::from_ref(scan)))?);
+        out.push('\n');
+    }
+    Ok(out)
+}
+
 /// A value as compact JSON, escaped as this module describes.
 pub(crate) fn escaped<T: Serialize>(value: &T) -> Result<String, serde_json::Error> {
     let mut out = Vec::new();
@@ -473,6 +492,67 @@ mod tests {
             written(&[repository(&report)])["scans"][0]["complete"],
             true
         );
+    }
+
+    /// One line per scan, each a document of its own. A reader takes a line
+    /// at a time, which is what a run over thousands of repositories needs.
+    #[test]
+    fn jsonl_writes_one_document_per_scan() {
+        let (home, machine) = (DiscoveryReport::default(), full());
+        let text = lines(&[
+            Scan {
+                root: "/home/me",
+                scope: Scope::Home,
+                report: &home,
+            },
+            Scan {
+                root: "/",
+                scope: Scope::System,
+                report: &machine,
+            },
+        ])
+        .expect("serialises");
+
+        let held: Vec<Value> = text
+            .lines()
+            .map(|line| serde_json::from_str(line).expect("each line parses"))
+            .collect();
+        assert_eq!(held.len(), 2, "{text}");
+        assert_eq!(held[0]["scans"].as_array().map(Vec::len), Some(1));
+        assert_eq!(held[0]["scans"][0]["scope"], "home");
+        assert_eq!(held[1]["scans"][0]["scope"], "system");
+        // Ends with a newline, so appending another run's lines cannot join
+        // two documents into one unreadable line.
+        assert!(text.ends_with('\n'), "{text}");
+    }
+
+    /// Every line carries the numbers a finding is cited against. A line read
+    /// on its own a year later has to say which rules judged it.
+    #[test]
+    fn every_jsonl_line_says_what_judged_it() {
+        let report = full();
+        let text = lines(&[repository(&report), repository(&report)]).expect("serialises");
+
+        for line in text.lines() {
+            let held: Value = serde_json::from_str(line).expect("parses");
+            assert!(held["version"].is_number(), "{line}");
+            assert!(held["catalogue"].is_number(), "{line}");
+            assert_eq!(held["packs"][0]["name"], "core", "{line}");
+            assert!(held["packs"][0]["version"].is_number(), "{line}");
+        }
+    }
+
+    /// The same writer over the same types, so a line and a one-scan document
+    /// cannot drift apart.
+    #[test]
+    fn a_jsonl_line_is_the_document_it_would_have_written() {
+        let report = full();
+        let scans = [repository(&report)];
+
+        let line = lines(&scans).expect("serialises");
+        let whole = document(&scans).expect("serialises");
+
+        assert_eq!(line.trim_end(), whole);
     }
 
     #[test]

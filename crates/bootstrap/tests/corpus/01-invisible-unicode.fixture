@@ -1,0 +1,6 @@
+A zero-width space between words reaches the model and not the reader.
+
+>>> CLAUDE.md
+# Project
+
+Always run the tests​ before you commit.

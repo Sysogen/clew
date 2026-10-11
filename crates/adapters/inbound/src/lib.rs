@@ -15,6 +15,6 @@ pub mod sarif;
 
 pub use args::{Command, Format, ParseError, parse};
 pub use explain::{explain, explain_json, no_such_rule, rules, rules_json};
-pub use json::{Scan, document};
+pub use json::{Scan, document, lines};
 pub use render::report;
 pub use sarif::sarif;

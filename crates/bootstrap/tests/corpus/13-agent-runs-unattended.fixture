@@ -1,0 +1,10 @@
+An agent invoked in CI with the flag that waives every permission prompt.
+
+>>> .github/workflows/review.yml
+name: review
+on: [pull_request]
+jobs:
+  agent:
+    runs-on: ubuntu-latest
+    steps:
+      - run: claude -p "review this" --dangerously-skip-permissions

@@ -1,0 +1,7 @@
+A mode that still asks, and a server that is launched locally rather than
+reached over a network.
+
+>>> .claude/settings.json
+{"permissions":{"defaultMode":"acceptEdits","allow":["Bash(npm ci)"]}}
+>>> .mcp.json
+{"mcpServers":{"pg":{"command":"postgres-mcp","args":["--read-only"]}}}

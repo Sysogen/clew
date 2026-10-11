@@ -1,0 +1,5 @@
+A task with no automatic trigger, and one with the other documented trigger.
+Both wait to be chosen, so neither runs on opening the folder.
+
+>>> .vscode/tasks.json
+{"version":"2.0.0","tasks":[{"label":"build","command":"npm run build"},{"label":"test","command":"npm test","runOptions":{"runOn":"default"}}]}

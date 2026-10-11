@@ -1,0 +1,10 @@
+A remote MCP server reached over plain HTTP, and a host that only begins like
+a loopback address. The second is why the rule parses the host rather than
+matching a prefix: `127.0.0.1.example.invalid` resolves wherever its owner
+says.
+
+>>> .mcp.json
+{"mcpServers":{
+  "remote":{"url":"http://mcp.invalid/sse"},
+  "lookalike":{"url":"http://127.0.0.1.example.invalid/sse"}
+}}

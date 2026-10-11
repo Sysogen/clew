@@ -7,6 +7,45 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- A corpus that pins what the rules decide, which neither version number
+  could. `crates/bootstrap/tests/corpus/` holds a small repository per rule
+  and `corpus.snapshot` holds the findings clew reports in each, so a rule
+  whose logic changes fails there rather than passing quietly under the same
+  pack version. Proven by breaking rules rather than by passing: making
+  `unrestricted-shell` miss a bare `Bash`, `auto-run-task` miss `folderOpen`,
+  or `plaintext-transport` match a loopback host as a prefix all fail the
+  corpus, and so does a rule that starts firing where its prose promises
+  silence.
+
+  Nine of the twenty-two fixtures are silent on purpose, each a case some
+  rule's own text names: the `grep` pattern that quotes `curl | sh` without
+  running one, the download that reaches `tar` rather than an interpreter,
+  `npx` running what the project already installed, an MCP server on
+  loopback, a shell grant with its commands written out, a task waiting to be
+  chosen, an agent in CI that was not told to stop asking.
+
+  A fixture is a manifest rather than a directory of real files. clew scans
+  its own repository in CI, and a tree of deliberate findings would fail that
+  run, so each fixture is written to a temporary directory and scanned there.
+  The test calls the library rather than the binary, because
+  `check-no-exec.sh` reads every Rust file in the repository and a test that
+  spawned a process would break the guarantee it checks.
+
+- `--format jsonl`, one document per tree read, each on its own line, which is
+  the shape a run over many repositories appends to. The same writer over the
+  same types as `--format json`, so a line and a one-scan document cannot
+  drift apart. Every line repeats the version numbers, because a line read on
+  its own has to say what judged it.
+
+### Changed
+
+- `CONTRIBUTING.md` said pinning a rule's decisions "would take a corpus of
+  fixtures with their findings recorded, which clew does not have yet". It has
+  one now, and the section says what the corpus does and does not cover rather
+  than claiming more than it should.
+
+### Added
+
 - GitHub Actions workflows are read, which no row covered. A workflow is
   configuration that runs code with nobody at the keyboard, in a job holding
   its token and whatever secrets it was given; which events trigger it and

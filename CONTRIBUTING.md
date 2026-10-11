@@ -221,12 +221,22 @@ They name the **set**: which rules exist, how each is graded, and which rows are
 looked at with what read out of them. Two scans at one number saw the same rules
 aimed at the same files.
 
-They do not promise that a rule *decided* the same way. A rule's own logic is
-not in the snapshot, so tightening `credential-exfiltration` to follow one more
-shell shape changes what it flags while leaving the number alone. Pinning that
-would take a corpus of fixtures with their findings recorded, which clew does
-not have yet; until it does, the honest claim is the narrow one, and a study
-should cite the clew release alongside both numbers.
+They do not promise that a rule *decided* the same way, on their own. A rule's
+own logic is not in either snapshot, so tightening `credential-exfiltration` to
+follow one more shell shape changes what it flags while leaving both numbers
+alone.
+
+What pins a decision is the corpus: `crates/bootstrap/tests/corpus/`, a small
+repository per rule with the findings recorded in `corpus.snapshot`. A rule
+whose logic changes fails there. Half the fixtures are silent on purpose, each
+a case some rule's own prose promises it does not fire on, because a rule that
+starts firing is as much a regression as one that stops.
+
+So a study should still cite the clew release alongside both numbers: the
+corpus covers every rule once and the silent cases their prose names, not every
+shape each rule can meet. It turns "the same rules existed" into "the same
+rules decided the same way about these cases", which is narrower than
+everything and far more than nothing.
 
 ### Neither is left to memory
 
