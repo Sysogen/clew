@@ -494,12 +494,9 @@ mod tests {
         }
     }
 
-    /// Each tool keeps its own label. A refactor that collapsed several tools
-    /// onto one kind reported `.aider.conf.yml` as "Claude Code", and no test
-    /// noticed, so this pins every row.
-    #[test]
-    fn each_surface_keeps_its_own_kind_and_extractions() {
-        let expected = [
+    /// The kind every repository row reports itself as.
+    fn repository_kinds() -> &'static [(&'static str, SurfaceKind)] {
+        &[
             (".claude/settings.json", SurfaceKind::ClaudeCode),
             (".claude/settings.local.json", SurfaceKind::ClaudeCode),
             (".mcp.json", SurfaceKind::McpServers),
@@ -527,6 +524,9 @@ mod tests {
             (".devin/rules/a.md", SurfaceKind::Windsurf),
             (".windsurf/rules/a.md", SurfaceKind::Windsurf),
             (".windsurfrules", SurfaceKind::Windsurf),
+            (".crushrc", SurfaceKind::Crush),
+            ("crush.json", SurfaceKind::Crush),
+            ("CRUSH.md", SurfaceKind::InstructionFile),
             (".continue/config.json", SurfaceKind::Continue),
             ("cline_mcp_settings.json", SurfaceKind::Cline),
             (".clinerules/coding.md", SurfaceKind::Cline),
@@ -536,7 +536,15 @@ mod tests {
             (".env.local", SurfaceKind::EnvFile),
             (".aider.conf.yml", SurfaceKind::Aider),
             (".devcontainer/devcontainer.json", SurfaceKind::DevContainer),
-        ];
+        ]
+    }
+
+    /// Each tool keeps its own label. A refactor that collapsed several tools
+    /// onto one kind reported `.aider.conf.yml` as "Claude Code", and no test
+    /// noticed, so this pins every row.
+    #[test]
+    fn each_surface_keeps_its_own_kind_and_extractions() {
+        let expected = repository_kinds();
 
         assert_eq!(
             expected.len(),
@@ -580,8 +588,16 @@ mod tests {
                 ][..],
             ),
             (".codex/hooks.json", &[Extraction::Hooks][..]),
+            (
+                "crush.json",
+                &[
+                    Extraction::Hooks,
+                    Extraction::Permissions,
+                    Extraction::McpServers,
+                ][..],
+            ),
         ];
-        for (path, kind) in expected {
+        for &(path, kind) in expected {
             let matched = shipped()
                 .lookup(&p(path))
                 .unwrap_or_else(|| panic!("{path} matched no row"));
@@ -610,6 +626,8 @@ mod tests {
             (Scope::Repository, ".vscode/settings.json", Format::Jsonc),
             (Scope::Repository, ".vscode/mcp.json", Format::Jsonc),
             (Scope::Repository, ".vscode/tasks.json", Format::Jsonc),
+            (Scope::Repository, "crush.json", Format::Jsonc),
+            (Scope::Home, ".config/crush/crush.json", Format::Jsonc),
             (
                 Scope::Repository,
                 ".claude/skills/a/SKILL.md",
@@ -772,10 +790,18 @@ mod tests {
 
     /// Which rules read each checked row.
     ///
-    /// A table rather than a run of assertions, so the count below has one
-    /// place to compare against: a row that gains a check and no line here
+    /// A table rather than a run of assertions, so the count in
+    /// `a_rule_reads_prose_hook_scripts_and_what_configuration_decides` has
+    /// one place to compare against: a row that gains a check and no line here
     /// fails, and so does a line for a row that has none.
     fn checked_rows() -> Vec<Checked> {
+        let mut rows = checked_prose_and_script_rows();
+        rows.extend(checked_deciding_rows());
+        rows
+    }
+
+    /// Which rules read each row that is read as prose or as shell.
+    fn checked_prose_and_script_rows() -> Vec<Checked> {
         let prose = vec![RuleId::InvisibleUnicode];
         vec![
             (
@@ -794,6 +820,7 @@ mod tests {
                     (Scope::Repository, ".clinerules/coding.md"),
                     (Scope::Repository, "GEMINI.md"),
                     (Scope::Repository, "AGENT.md"),
+                    (Scope::Repository, "CRUSH.md"),
                     (Scope::Home, ".kiro/steering/product.md"),
                     (Scope::Home, ".codeium/windsurf/memories/global_rules.md"),
                     (Scope::Home, ".agents/skills/review/SKILL.md"),
@@ -804,12 +831,15 @@ mod tests {
                 prose,
             ),
             // A hook script is the one surface every shell rule reads,
-            // wherever the tool keeps its scripts.
+            // wherever the tool keeps its scripts. A `crushrc` is not a script
+            // but is entirely shell, so it reads the same way.
             (
                 vec![
                     (Scope::Repository, ".claude/hooks/sync.sh"),
                     (Scope::Repository, ".codex/hooks/session_start.py"),
                     (Scope::Home, ".codex/hooks/session_start.py"),
+                    (Scope::Repository, ".crushrc"),
+                    (Scope::Home, ".config/crush/crushrc"),
                 ],
                 vec![
                     RuleId::InvisibleUnicode,
@@ -821,6 +851,14 @@ mod tests {
                     RuleId::UnpinnedRemotePackage,
                 ],
             ),
+        ]
+    }
+
+    /// Which rules read each checked row that decides something: the mode an
+    /// agent starts in, what it pre-approves, how a server it declares is
+    /// reached, and when a task it declares runs.
+    fn checked_deciding_rows() -> Vec<Checked> {
+        vec![
             // Prose that also grants tools, so both rules read it.
             (
                 vec![(Scope::Repository, ".claude/skills/a/SKILL.md")],
@@ -878,6 +916,15 @@ mod tests {
                     (Scope::Home, ".codeium/windsurf/mcp_config.json"),
                 ],
                 vec![RuleId::PlaintextTransport],
+            ),
+            // Crush pre-approves tools and declares servers. No row reads a
+            // mode from it: its `permissions` block admits a grant list alone.
+            (
+                vec![
+                    (Scope::Repository, "crush.json"),
+                    (Scope::Home, ".config/crush/crush.json"),
+                ],
+                vec![RuleId::UnrestrictedShell, RuleId::PlaintextTransport],
             ),
             // The one row that declares a task, and a trigger is all it says.
             (
@@ -1098,6 +1145,16 @@ mod tests {
             ),
             (".agents/skills/a/SKILL.md", SurfaceKind::Zed, &[]),
             (".agents/AGENTS.md", SurfaceKind::InstructionFile, &[]),
+            (".config/crush/crushrc", SurfaceKind::Crush, &[]),
+            (
+                ".config/crush/crush.json",
+                SurfaceKind::Crush,
+                &[
+                    Extraction::Hooks,
+                    Extraction::Permissions,
+                    Extraction::McpServers,
+                ][..],
+            ),
         ];
 
         assert_eq!(
@@ -1165,6 +1222,37 @@ mod tests {
         }
     }
 
+    /// Crush loads each of its files under two names, and one row carries
+    /// both. A row that matched only the name a case here happens to use would
+    /// leave the other invisible, which no count can see.
+    #[test]
+    fn crush_matches_both_names_of_each_file_it_loads() {
+        let both = [
+            (Scope::Repository, ".crushrc", "crushrc"),
+            (Scope::Repository, ".crush.json", "crush.json"),
+            (
+                Scope::Home,
+                ".config/crush/.crushrc",
+                ".config/crush/crushrc",
+            ),
+            (
+                Scope::Home,
+                ".config/crush/.crush.json",
+                ".config/crush/crush.json",
+            ),
+        ];
+        for (scope, dotted, plain) in both {
+            let hidden = shipped()
+                .lookup_in(&p(dotted), scope)
+                .unwrap_or_else(|| panic!("{dotted} matched no {scope:?} row"));
+            let visible = shipped()
+                .lookup_in(&p(plain), scope)
+                .unwrap_or_else(|| panic!("{plain} matched no {scope:?} row"));
+            assert_eq!(hidden.kind, visible.kind, "{dotted} and {plain}");
+            assert_eq!(hidden.check, visible.check, "{dotted} and {plain}");
+        }
+    }
+
     #[test]
     fn a_scan_enters_only_the_directories_its_rows_name() {
         assert_eq!(
@@ -1179,7 +1267,8 @@ mod tests {
                 ".codeium/windsurf",
                 ".codeium/windsurf/memories",
                 ".agents/skills",
-                ".agents"
+                ".agents",
+                ".config/crush"
             ]
         );
         assert_eq!(

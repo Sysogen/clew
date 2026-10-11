@@ -29,9 +29,10 @@ impl Rule for UnrestrictedShell {
 
     fn detail(&self) -> &'static str {
         "A configuration file pre-approves the shell with nothing restricting what \
-                it runs: Claude Code's Bash, Bash() or Bash(*), or Gemini CLI's \
-                run_shell_command, in permissions.allow, tools.allowed, or a skill's \
-                allowed-tools. Every command the agent chooses then runs without being \
+                it runs: Claude Code's Bash, Bash() or Bash(*), Gemini CLI's \
+                run_shell_command, or Crush's lowercase bash, in permissions.allow, \
+                permissions.allowed_tools, tools.allowed, or a skill's allowed-tools. \
+                Every command the agent chooses then runs without being \
                 shown to anyone, which is the grant the other entries in those lists \
                 exist to avoid needing. A tool that takes no argument restriction, such \
                 as WebSearch or an MCP tool, is not flagged: a bare entry is the only way \

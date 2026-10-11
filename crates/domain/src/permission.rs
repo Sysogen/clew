@@ -4,8 +4,11 @@
 //! Operations an agent may perform without asking.
 
 /// The tools that run a command of the agent's choosing, spelt as each tool's
-/// own settings spell them, which is case-sensitive.
-const SHELLS: &[&str] = &["Bash", "run_shell_command"];
+/// own settings spell them, which is case-sensitive. Crush spells its own
+/// `bash` lowercase, so both cases are listed; a lowercase entry in a Claude
+/// allow list grants nothing there and is still reported, which is the right
+/// answer for a shell grant that was meant to work.
+const SHELLS: &[&str] = &["Bash", "bash", "run_shell_command"];
 
 /// A pre-approved operation, as written in the configuration.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -172,16 +175,21 @@ mod tests {
         }
     }
 
+    /// Each tool's own casing and nothing adjacent to it. `bash` is Crush's
+    /// spelling and `Bash` is Claude's, so both are the tool; a name that
+    /// merely starts with one, or shouts it, is not.
     #[test]
     fn the_tool_name_is_matched_exactly() {
-        for entry in ["bash", "BASH", " bash(*)", "Bashful", "Bash2"] {
+        for entry in ["BASH", "Bashful", "bashful", "Bash2", "run_shell_commands"] {
             assert!(
                 !parsed(entry).is_unrestricted_shell(),
                 "{entry} is not the tool"
             );
         }
-        // Space around an entry is not part of it.
-        assert!(parsed("  Bash  ").is_unrestricted_shell());
+        for entry in ["bash", " bash(*)", "  Bash  ", "run_shell_command"] {
+            // Space around an entry is not part of it.
+            assert!(parsed(entry).is_unrestricted_shell(), "{entry} is the tool");
+        }
     }
 
     #[test]

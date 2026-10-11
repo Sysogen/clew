@@ -14,6 +14,8 @@ pub enum SurfaceKind {
     ClaudeCode,
     /// Codex configuration.
     Codex,
+    /// Crush configuration, in either the Bash or the JSON form.
+    Crush,
     /// Cursor configuration or rules.
     Cursor,
     /// Visual Studio Code agent configuration.
@@ -54,6 +56,7 @@ impl SurfaceKind {
             "mcp-servers" => Self::McpServers,
             "claude-code" => Self::ClaudeCode,
             "codex" => Self::Codex,
+            "crush" => Self::Crush,
             "cursor" => Self::Cursor,
             "vscode" => Self::VsCode,
             "gemini" => Self::Gemini,
@@ -80,6 +83,7 @@ impl SurfaceKind {
             Self::McpServers => "mcp-servers",
             Self::ClaudeCode => "claude-code",
             Self::Codex => "codex",
+            Self::Crush => "crush",
             Self::Cursor => "cursor",
             Self::VsCode => "vscode",
             Self::Gemini => "gemini",
@@ -105,6 +109,7 @@ impl SurfaceKind {
             Self::McpServers => "MCP servers",
             Self::ClaudeCode => "Claude Code",
             Self::Codex => "Codex",
+            Self::Crush => "Crush",
             Self::Cursor => "Cursor",
             Self::VsCode => "VS Code",
             Self::Gemini => "Gemini CLI",
