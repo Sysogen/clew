@@ -29,6 +29,12 @@ use crate::rule::{Examined, Subject};
 /// Extensions of a file a shell runs.
 const SHELL_EXTENSIONS: &[&str] = &["sh", "bash", "zsh", "ksh", "dash"];
 
+/// Files that are shell by name alone. A `crushrc` carries no extension and no
+/// `#!` line, being sourced rather than executed, so nothing else identifies
+/// it. Matched on the whole file name, not a suffix, because `crushrc` is the
+/// only name Crush loads: a `notes.crushrc` is not one.
+const SHELL_NAMES: &[&str] = &["crushrc", ".crushrc"];
+
 /// Rules that read shell, whichever way a hook writes it.
 pub(crate) const SHELL: &[Subject] = &[Subject::Text, Subject::HookCommand];
 
@@ -121,6 +127,57 @@ pub(crate) fn after_key(source: &str, key: &str, value: &str, occurrence: usize)
     Some(from + at)
 }
 
+/// The builtin a `crushrc` lists its pre-approvals with. A `crushrc` holds no
+/// key to anchor to, so a grant is anchored to the call that makes it.
+pub(crate) const GRANT_BUILTIN: &[&str] = &["permissions", "allow"];
+
+/// The builtin a `crushrc` declares a server with.
+pub(crate) const SERVER_BUILTIN: &[&str] = &["mcp", "add"];
+
+/// Where `value` sits on the line whose first words are `words`.
+///
+/// A shell builtin separates a name from its values with spaces, which
+/// [`after_key`] does not accept as a separator and must not: a bare word
+/// followed by a space is most of English. Anchoring to the whole call instead
+/// keeps a `crushrc` finding on the line that causes it, where a fallback to
+/// the file would leave a reviewer nothing to look at.
+pub(crate) fn after_words(
+    source: &str,
+    words: &[&str],
+    value: &str,
+    occurrence: usize,
+) -> Option<usize> {
+    let mut seen = 0;
+    let mut start = 0;
+    for line in source.split_inclusive('\n') {
+        let at = start;
+        start += line.len();
+
+        // The call, in order, each word whole and the last one followed by the
+        // values it is being given.
+        let mut rest = line.trim_start();
+        let called = words.iter().all(|word| match rest.strip_prefix(*word) {
+            Some(after) if after.starts_with(char::is_whitespace) => {
+                rest = after.trim_start();
+                true
+            }
+            _ => false,
+        });
+        if !called {
+            continue;
+        }
+
+        let from = line.len() - rest.len();
+        for found in whole_word(rest, value) {
+            if seen == occurrence {
+                return Some(at + from + found);
+            }
+            seen += 1;
+        }
+    }
+    None
+}
+
 /// Just past `key` where `source` writes it as a key: quoted, as JSON does, or
 /// bare before its separator, as TOML and YAML do.
 fn key_end(source: &str, key: &str) -> Option<usize> {
@@ -167,20 +224,29 @@ pub(crate) fn about_file(path: &RepoPath, rule: RuleId, said: &str, width: usize
 
 /// The keys a tool lists its pre-approvals under. A grant is looked for only
 /// after one of them, so a tool name in a description is not taken for a grant.
-pub(crate) const GRANT_LISTS: &[&str] = &["allow", "allowed-tools", "allowed"];
+/// The longer spellings precede the ones they contain, so a Crush
+/// `allowed_tools` is not half-matched as `allowed` and left unplaced.
+pub(crate) const GRANT_LISTS: &[&str] = &["allow", "allowed-tools", "allowed_tools", "allowed"];
 
 /// The keys a tool declares its servers under. A name is looked for only after
 /// one of them, so a name repeated in a description is not taken for the
 /// declaration.
-pub(crate) const SERVER_BLOCKS: &[&str] =
-    &["mcpServers", "mcp_servers", "context_servers", "servers"];
+pub(crate) const SERVER_BLOCKS: &[&str] = &[
+    "mcpServers",
+    "mcp_servers",
+    "context_servers",
+    "servers",
+    "mcp",
+];
 
-/// Whether `text` is a shell script, by its extension or its `#!` line.
+/// Whether `text` is a shell script, by its name, its extension or its `#!`
+/// line.
 pub(crate) fn is_shell(path: &RepoPath, text: &str) -> bool {
-    let named = path
-        .file_name()
-        .rsplit_once('.')
-        .is_some_and(|(_, extension)| SHELL_EXTENSIONS.contains(&extension));
+    let name = path.file_name();
+    let named = SHELL_NAMES.contains(&name)
+        || name
+            .rsplit_once('.')
+            .is_some_and(|(_, extension)| SHELL_EXTENSIONS.contains(&extension));
     let first = text.lines().next().unwrap_or_default();
     named
         || first.starts_with("#!")
@@ -254,6 +320,25 @@ mod tests {
     use crate::mcp_server::McpServer;
     use crate::permission::Permission;
     use crate::rule::judge;
+
+    /// A `crushrc` is Bash that Crush sources at startup, and it carries
+    /// neither a shell extension nor a `#!` line. Nothing but its name says it
+    /// is shell, so a reader that goes by extension and shebang alone finds no
+    /// commands in the one Crush file that is entirely commands.
+    #[test]
+    fn a_crushrc_is_shell_by_name_alone() {
+        let text = "permissions allow view edit\n";
+        assert!(is_shell(&RepoPath::root().join(".crushrc"), text));
+        assert!(is_shell(&RepoPath::root().join("crushrc"), text));
+        assert!(is_shell(
+            &RepoPath::root().join(".config/crush/crushrc"),
+            text
+        ));
+        // The name is matched whole: Crush loads no other, so a file that only
+        // ends in one is prose about a config, not a config.
+        assert!(!is_shell(&RepoPath::root().join("notes.crushrc"), text));
+        assert!(!is_shell(&RepoPath::root().join("crushrc.md"), text));
+    }
 
     #[test]
     fn a_variation_selector_is_ignorable_but_not_hidden() {
@@ -513,7 +598,13 @@ mod tests {
     /// the list loses one.
     #[test]
     fn a_finding_is_placed_under_each_server_key() {
-        let keys = ["mcpServers", "mcp_servers", "context_servers", "servers"];
+        let keys = [
+            "mcpServers",
+            "mcp_servers",
+            "context_servers",
+            "servers",
+            "mcp",
+        ];
         assert_eq!(keys.len(), SERVER_BLOCKS.len(), "a key has no case here");
         for key in keys {
             let source = format!(
@@ -525,6 +616,18 @@ mod tests {
 
             assert_eq!(found.at.map(|p| p.line), Some(3), "{key}: {found:?}");
         }
+    }
+
+    /// A `crushrc` declares a server by calling a builtin, so the finding is
+    /// anchored to the call rather than to a key the file does not hold.
+    #[test]
+    fn a_crushrc_server_is_placed_on_the_line_that_declares_it() {
+        let source = "permissions allow view\nmcp add github --url http://h.invalid/x\n";
+
+        let found = transport_found_in(&reached_at("github", "http://h.invalid/x"), source)
+            .expect("a finding");
+
+        assert_eq!(found.at.map(|p| p.line), Some(2), "{found:?}");
     }
 
     /// The endpoint's query is a routine place for a token, and the evidence
@@ -686,6 +789,72 @@ mod tests {
         assert_eq!(found.severity, Severity::Medium);
         assert_eq!(found.at.map(|p| p.line), Some(3));
         assert!(found.evidence.as_str().contains("Bash(*)"));
+    }
+
+    /// Every key a tool lists its pre-approvals under, counted. A spelling
+    /// absent from `GRANT_LISTS` still yields the finding, placed at the file
+    /// rather than the line, so only an assertion on the line catches it.
+    ///
+    /// Named here rather than read from the list, because a test that iterates
+    /// the list it is checking passes by dropping a case whenever the list
+    /// loses one.
+    #[test]
+    fn a_finding_is_placed_under_each_grant_key() {
+        let keys = ["allow", "allowed-tools", "allowed_tools", "allowed"];
+        assert_eq!(keys.len(), GRANT_LISTS.len(), "a key has no case here");
+        for key in keys {
+            let source = format!("{{\n  \"{key}\": [\n    \"Bash\"\n  ]\n}}\n");
+
+            let found = grant_found_in("Bash", &source, 0).expect("a finding");
+
+            assert_eq!(found.at.map(|p| p.line), Some(3), "{key}: {found:?}");
+        }
+    }
+
+    /// A `crushrc` grants by calling a builtin, which holds no key for
+    /// [`after_key`] to anchor to. Without the builtin anchor the finding
+    /// still appears but points at the file, leaving a reviewer no line.
+    #[test]
+    fn a_crushrc_grant_is_placed_on_the_line_that_makes_it() {
+        let source = "# tools\npermissions allow view edit\npermissions allow bash\n";
+
+        let found = grant_found_in("bash", source, 0).expect("a finding");
+
+        assert_eq!(found.at.map(|p| p.line), Some(3), "{found:?}");
+        assert!(found.evidence.as_str().contains("permissions allow bash"));
+    }
+
+    /// The anchor is the whole call, so a tool name written anywhere else is
+    /// not where the finding lands.
+    #[test]
+    fn a_builtin_anchor_ignores_a_line_that_is_not_the_call() {
+        let source = "hook add PreToolUse --matcher \"^bash$\"\npermissions allow bash\n";
+
+        let found = grant_found_in("bash", source, 0).expect("a finding");
+
+        assert_eq!(found.at.map(|p| p.line), Some(2), "{found:?}");
+    }
+
+    /// A word the call merely contains is not the call. `permissions` alone,
+    /// or a line about them, anchors nothing.
+    #[test]
+    fn a_builtin_anchor_needs_every_word_of_the_call() {
+        for source in [
+            "permissions bash\n",
+            "allow bash\n",
+            "mypermissions allow bash\n",
+            "echo permissions allow bash\n",
+            // Each word ends where the call's word ends, so a longer word
+            // that merely starts with one is a different command.
+            "permissions allowed bash\n",
+            "permissionsx allow bash\n",
+        ] {
+            assert!(
+                after_words(source, GRANT_BUILTIN, "bash", 0).is_none(),
+                "{source:?}"
+            );
+        }
+        assert!(after_words("permissions allow bash\n", GRANT_BUILTIN, "bash", 0).is_some());
     }
 
     #[test]

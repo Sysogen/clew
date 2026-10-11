@@ -17,6 +17,8 @@
 pub mod autonomy;
 pub mod catalogue;
 pub mod credential;
+/// Reading a `crushrc`, which declares by calling Crush builtins.
+mod crushrc;
 pub mod explain;
 pub mod extract;
 pub mod finding;

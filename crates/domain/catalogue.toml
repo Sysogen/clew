@@ -17,7 +17,7 @@
 #               against. Omitted means repository
 
 version = 2
-revision = 5
+revision = 6
 
 # --- Claude Code ------------------------------------------------------------
 
@@ -299,6 +299,57 @@ check = ["invisible-unicode"]
 last_verified = "2026-09-12"
 source = "https://docs.windsurf.com/windsurf/cascade/memories"
 
+# --- Crush ------------------------------------------------------------------
+#
+# Crush merges everything it finds, project over global, `crushrc` over JSON in
+# the same directory. Both forms are trusted code by its own documentation:
+# they run with the user's shell privileges before the UI appears. So `crushrc`
+# is read as the Bash it is and carries a hook script's checks, while the JSON
+# form is parsed.
+#
+# A `crushrc` declares by calling builtins, so it is read twice: as the shell
+# it is, and for what `hook add`, `permissions allow` and `mcp add` declare,
+# which Crush's own loader files under the same keys its JSON form holds. A
+# name a scan cannot know, as in `permissions allow $(cat list)`, is left out
+# rather than reported under a name nothing is called; a command string is kept
+# as written, since `curl $URL | sh` is worth reporting either way.
+
+[[surface]]
+glob = "**/{.crushrc,crushrc}"
+tool = "crush"
+kind = "crush"
+format = "crushrc"
+extract = ["hooks", "permissions", "mcp-servers"]
+check = [
+  "unrestricted-shell",
+  "plaintext-transport",
+  "invisible-unicode",
+  "opaque-hook",
+  "download-and-execute",
+  "decode-and-execute",
+  "credential-exfiltration",
+  "unverified-download",
+  "unpinned-remote-package",
+]
+last_verified = "2026-10-11"
+source = "https://github.com/charmbracelet/crush/blob/main/docs/config/README.md"
+
+# The deprecated JSON form, still discovered and still merged. Its hooks put
+# the command on the entry itself rather than under an inner `hooks` array, its
+# grants are `permissions.allowed_tools`, and its servers are under `mcp`.
+# There is no autonomy row to read: `permissions` admits `allowed_tools` alone,
+# and the flag that waives every prompt is passed on the command line, which no
+# file records.
+[[surface]]
+glob = "**/{.crush.json,crush.json}"
+tool = "crush"
+kind = "crush"
+format = "jsonc"
+extract = ["hooks", "permissions", "mcp-servers"]
+check = ["unrestricted-shell", "plaintext-transport"]
+last_verified = "2026-10-11"
+source = "https://github.com/charmbracelet/crush/blob/main/docs/hooks/README.md"
+
 # --- Others -----------------------------------------------------------------
 
 [[surface]]
@@ -359,6 +410,17 @@ kind = "instruction"
 check = ["invisible-unicode"]
 last_verified = "2026-09-12"
 source = "https://github.com/zed-industries/zed/blob/main/docs/src/ai/rules.md"
+
+# Crush's `defaultContextPaths` lists six spellings of its own context file,
+# and a glob matches the case on disk, so each is named. The rest of that list
+# is other tools' files, which keep their own rows.
+[[surface]]
+glob = "**/{crush.md,crush.local.md,Crush.md,Crush.local.md,CRUSH.md,CRUSH.local.md}"
+tool = "crush"
+kind = "instruction"
+check = ["invisible-unicode"]
+last_verified = "2026-10-11"
+source = "https://github.com/charmbracelet/crush/blob/main/internal/config/config.go"
 
 [[surface]]
 glob = "**/.env"
@@ -491,6 +553,60 @@ kind = "instruction"
 check = ["invisible-unicode"]
 last_verified = "2026-09-12"
 source = "https://docs.cline.bot/features/cline-rules"
+
+# Crush reads these from `$XDG_CONFIG_HOME/crush`, whose default is the path
+# below. A home scan anchors at the home directory, so a machine that moves
+# XDG_CONFIG_HOME elsewhere keeps its global Crush config out of reach, as it
+# does for every other variable-rooted path.
+[[surface]]
+scope = "home"
+glob = ".config/crush/{.crushrc,crushrc}"
+tool = "crush"
+kind = "crush"
+format = "crushrc"
+extract = ["hooks", "permissions", "mcp-servers"]
+check = [
+  "unrestricted-shell",
+  "plaintext-transport",
+  "invisible-unicode",
+  "opaque-hook",
+  "download-and-execute",
+  "decode-and-execute",
+  "credential-exfiltration",
+  "unverified-download",
+  "unpinned-remote-package",
+]
+last_verified = "2026-10-11"
+source = "https://github.com/charmbracelet/crush/blob/main/docs/config/README.md"
+
+[[surface]]
+scope = "home"
+glob = ".config/crush/{.crush.json,crush.json}"
+tool = "crush"
+kind = "crush"
+format = "jsonc"
+extract = ["hooks", "permissions", "mcp-servers"]
+check = ["unrestricted-shell", "plaintext-transport"]
+last_verified = "2026-10-11"
+source = "https://github.com/charmbracelet/crush/blob/main/docs/hooks/README.md"
+
+[[surface]]
+scope = "home"
+glob = ".config/crush/CRUSH.md"
+tool = "crush"
+kind = "instruction"
+check = ["invisible-unicode"]
+last_verified = "2026-10-11"
+source = "https://github.com/charmbracelet/crush/blob/main/internal/config/load.go"
+
+[[surface]]
+scope = "home"
+glob = ".config/AGENTS.md"
+tool = "crush"
+kind = "instruction"
+check = ["invisible-unicode"]
+last_verified = "2026-10-11"
+source = "https://github.com/charmbracelet/crush/blob/main/internal/config/load.go"
 
 # --- Deployed by an administrator --------------------------------------------
 #

@@ -44,6 +44,10 @@ pub enum Format {
     Jsonc,
     /// A Markdown file whose declarations live in a leading YAML block.
     Markdown,
+    /// A `crushrc`, which declares by calling Crush's builtins rather than by
+    /// holding keys. It is Bash, so it never fails to parse: a line that is
+    /// not a builtin call declares nothing.
+    Crushrc,
 }
 
 impl Format {
@@ -55,6 +59,7 @@ impl Format {
             "toml" => Self::Toml,
             "jsonc" => Self::Jsonc,
             "markdown" => Self::Markdown,
+            "crushrc" => Self::Crushrc,
             _ => return None,
         })
     }
@@ -67,6 +72,7 @@ impl Format {
                 serde_json::from_str(&without_comments(contents)).map_err(|_| ParseError::NotJson)
             }
             Self::Markdown => frontmatter(contents),
+            Self::Crushrc => Ok(crate::crushrc::parse(contents)),
         }
     }
 }
@@ -319,8 +325,17 @@ fn keyed_hooks(events: &serde_json::Map<String, serde_json::Value>) -> Vec<Hook>
                 .as_array()
                 .into_iter()
                 .flatten()
-                .filter_map(|entry| entry.get("hooks")?.as_array())
-                .flatten()
+                .flat_map(|entry| match entry.get("hooks") {
+                    // Claude and Codex nest the commands under `hooks`. A key
+                    // written as anything but a list of them declares no hook,
+                    // and reading the entry instead would report a command the
+                    // tool does not run.
+                    Some(nested) => nested
+                        .as_array()
+                        .map_or_else(Vec::new, |hooks| hooks.iter().collect()),
+                    // Crush puts the one command on the entry itself.
+                    None => vec![entry],
+                })
                 .filter_map(move |hook| {
                     Some(Hook {
                         event: event.clone(),
@@ -362,8 +377,12 @@ fn command_line(hook: &serde_json::Value) -> Option<String> {
 /// report grants the tool does not honour.
 fn permissions(root: &serde_json::Value, format: Format) -> Vec<Permission> {
     let entries = match format {
-        Format::Json | Format::Jsonc | Format::Toml => {
-            let claude = root.get("permissions").and_then(|p| p.get("allow"));
+        Format::Json | Format::Jsonc | Format::Toml | Format::Crushrc => {
+            // Crush shares the `permissions` block and spells the list
+            // differently; nothing reads both, so one block holds one list.
+            let claude = root
+                .get("permissions")
+                .and_then(|p| p.get("allow").or_else(|| p.get("allowed_tools")));
             // Gemini keeps its list elsewhere and writes the same `Tool(scope)`
             // entries in it.
             let gemini = root.get("tools").and_then(|t| t.get("allowed"));
@@ -543,12 +562,18 @@ fn trigger(entry: &serde_json::Value) -> Option<String> {
 fn mcp_servers(root: &serde_json::Value) -> Vec<McpServer> {
     // Every spelling is read, not the first found, or a file carrying two
     // would report only one of them.
-    let mut found: Vec<McpServer> = ["mcpServers", "mcp_servers", "context_servers", "servers"]
-        .iter()
-        .filter_map(|key| root.get(key)?.as_object())
-        .flatten()
-        .filter_map(|(name, config)| server(name, config))
-        .collect();
+    let mut found: Vec<McpServer> = [
+        "mcpServers",
+        "mcp_servers",
+        "context_servers",
+        "servers",
+        "mcp",
+    ]
+    .iter()
+    .filter_map(|key| root.get(key)?.as_object())
+    .flatten()
+    .filter_map(|(name, config)| server(name, config))
+    .collect();
     found.sort();
     found.dedup();
     found
@@ -846,6 +871,54 @@ mod tests {
         assert!(hooks_of(r#"{"hooks":["nope"]}"#).is_empty());
     }
 
+    /// Crush writes the command on the entry rather than under an inner
+    /// `hooks` array. A reader that requires the inner array sees nothing here,
+    /// so a `curl | sh` in a Crush hook would be invisible.
+    #[test]
+    fn a_crush_hook_carries_its_command_on_the_entry() {
+        let found = hooks_of(
+            r#"{"hooks":{"PreToolUse":[{"name":"no-rm-rf","matcher":"bash",
+               "command":"./hooks/guard.sh","timeout":10}]}}"#,
+        );
+
+        assert_eq!(
+            found,
+            vec![Hook {
+                event: "PreToolUse".to_owned(),
+                action: Action::Command("./hooks/guard.sh".to_owned()),
+                kind: None,
+                enabled: true,
+            }]
+        );
+    }
+
+    /// A `hooks` key that is not a list of hooks declares none. Falling back
+    /// to the entry there would report `outer` as a command Claude runs, which
+    /// it does not: only the absence of the key means Crush's shape.
+    #[test]
+    fn a_hooks_key_that_is_not_a_list_declares_no_hook() {
+        for entry in [
+            r#"{"hooks":{"PostToolUse":[{"hooks":{},"command":"outer"}]}}"#,
+            r#"{"hooks":{"PostToolUse":[{"hooks":"x","command":"outer"}]}}"#,
+            r#"{"hooks":{"PostToolUse":[{"hooks":null,"command":"outer"}]}}"#,
+        ] {
+            assert!(hooks_of(entry).is_empty(), "{entry}");
+        }
+    }
+
+    /// Reading the entry when it holds no inner array must not also read the
+    /// entry when it does, or every Claude hook would be counted twice.
+    #[test]
+    fn a_nested_entry_is_read_once_and_not_also_as_its_own_command() {
+        let found = hooks_of(
+            r#"{"hooks":{"PostToolUse":[{"command":"outer",
+               "hooks":[{"type":"command","command":"inner"}]}]}}"#,
+        );
+
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].action, Action::Command("inner".to_owned()));
+    }
+
     /// The two shapes share a key, so reading one must not stop the other
     /// being read.
     #[test]
@@ -924,6 +997,16 @@ DATABASE_URL = "postgres://u:hunter2@h/d"
         assert_eq!(camel.len(), 1, "Claude Code and Cursor spelling");
         assert_eq!(snake.len(), 1, "Codex spelling");
         assert_eq!(camel, snake);
+    }
+
+    /// Crush names the block `mcp`, so a reader of the other four spellings
+    /// reports a Crush file as declaring no servers at all.
+    #[test]
+    fn the_crush_server_key_is_read() {
+        let found = servers_of(r#"{"mcp":{"github":{"type":"http","url":"http://h.invalid/x"}}}"#);
+
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].name, "github");
     }
 
     #[test]
@@ -1194,6 +1277,27 @@ env = { DATABASE_URL = "postgres://u:hunter2@h/d", PGPORT = "5432" }
                 .iter()
                 .any(|x| x.tool == "mcp__figma__generate" && x.is_unscoped())
         );
+    }
+
+    /// Crush shares the `permissions` block and names its list
+    /// `allowed_tools`, so a reader of `allow` alone reports a Crush file as
+    /// pre-approving nothing.
+    #[test]
+    fn a_crush_grant_is_read_from_its_own_spelling() {
+        let found = perms_of(r#"{"permissions":{"allowed_tools":["bash","view"]}}"#);
+
+        assert_eq!(found.len(), 2, "{found:?}");
+        assert!(found.iter().any(|x| x.tool == "bash" && x.is_unscoped()));
+    }
+
+    /// Claude's spelling is read first. A file carrying both is not a shape any
+    /// tool writes, and taking the other one would drop the list Claude obeys.
+    #[test]
+    fn the_claude_spelling_wins_when_a_file_carries_both() {
+        let found = perms_of(r#"{"permissions":{"allow":["Bash(ls)"],"allowed_tools":["bash"]}}"#);
+
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].tool, "Bash");
     }
 
     #[test]

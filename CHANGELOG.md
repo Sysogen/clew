@@ -5,6 +5,76 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Crush is read, which it was not at all. Five rows cover both forms it loads:
+  `crushrc`, which is Bash that runs with the user's shell privileges before
+  the UI appears, and the deprecated `crush.json`, which is still discovered
+  and still merged. Crush's own documentation calls both trusted code, so
+  `crushrc` carries a hook script's seven checks rather than a parsed row's,
+  and `CRUSH.md` joins the instruction files read for hidden characters. Each
+  row matches the dotted and undotted name under one glob, because Crush loads
+  either.
+
+  Four of its shapes differ from every tool already catalogued, and each was
+  invisible before this. Its hooks put the command on the entry rather than
+  under an inner `hooks` array, so a `curl | sh` registered in a Crush hook
+  read as nothing. Its grants are `permissions.allowed_tools`, sharing the
+  block Claude Code names `allow`. Its servers are under `mcp`, a fifth
+  spelling, which left `plaintext-transport` silent on every Crush file. And a
+  `crushrc` carries neither a shell extension nor a `#!` line, being sourced
+  rather than executed, so nothing but its name says the one Crush file that is
+  entirely commands is shell at all.
+
+  `unrestricted-shell` now reads Crush's lowercase `bash`. The cost is stated
+  in the rule's own text: a lowercase entry in a Claude Code allow list grants
+  nothing there and is still reported, which is the right answer for a shell
+  grant that was meant to work. No row reads an autonomy value from Crush,
+  because its `permissions` block admits a grant list alone and the flag that
+  waives every prompt is passed on the command line, which no file records.
+
+  A `crushrc` is the only row read twice: as the Bash it is, and for what its
+  builtins declare. That form configures Crush by calling them, so
+  `hook add --command`, `permissions allow` and `mcp add --url` declare as
+  commands the same things the JSON form declares as data. The new `crushrc`
+  format reads those calls into the shape Crush's own loader files them under,
+  so every extractor reads a `crushrc` without a case for it, and a hook
+  registered there is followed to its script exactly as a JSON one is.
+
+  Only what a scan can know is recorded. `permissions allow $(cat list)` has
+  no answer until the file runs, so a tool or server name carrying a
+  substitution is left out rather than reported under a name nothing is
+  called; a substitution is kept whole while splitting it, or the tail of
+  `$(cat extra list)` would be read as a tool of its own. A command string is
+  kept as written, since `curl $URL | sh` is worth reporting whether or not
+  `$URL` is known. `permissions deny` hides a tool rather than pre-approving
+  one and is not read as a grant. Crush compares a whole argument against each
+  flag name, so `--command=x` is an unknown flag to it and is not read as one
+  here.
+
+  A finding in a `crushrc` is anchored to the call that causes it, because a
+  builtin separates a name from its values with spaces, which the key anchor
+  does not accept and must not: a bare word followed by a space is most of
+  English. Without that, every `crushrc` finding would point at the file rather
+  than at a line.
+
+  Crush's own `defaultContextPaths` carries six spellings of its context file,
+  and a glob matches the case a file has on disk, so all six are named. It also
+  auto-loads `.config/crush/CRUSH.md` and `.config/AGENTS.md` from outside any
+  repository, which now have home rows.
+
+  A global Crush config is read from `.config/crush`, the default for
+  `$XDG_CONFIG_HOME/crush`. A machine that moves that variable keeps its global
+  Crush config out of a home scan's reach, as it does for every other
+  variable-rooted path.
+
+### Fixed
+
+- A pre-approval under a key absent from the placement list yielded its finding
+  about the file rather than at the line, quietly, since the finding still
+  appeared. Both placement lists are now counted by a test, so a spelling added
+  to one without the other fails rather than degrading.
+
 ## [0.8.0] - 2026-10-04
 
 ### Added

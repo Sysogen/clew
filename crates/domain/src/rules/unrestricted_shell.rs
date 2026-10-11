@@ -3,7 +3,7 @@
 
 //! The `unrestricted-shell` rule.
 
-use super::{GRANT_LISTS, about_file, after_key, found_at};
+use super::{GRANT_BUILTIN, GRANT_LISTS, about_file, after_key, after_words, found_at};
 use crate::finding::{Finding, RuleId, Severity};
 use crate::rule::{Examined, Rule, Subject};
 
@@ -29,9 +29,10 @@ impl Rule for UnrestrictedShell {
 
     fn detail(&self) -> &'static str {
         "A configuration file pre-approves the shell with nothing restricting what \
-                it runs: Claude Code's Bash, Bash() or Bash(*), or Gemini CLI's \
-                run_shell_command, in permissions.allow, tools.allowed, or a skill's \
-                allowed-tools. Every command the agent chooses then runs without being \
+                it runs: Claude Code's Bash, Bash() or Bash(*), Gemini CLI's \
+                run_shell_command, or Crush's lowercase bash, in permissions.allow, \
+                permissions.allowed_tools, tools.allowed, or a skill's allowed-tools. \
+                Every command the agent chooses then runs without being \
                 shown to anyone, which is the grant the other entries in those lists \
                 exist to avoid needing. A tool that takes no argument restriction, such \
                 as WebSearch or an MCP tool, is not flagged: a bare entry is the only way \
@@ -67,6 +68,8 @@ impl Rule for UnrestrictedShell {
             GRANT_LISTS
                 .iter()
                 .find_map(|key| after_key(source, key, &entry, *occurrence))
+                // A `crushrc` grants by calling a builtin, with no key to find.
+                .or_else(|| after_words(source, GRANT_BUILTIN, &entry, *occurrence))
                 .and_then(|at| found_at(path, self.id(), source, at, width))
                 .unwrap_or_else(|| about_file(path, self.id(), &entry, width)),
         ]
