@@ -376,7 +376,7 @@ A maintainer can waive the title check for one pull request with the
 Maintainers only.
 
 1. Open a pull request that raises `version` in the root `Cargo.toml`, raises
-   the five `clew-*` entries under `[workspace.dependencies]` and the
+   the four `clew-*` entries under `[workspace.dependencies]` and the
    `version` default in `action.yml` to match, and moves `CHANGELOG.md`'s
    `Unreleased` section under the new number.
 2. Merge it, keeping the commit body GitHub prefills into the squash box.
@@ -418,7 +418,9 @@ to release a version that never got a tag, push the tag by hand, or use
 ### Before any release
 
 `Release` needs a `CARGO_REGISTRY_TOKEN` secret in the `crates-io` environment,
-scoped to `publish-update` for the five `clew-*` crates.
+scoped to `publish-update` for the five `clew-*` crates. Five, not the four
+pinned above: `clew-cli` is the binary, so it is published but is nothing
+else's dependency.
 
 ## Reporting a bug
 

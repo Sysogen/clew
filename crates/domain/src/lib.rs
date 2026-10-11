@@ -4,9 +4,15 @@
 //! The clew domain: what an agent surface is, how a path is classified as one,
 //! and the policy governing a scan.
 //!
-//! This crate depends on nothing but `thiserror`. No filesystem, no network, no
-//! async runtime. Every capability it needs from the outside world is a trait
-//! in [`ports`], implemented by an adapter.
+//! This crate depends on parsers, matchers and data only: no filesystem, no
+//! network, no async runtime, nothing that starts a process. Every capability
+//! it needs from the outside world is a trait in [`ports`], implemented by an
+//! adapter.
+//!
+//! The constraint is on what a dependency may do, not how many there are. A
+//! format parser, a glob matcher, Unicode's own property data and a shell
+//! grammar all belong here; `std::fs` and `std::net` do not, and an outbound
+//! adapter is the only place they appear.
 
 pub mod autonomy;
 pub mod catalogue;

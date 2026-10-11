@@ -29,4 +29,4 @@ ships keeps it to the machine that meant it.
 ---
 
 Generated from the rule pack by `./scripts/rule-pages.sh`. Edit the rule
-in `crates/domain/src/explain.rs`, not this page.
+in `crates/domain/src/rules/bypass_permissions.rs`, not this page.

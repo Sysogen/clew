@@ -22,4 +22,4 @@ or install the tool through a package manager with a lockfile.
 ---
 
 Generated from the rule pack by `./scripts/rule-pages.sh`. Edit the rule
-in `crates/domain/src/explain.rs`, not this page.
+in `crates/domain/src/rules/unverified_download.rs`, not this page.

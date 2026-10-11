@@ -24,4 +24,4 @@ file the repository ships limits it to the person who chose it.
 ---
 
 Generated from the rule pack by `./scripts/rule-pages.sh`. Edit the rule
-in `crates/domain/src/explain.rs`, not this page.
+in `crates/domain/src/rules/unrestricted_shell.rs`, not this page.
