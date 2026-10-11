@@ -233,8 +233,14 @@ fn where_flagged(
     let line = command
         .lines()
         .filter(|line| {
-            let words: Vec<&str> = line.split_whitespace().collect();
-            passed(&words, removes)
+            // The line has to run the agent, not merely hold the flag:
+            // `echo --dangerously-skip-permissions` above the real invocation
+            // waives nothing, and a finding placed there reads as noise. The
+            // same reading that found it decides where it goes.
+            shell::commands(line)
+                .iter()
+                .filter_map(|words| waived(words))
+                .any(|held| held.flag == removes.flag && held.value == removes.value)
         })
         .nth(nth)?
         .trim();

@@ -67,11 +67,15 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `--` ends a command's own options, so `claude -- --dangerously-skip-\
   permissions` passes that text as an argument and waives nothing.
 
-  A `runs-on` written as an expression is resolved through the matrix it
-  names. A matrix of POSIX runners still decides the shell; one that could be
-  Windows, or a key this file does not hold, leaves it unknown and unjudged.
-  Every matrix key a runner label refers to has to resolve, because one
-  resolving says nothing about another.
+  A runner has to say which operating system it is. `runs-on: ubuntu-latest`
+  and the `group`/`labels` mapping both do; `self-hosted`, a label a project
+  invented, and a job with no `runs-on` at all do not, and a job without one
+  is a job GitHub refuses to run. An expression is resolved through the matrix
+  it names, where every key the label refers to has to resolve and every value
+  the deciding key can take has to be POSIX, since a run picks one of them. A
+  step whose shell stays unknown is reported and left unjudged, which loses a
+  finding on a job clew cannot place rather than reading one language as
+  another.
 
 - `Format::Yaml`, which the workflow rows need and which nothing else uses
   yet. It is deliberately not folded in with JSON the way JSONC is: no tool
@@ -146,6 +150,18 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   about the file rather than at the line, since placement looked only for the
   quoted form a settings file writes. Every finding in a YAML `run:` block
   would have been a path and nothing else to go on.
+
+- Two jobs were read in the order their names sort rather than the order the
+  file writes them, because a parsed map was key-sorted. Occurrences were
+  counted in one order and placed by searching in the other, so each job's
+  finding landed in the other's block, carrying one job's evidence and the
+  other's line number. `serde_json` now preserves insertion order, which the
+  lock file already allowed.
+
+- A finding was placed on any line holding the waiver's flag, whether or not
+  that line ran an agent, so `echo --dangerously-skip-permissions` above a
+  real invocation took the finding. The same reading that finds it now
+  chooses where it goes.
 
 - Two steps whose blocks open on the same line were both placed in the first
   of them, because the copy was counted on the whole block while placement

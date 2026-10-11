@@ -670,13 +670,23 @@ fn default_shell(at: &serde_json::Value) -> Option<&str> {
 /// would instead judge PowerShell by Bash's syntax, and report what was never
 /// written.
 fn runner_shell(job: &serde_json::Value) -> &'static str {
-    // No runner named at all is the hosted default, which is Linux.
-    let Some(runs_on) = job.get("runs-on").or_else(|| job.get("runner")) else {
-        return "bash";
+    // `runs-on` is required of a job that has steps, so a job without one is
+    // a job GitHub refuses to run. There is no default to fall back on.
+    let Some(runs_on) = job.get("runs-on") else {
+        return UNKNOWN_SHELL;
     };
     let named: Vec<&str> = match runs_on {
         serde_json::Value::String(text) => vec![text.as_str()],
         serde_json::Value::Array(items) => items.iter().filter_map(|i| i.as_str()).collect(),
+        // The documented mapping form. A group names a pool rather than an
+        // operating system, so only its labels are read.
+        serde_json::Value::Object(_) => match runs_on.get("labels") {
+            Some(serde_json::Value::String(text)) => vec![text.as_str()],
+            Some(serde_json::Value::Array(items)) => {
+                items.iter().filter_map(|i| i.as_str()).collect()
+            }
+            _ => return UNKNOWN_SHELL,
+        },
         _ => return UNKNOWN_SHELL,
     };
     let windows = |text: &str| text.to_lowercase().contains("windows");
@@ -709,7 +719,7 @@ fn runner_shell(job: &serde_json::Value) -> &'static str {
     // runner unknown however well the others resolve. A key may hold an
     // architecture rather than an OS, so what decides it is that some part
     // names a POSIX system and no part names Windows.
-    let mut options: Vec<&str> = Vec::new();
+    let mut decided = false;
     for key in referenced {
         let Some(values) = matrix.and_then(|m| m.get(key)) else {
             return UNKNOWN_SHELL;
@@ -728,16 +738,19 @@ fn runner_shell(job: &serde_json::Value) -> &'static str {
         if held.is_empty() {
             return UNKNOWN_SHELL;
         }
-        options.extend(held);
+        // A key that names an operating system anywhere is the one deciding
+        // it, and then every value it can take has to be POSIX: a run of the
+        // job picks one, and `[ubuntu-latest, our-big-box]` may pick either.
+        // A key holding something else, an architecture say, decides nothing.
+        if !held.iter().any(|text| posix(text) || windows(text)) {
+            continue;
+        }
+        if !held.iter().all(|text| posix(text)) {
+            return UNKNOWN_SHELL;
+        }
+        decided = true;
     }
-    if options.iter().any(|text| windows(text)) {
-        return UNKNOWN_SHELL;
-    }
-    if options.iter().any(|text| posix(text)) {
-        "bash"
-    } else {
-        UNKNOWN_SHELL
-    }
+    if decided { "bash" } else { UNKNOWN_SHELL }
 }
 
 /// Every matrix key a `runs-on` expression refers to, as `${{ matrix.os }}`
@@ -1461,10 +1474,11 @@ env = { DATABASE_URL = "postgres://u:hunter2@h/d", PGPORT = "5432" }
         let shells =
             |yaml: &str| -> Vec<String> { steps_of(yaml).into_iter().map(|s| s.shell).collect() };
 
-        // Nothing said: a runner defaults to bash, and Windows to PowerShell.
+        // `runs-on` is required of a job with steps, so a job without one is
+        // one GitHub refuses to run and there is no default to fall back on.
         assert_eq!(
             shells("jobs:\n  a:\n    steps:\n      - run: x\n"),
-            ["bash"]
+            ["unknown"]
         );
         assert_eq!(
             shells("jobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: x\n"),
@@ -1567,9 +1581,46 @@ env = { DATABASE_URL = "postgres://u:hunter2@h/d", PGPORT = "5432" }
             shell(&job("    runs-on: ${{ inputs.runner }}\n")),
             "unknown"
         );
-        // A runner named outright still decides it, and so does none at all.
+    }
+
+    /// A label has to say which operating system it is, and a job with no
+    /// runner at all is a job GitHub refuses to run.
+    #[test]
+    fn a_runner_label_says_which_system_it_is() {
+        let shell = |yaml: &str| -> String {
+            steps_of(yaml)
+                .first()
+                .map(|s| s.shell.clone())
+                .unwrap_or_default()
+        };
+        let job = |body: &str| format!("jobs:\n  a:\n{body}    steps:\n      - run: x\n");
+
+        // A runner named outright decides it. None at all does not.
         assert_eq!(shell(&job("    runs-on: ubuntu-latest\n")), "bash");
-        assert_eq!(shell(&job("")), "bash");
+        assert_eq!(shell(&job("")), "unknown");
+        // The documented mapping form, whose group names a pool rather than
+        // an operating system, so only its labels decide the shell.
+        assert_eq!(
+            shell(&job(
+                "    runs-on:\n      group: big\n      labels: [ubuntu-24.04-16core]\n"
+            )),
+            "bash"
+        );
+        assert_eq!(
+            shell(&job(
+                "    runs-on:\n      group: big\n      labels: ubuntu-latest\n"
+            )),
+            "bash"
+        );
+        assert_eq!(shell(&job("    runs-on:\n      group: big\n")), "unknown");
+        // A label naming Windows says which shell it is, not merely that it
+        // is not Bash.
+        assert_eq!(
+            shell(&job(
+                "    runs-on:\n      group: big\n      labels: [windows-latest]\n"
+            )),
+            "pwsh"
+        );
         // A label has to say which OS it is. `self-hosted` and a label a
         // project invented say nothing, and a self-hosted runner may be
         // Windows, so neither is read as a POSIX shell.
@@ -1582,6 +1633,20 @@ env = { DATABASE_URL = "postgres://u:hunter2@h/d", PGPORT = "5432" }
         // Said alongside, it decides it.
         assert_eq!(shell(&job("    runs-on: [self-hosted, linux]\n")), "bash");
         assert_eq!(shell(&job("    runs-on: macos-14\n")), "bash");
+        // Every value the deciding key can take has to be POSIX: a run picks
+        // one of them, and this one may pick a label whose OS nothing says.
+        assert_eq!(
+            shell(&job(
+                "    runs-on: ${{ matrix.runner }}\n    strategy:\n      matrix:\n        runner: [ubuntu-latest, our-big-box]\n"
+            )),
+            "unknown"
+        );
+        assert_eq!(
+            shell(&job(
+                "    runs-on: ${{ matrix.os }}\n    strategy:\n      matrix:\n        os: [ubuntu-latest, macos-14]\n"
+            )),
+            "bash"
+        );
         // And a matrix of invented labels resolves no further than one label.
         assert_eq!(
             shell(&job(
@@ -1589,6 +1654,31 @@ env = { DATABASE_URL = "postgres://u:hunter2@h/d", PGPORT = "5432" }
             )),
             "unknown"
         );
+    }
+
+    /// GitHub Actions allows anchors and aliases, and `to_value` maps
+    /// `Yaml::Alias` to null, which reads like a step going missing. It does
+    /// not: the loader resolves an alias to the node it names before the tree
+    /// reaches `to_value`, so that arm never sees one from a loaded document.
+    /// Pinned because the code says otherwise at a glance, and a step that
+    /// vanished would take every workflow rule with it.
+    #[test]
+    fn an_aliased_step_is_read_like_any_other() {
+        let found = steps_of(
+            "x: &cmd claude -p x --dangerously-skip-permissions\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: *cmd\n",
+        );
+        assert_eq!(found.len(), 1, "an aliased command: {found:?}");
+        assert!(found[0].run.starts_with("claude"), "{found:?}");
+
+        // An aliased step, an aliased step list, and a merge key.
+        let found = steps_of(
+            "x: &one\n  run: echo one\ny: &many\n  - run: echo many\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - *one\n  b:\n    runs-on: ubuntu-latest\n    steps: *many\n  c:\n    <<: *one\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo three\n",
+        );
+        let ran: Vec<&str> = found.iter().map(|s| s.run.as_str()).collect();
+        assert_eq!(ran.len(), 3, "{found:?}");
+        for wanted in ["echo one", "echo many", "echo three"] {
+            assert!(ran.contains(&wanted), "{wanted} missing from {ran:?}");
+        }
     }
 
     /// A block scalar is one command of several lines, not several commands.
