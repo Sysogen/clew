@@ -73,9 +73,24 @@ const AGENTS: &[(&str, &[Removes])] = &[
     ),
 ];
 
-/// Commands that run a package rather than being one, so the agent is named
-/// after them rather than first.
-const RUNNERS: &[&str] = &["npx", "bunx", "uvx", "pnpm", "yarn", "npm", "bun", "deno"];
+/// The forms a package runner takes when it runs something, as the words that
+/// introduce the program.
+///
+/// The form matters, not the runner: `npm view @openai/codex` and
+/// `npm install @google/gemini-cli` name a package without running it, so a
+/// reader that took any word after `npm` would report an agent that never
+/// ran. Only the first operand after one of these forms is considered.
+const RUNNER_FORMS: &[&[&str]] = &[
+    &["npx"],
+    &["bunx"],
+    &["uvx"],
+    &["npm", "exec"],
+    &["pnpm", "dlx"],
+    &["pnpm", "exec"],
+    &["yarn", "dlx"],
+    &["bun", "x"],
+    &["deno", "run"],
+];
 
 /// The package names each agent is published under, which is how a runner
 /// names it.
@@ -142,39 +157,61 @@ impl Rule for AgentRunsUnattended {
         else {
             return Vec::new();
         };
-        shell::commands(command)
+        // Where this command sits, so a flagged line is looked for inside it
+        // rather than in an earlier step that happens to pass the same flag.
+        let from = where_written(source, command, *occurrence);
+        let mut seen: Vec<&str> = Vec::new();
+        let mut found = Vec::new();
+        for flag in shell::commands(command)
             .iter()
             .filter_map(|words| waived(words))
-            .map(|flag| {
-                // A `run:` block spans lines, and the one holding the flag is
-                // the line to read. Falling back to the whole command keeps a
-                // command the file writes some other way placed at all.
-                where_flagged(source, command, flag, *occurrence)
-                    .or_else(|| where_written(source, command, *occurrence))
+        {
+            // A `run:` block spans lines, and the one holding the flag is the
+            // line to read. One block may invoke an agent twice, so the nth
+            // command waiving by this flag takes the nth line passing it.
+            // Counted per flag, because two commands in one block may waive
+            // by different ones.
+            let nth = seen.iter().filter(|held| **held == flag).count();
+            seen.push(flag);
+            found.push(
+                from.and_then(|from| where_flagged(source, command, flag, nth, from))
+                    .or(from)
                     .and_then(|at| found_at(path, self.id(), source, at, width))
-                    .unwrap_or_else(|| about_file(path, self.id(), flag, width))
-            })
-            .collect()
+                    .unwrap_or_else(|| about_file(path, self.id(), flag, width)),
+            );
+        }
+        found
     }
 }
 
-/// Where `source` writes the line of `command` that passes `flag`.
+/// Where `source` writes the `nth` line of `command` that passes `flag`,
+/// looked for from `from` so an earlier step passing the same flag is not it.
 ///
 /// `None` when the command holds no such line, or when the line is not in the
 /// text as written, which a quoted or folded block makes possible.
-fn where_flagged(source: &str, command: &str, flag: &str, occurrence: usize) -> Option<usize> {
+fn where_flagged(
+    source: &str,
+    command: &str,
+    flag: &str,
+    nth: usize,
+    from: usize,
+) -> Option<usize> {
     let line = command
         .lines()
-        .find(|line| line.split_whitespace().any(|word| word.starts_with(flag)))?
+        .filter(|line| line.split_whitespace().any(|word| word.starts_with(flag)))
+        .nth(nth)?
         .trim();
+    let rest = source.get(from..)?;
     (!line.is_empty())
-        .then(|| source.match_indices(line).nth(occurrence))
+        .then(|| rest.match_indices(line).next())
         .flatten()
-        .map(|(at, _)| at)
+        .map(|(at, _)| from + at)
 }
 
 /// The flag that waived the prompt in one command, if one did.
 fn waived(words: &[Option<String>]) -> Option<&'static str> {
+    // A wrapper runs what follows it, so the agent may not be the first word.
+    let words = shell::unwrapped(words);
     let named = agent(words)?;
     let (_, flags) = AGENTS.iter().find(|(name, _)| *name == named.0)?;
     // Only what follows the agent's own name: a runner's `-y` is its own.
@@ -208,21 +245,35 @@ fn passed(given: &[&str], removes: &Removes) -> bool {
 /// A command is the agent, or a runner given the agent to run. Anything else
 /// only mentions it: `echo claude --dangerously-skip-permissions` runs no
 /// agent, and reading one out of it would report a prompt nobody removed.
+///
+/// What a runner runs is its first operand, which costs one case knowingly: a
+/// runner handed a wrapper that then runs the agent, as
+/// `npx cross-env FOO=1 claude --dangerously-skip-permissions` does, is
+/// missed. Taking any word instead would report an agent wherever a path or
+/// an argument happened to end in one of these names, and a scanner that
+/// cries wolf is read once.
 fn agent(words: &[Option<String>]) -> Option<(&'static str, usize)> {
-    let program = named_agent(words.first()?.as_deref()?);
-    if let Some(name) = program {
+    if let Some(name) = named_agent(words.first()?.as_deref()?) {
         return Some((name, 1));
     }
-    if !RUNNERS.contains(&basename(words.first()?.as_deref()?)) {
-        return None;
-    }
-    // The first word after the runner that names an agent, so `npx -y claude`
-    // and `pnpm dlx @anthropic-ai/claude-code` both resolve.
-    words
+    let form = RUNNER_FORMS.iter().find(|form| {
+        words.len() > form.len()
+            && form.iter().enumerate().all(|(at, word)| {
+                words.get(at).and_then(|w| w.as_deref()).map(basename) == Some(*word)
+            })
+    })?;
+    // The runner's own options come before what it runs, so the program is
+    // the first operand after the form: `npx -y claude` is npx answering its
+    // own prompt, not an agent being given a flag.
+    let (at, operand) = words
         .iter()
         .enumerate()
-        .skip(1)
-        .find_map(|(at, word)| named_agent(word.as_deref()?).map(|name| (name, at + 1)))
+        .skip(form.len())
+        .find_map(|(at, word)| {
+            let word = word.as_deref()?;
+            (!word.starts_with('-')).then_some((at, word))
+        })?;
+    named_agent(operand).map(|name| (name, at + 1))
 }
 
 /// The agent a word names, by its own name or by the package it ships as.
@@ -363,6 +414,92 @@ mod tests {
         // only what follows the agent's own name counts.
         assert!(!fires("npx -y @google/gemini-cli -p fix"));
         assert!(!fires("npx -y @anthropic-ai/claude-code -p review"));
+    }
+
+    /// A runner names a package without running it as often as it runs one.
+    /// `npm view` and `npm install` query and fetch, so an agent named there
+    /// never runs and reporting one would be a finding about nothing.
+    #[test]
+    fn a_runner_that_only_names_a_package_runs_nothing() {
+        for run in [
+            "npm view @openai/codex -- --dangerously-bypass-approvals-and-sandbox",
+            "npm install @anthropic-ai/claude-code --dangerously-skip-permissions",
+            "npm info @google/gemini-cli --yolo",
+            "yarn add @anthropic-ai/claude-code --dangerously-skip-permissions",
+            "pnpm add @google/gemini-cli --yolo",
+        ] {
+            assert!(!fires(run), "{run}");
+        }
+        // What a runner runs is its first operand. A later word naming an
+        // agent is an argument to something else: a path ending in `claude`
+        // is a file, not the program being run. The last of these is the case
+        // that tells the two readings apart, the others being refused by
+        // having no waiver at all.
+        for run in [
+            "npx eslint --fix src/claude",
+            "npx prettier --write claude",
+            "pnpm exec eslint --rule no-gemini --yolo",
+            "npx eslint --config src/claude --dangerously-skip-permissions",
+        ] {
+            assert!(!fires(run), "{run}");
+        }
+        // The execution forms of the same runners do run it.
+        for run in [
+            "npm exec @anthropic-ai/claude-code --dangerously-skip-permissions",
+            "pnpm dlx @anthropic-ai/claude-code --dangerously-skip-permissions",
+            "pnpm exec claude --dangerously-skip-permissions",
+            "yarn dlx @google/gemini-cli --yolo",
+            "bun x @google/gemini-cli --yolo",
+            "deno run @openai/codex --dangerously-bypass-approvals-and-sandbox",
+        ] {
+            assert!(fires(run), "{run}");
+        }
+    }
+
+    /// A wrapper runs what follows it, so an agent behind one still runs.
+    #[test]
+    fn an_agent_behind_a_wrapper_is_found() {
+        for run in [
+            "env claude --dangerously-skip-permissions",
+            "env FOO=1 claude --dangerously-skip-permissions",
+            "command gemini --yolo",
+            "sudo -u ci gemini --yolo",
+            "exec codex --dangerously-bypass-approvals-and-sandbox",
+            "nohup claude --dangerously-skip-permissions",
+            "time claude --dangerously-skip-permissions",
+        ] {
+            assert!(fires(run), "{run}");
+        }
+        // A wrapper around something else is still not an agent.
+        assert!(!fires("env FOO=1 prettier --write ."));
+    }
+
+    /// One block may invoke an agent twice, and each finding must land on the
+    /// invocation that produced it rather than both on the first.
+    #[test]
+    fn two_waivers_in_one_block_are_placed_separately() {
+        let source = "jobs:\n  a:\n    steps:\n      - run: |\n          claude -p one --dangerously-skip-permissions\n          echo between\n          claude -p two --dangerously-skip-permissions\n";
+        let run = "claude -p one --dangerously-skip-permissions\necho between\nclaude -p two --dangerously-skip-permissions";
+
+        let found = found_in(run, source);
+
+        assert_eq!(found.len(), 2, "{found:?}");
+        assert_eq!(found[0].at.map(|p| p.line), Some(5), "{found:?}");
+        assert_eq!(found[1].at.map(|p| p.line), Some(7), "{found:?}");
+    }
+
+    /// Two commands waiving by different flags are counted apart, or the
+    /// second would look for the second line passing a flag it never passed.
+    #[test]
+    fn two_different_waivers_in_one_block_each_find_their_own_line() {
+        let source = "jobs:\n  a:\n    steps:\n      - run: |\n          claude -p one --dangerously-skip-permissions\n          gemini -p two --yolo\n";
+        let run = "claude -p one --dangerously-skip-permissions\ngemini -p two --yolo";
+
+        let found = found_in(run, source);
+
+        assert_eq!(found.len(), 2, "{found:?}");
+        assert_eq!(found[0].at.map(|p| p.line), Some(5), "{found:?}");
+        assert_eq!(found[1].at.map(|p| p.line), Some(6), "{found:?}");
     }
 
     /// A step runs several commands, and only the one running the agent is

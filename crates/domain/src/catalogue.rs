@@ -1330,6 +1330,36 @@ mod tests {
         }
     }
 
+    /// GitHub loads a workflow from the repository root alone. A nested
+    /// `.github/workflows` is a fixture, a vendored copy or another project's
+    /// tree, and a high-severity finding there would be about a file nothing
+    /// executes.
+    #[test]
+    fn a_workflow_is_only_matched_at_the_repository_root() {
+        for at in [".github/workflows/ci.yml", ".github/workflows/release.yaml"] {
+            let matched = shipped()
+                .lookup_in(&p(at), Scope::Repository)
+                .unwrap_or_else(|| panic!("{at} matched no row"));
+            assert_eq!(matched.kind, SurfaceKind::Workflow, "{at}");
+        }
+        for at in [
+            "fixtures/project/.github/workflows/ci.yml",
+            "vendor/other/.github/workflows/ci.yml",
+            "sub/.github/workflows/ci.yml",
+        ] {
+            assert!(
+                shipped().lookup_in(&p(at), Scope::Repository).is_none(),
+                "{at} is not a workflow GitHub runs"
+            );
+        }
+        // And a workflow directory holding something else is not a workflow.
+        assert!(
+            shipped()
+                .lookup_in(&p(".github/workflows/notes.txt"), Scope::Repository)
+                .is_none()
+        );
+    }
+
     #[test]
     fn a_scan_enters_only_the_directories_its_rows_name() {
         assert_eq!(

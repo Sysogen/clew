@@ -627,15 +627,49 @@ fn workflow(root: &serde_json::Value) -> Vec<Step> {
     let Some(jobs) = root.get("jobs").and_then(serde_json::Value::as_object) else {
         return Vec::new();
     };
+    let top = default_shell(root);
     jobs.iter()
         .flat_map(|(job, body)| {
+            let fallback = default_shell(body)
+                .or(top)
+                .unwrap_or_else(|| runner_shell(body));
             body.get("steps")
                 .and_then(serde_json::Value::as_array)
                 .into_iter()
                 .flatten()
-                .filter_map(move |step| Some(Step::new(job, non_blank(step.get("run"))?)))
+                .filter_map(move |step| {
+                    let shell = non_blank(step.get("shell")).unwrap_or(fallback);
+                    Some(Step::new(job, non_blank(step.get("run"))?, shell))
+                })
         })
         .collect()
+}
+
+/// The `defaults.run.shell` a workflow or a job sets, if it sets one.
+fn default_shell(at: &serde_json::Value) -> Option<&str> {
+    non_blank(at.get("defaults")?.get("run")?.get("shell"))
+}
+
+/// The shell a job's runner defaults to, which Windows decides differently.
+///
+/// `runs-on` may be an expression or a matrix reference, which says nothing
+/// until the job runs. Reading the default as Bash there is the right guess:
+/// it is what every other runner uses, and a step whose shell is actually
+/// PowerShell reads as a shell clew does not judge either way.
+fn runner_shell(job: &serde_json::Value) -> &'static str {
+    let names_windows = |value: Option<&serde_json::Value>| match value {
+        Some(serde_json::Value::String(text)) => text.to_lowercase().contains("windows"),
+        Some(serde_json::Value::Array(items)) => items.iter().any(|item| {
+            item.as_str()
+                .is_some_and(|text| text.to_lowercase().contains("windows"))
+        }),
+        _ => false,
+    };
+    if names_windows(job.get("runs-on")) || names_windows(job.get("runner")) {
+        "pwsh"
+    } else {
+        "bash"
+    }
 }
 
 /// One server declaration. `None` when it reaches nothing: no command, and no
@@ -1334,6 +1368,54 @@ env = { DATABASE_URL = "postgres://u:hunter2@h/d", PGPORT = "5432" }
         assert!(steps_of("jobs:\n  a:\n    uses: ./.github/workflows/other.yml\n").is_empty());
         assert!(steps_of("jobs:\n  a:\n    steps:\n      - run: \"   \"\n").is_empty());
         assert!(steps_of("on: [push]\n").is_empty());
+    }
+
+    /// The shell a step runs under is what decides how it can be read, and a
+    /// workflow sets it in three places. Reading a PowerShell step as Bash
+    /// would judge one language by another's syntax.
+    #[test]
+    fn a_step_carries_the_shell_the_workflow_gives_it() {
+        let shells =
+            |yaml: &str| -> Vec<String> { steps_of(yaml).into_iter().map(|s| s.shell).collect() };
+
+        // Nothing said: a runner defaults to bash, and Windows to PowerShell.
+        assert_eq!(
+            shells("jobs:\n  a:\n    steps:\n      - run: x\n"),
+            ["bash"]
+        );
+        assert_eq!(
+            shells("jobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: x\n"),
+            ["bash"]
+        );
+        assert_eq!(
+            shells("jobs:\n  a:\n    runs-on: windows-latest\n    steps:\n      - run: x\n"),
+            ["pwsh"]
+        );
+        assert_eq!(
+            shells(
+                "jobs:\n  a:\n    runs-on: [self-hosted, Windows]\n    steps:\n      - run: x\n"
+            ),
+            ["pwsh"]
+        );
+        // The step's own shell wins over every default.
+        assert_eq!(
+            shells(
+                "defaults:\n  run:\n    shell: pwsh\njobs:\n  a:\n    steps:\n      - run: x\n        shell: bash\n"
+            ),
+            ["bash"]
+        );
+        // A job's default wins over the workflow's.
+        assert_eq!(
+            shells(
+                "defaults:\n  run:\n    shell: pwsh\njobs:\n  a:\n    defaults:\n      run:\n        shell: python\n    steps:\n      - run: x\n"
+            ),
+            ["python"]
+        );
+        // The workflow's default reaches a job that sets none.
+        assert_eq!(
+            shells("defaults:\n  run:\n    shell: pwsh\njobs:\n  a:\n    steps:\n      - run: x\n"),
+            ["pwsh"]
+        );
     }
 
     /// A block scalar is one command of several lines, not several commands.

@@ -399,6 +399,7 @@ mod tests {
                 step: clew_domain::Step::new(
                     "review",
                     "claude -p x --dangerously-skip-permissions",
+                    "bash",
                 ),
             }],
             tasks: vec![DeclaredTask {

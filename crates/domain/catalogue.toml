@@ -399,8 +399,13 @@ source = "https://containers.dev/implementors/json_reference/"
 # which this file does not say, so the official agent actions are not reached
 # this way. GitHub Actions alone for now; the other providers are the same
 # shape in a different schema.
+#
+# Anchored at the root, not `**/`, because that is the only place GitHub loads
+# a workflow from. A nested `.github/workflows` is a fixture, a vendored copy
+# or another project's tree, and GitHub never runs it for this repository, so
+# a high-severity finding there would be about a file nothing executes.
 [[surface]]
-glob = "**/.github/workflows/*.{yml,yaml}"
+glob = ".github/workflows/*.{yml,yaml}"
 tool = "any"
 kind = "workflow"
 format = "yaml"

@@ -40,6 +40,26 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   lint forbidding the flag is not itself a finding. A word the file does not
   hold, such as `$FLAGS`, is not read as a flag.
 
+  The row is anchored at the repository root rather than `**/`, because that
+  is the only place GitHub loads a workflow from. A nested `.github/workflows`
+  is a fixture, a vendored copy or another project's tree, and a
+  high-severity finding there would be about a file nothing executes.
+
+  Only a POSIX shell is read as one. A workflow may run PowerShell, Python or
+  a shell of its own choosing, and a Windows runner defaults to PowerShell, so
+  the effective shell is resolved from the step, the nearest
+  `defaults.run.shell` and the runner, and a step that is not Bash or sh is
+  reported and left unjudged. Judging one language by another's syntax answers
+  a question nobody asked.
+
+  A package runner is read by the form it runs things in, not by its name.
+  `npm view @openai/codex` and `pnpm add @google/gemini-cli` name a package
+  without running it, so only `npx`, `bunx`, `uvx`, `npm exec`, `pnpm dlx`,
+  `pnpm exec`, `yarn dlx`, `bun x` and `deno run` count, and only their first
+  operand. A wrapper is read through, so `env FOO=1 claude --flag` and
+  `sudo -u ci gemini --yolo` are found; a runner handed a wrapper that then
+  runs the agent is knowingly missed, which the rule says.
+
 - `Format::Yaml`, which the workflow rows need and which nothing else uses
   yet. It is deliberately not folded in with JSON the way JSONC is: no tool
   writes a mode or a grant in YAML, and folding it in would have clew report a
@@ -52,6 +72,16 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   about the file rather than at the line, since placement looked only for the
   quoted form a settings file writes. Every finding in a YAML `run:` block
   would have been a path and nothing else to go on.
+
+- Two steps whose blocks open on the same line were both placed in the first
+  of them, because the copy was counted on the whole block while placement
+  looks for the line it opens with. Counted on the same text now.
+
+- Two agent invocations in one block both pointed at the first, because the
+  line holding the flag was looked for from the start of the file rather than
+  from the block, and without an ordinal. Each is now looked for inside its
+  own block, counted per flag so two commands waiving by different ones are
+  told apart.
 
 ### Added
 
