@@ -400,6 +400,7 @@ mod tests {
                     "review",
                     "claude -p x --dangerously-skip-permissions",
                     "bash",
+                    None,
                 ),
             }],
             tasks: vec![DeclaredTask {

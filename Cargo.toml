@@ -36,10 +36,7 @@ percent-encoding = "2"
 # betterleaks' patterns are RE2, which regex implements.
 regex = "1"
 serde = { version = "1", features = ["derive"] }
-# `preserve_order` so a parsed map iterates in the order the file wrote it.
-# A finding is placed by counting occurrences in the source, so extraction has
-# to hand them over in that order or the counts name each other's text.
-serde_json = { version = "1", features = ["preserve_order"] }
+serde_json = "1"
 # Quotes an exec-form hook's arguments into one line.
 shlex = "2"
 toml = { version = "0.9", default-features = false, features = ["parse", "serde"] }

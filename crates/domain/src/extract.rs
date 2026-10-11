@@ -12,6 +12,7 @@ use crate::hook::{Action, Hook};
 use crate::mcp_server::{McpServer, Transport};
 use crate::task::Task;
 use crate::workflow::Step;
+use crate::yaml;
 use yaml_rust2::{Yaml, YamlLoader};
 
 use crate::permission::Permission;
@@ -284,7 +285,18 @@ pub fn run(wanted: &[Extraction], format: Format, contents: &str) -> Result<Find
         return Ok(Findings::default());
     }
 
-    let root = format.parse(contents)?;
+    // YAML is read through the spanned reader, which keeps where each value
+    // was written. Every extraction but `workflow` reads the plain value, so
+    // the node is converted once and only the one that places findings by
+    // position keeps it.
+    let spanned = match format {
+        Format::Yaml => Some(yaml::parse(contents).map_err(|_| ParseError::NotYaml)?),
+        _ => None,
+    };
+    let root = match &spanned {
+        Some(node) => node.to_value(),
+        None => format.parse(contents)?,
+    };
 
     let mut found = Findings::default();
     for what in wanted {
@@ -294,7 +306,9 @@ pub fn run(wanted: &[Extraction], format: Format, contents: &str) -> Result<Find
             Extraction::McpServers => found.servers = mcp_servers(&root),
             Extraction::Autonomy => found.autonomy = autonomy(&root, format),
             Extraction::Tasks => found.tasks = tasks(&root),
-            Extraction::Workflow => found.steps = workflow(&root),
+            Extraction::Workflow => {
+                found.steps = spanned.as_ref().map(workflow).unwrap_or_default();
+            }
         }
     }
     Ok(found)
@@ -623,23 +637,28 @@ fn non_blank(value: Option<&serde_json::Value>) -> Option<&str> {
 /// Only `jobs.<id>.steps[].run` is read. A step naming an action with `uses`
 /// runs whatever that action runs, which this file does not say, and a
 /// reusable workflow called with `jobs.<id>.uses` has no steps here at all.
-fn workflow(root: &serde_json::Value) -> Vec<Step> {
-    let Some(jobs) = root.get("jobs").and_then(serde_json::Value::as_object) else {
+fn workflow(root: &yaml::Node) -> Vec<Step> {
+    let Some(jobs) = root.get("jobs") else {
         return Vec::new();
     };
     let top = default_shell(root);
-    jobs.iter()
+    jobs.map()
+        .iter()
         .flat_map(|(job, body)| {
             let fallback = default_shell(body)
                 .or(top)
-                .unwrap_or_else(|| runner_shell(body));
+                .unwrap_or_else(|| runner_shell(&body.to_value()));
             body.get("steps")
-                .and_then(serde_json::Value::as_array)
-                .into_iter()
-                .flatten()
+                .map(yaml::Node::seq)
+                .unwrap_or_default()
+                .iter()
                 .filter_map(move |step| {
-                    let shell = non_blank(step.get("shell")).unwrap_or(fallback);
-                    Some(Step::new(job, non_blank(step.get("run"))?, shell))
+                    let (run, at) = step.get("run").and_then(yaml::Node::text)?;
+                    let shell = step
+                        .get("shell")
+                        .and_then(yaml::Node::text)
+                        .map_or(fallback, |(text, _)| text);
+                    Some(Step::new(job, run, shell, Some(at)))
                 })
         })
         .collect()
@@ -656,8 +675,12 @@ const UNKNOWN_SHELL: &str = "unknown";
 const POSIX_RUNNERS: &[&str] = &["ubuntu", "macos", "linux", "darwin", "debian", "alpine"];
 
 /// The `defaults.run.shell` a workflow or a job sets, if it sets one.
-fn default_shell(at: &serde_json::Value) -> Option<&str> {
-    non_blank(at.get("defaults")?.get("run")?.get("shell"))
+fn default_shell(at: &yaml::Node) -> Option<&str> {
+    at.get("defaults")?
+        .get("run")?
+        .get("shell")
+        .and_then(yaml::Node::text)
+        .map(|(text, _)| text)
 }
 
 /// The shell a job's runner defaults to, which Windows decides differently.
@@ -1679,6 +1702,45 @@ env = { DATABASE_URL = "postgres://u:hunter2@h/d", PGPORT = "5432" }
         for wanted in ["echo one", "echo many", "echo three"] {
             assert!(ran.contains(&wanted), "{wanted} missing from {ran:?}");
         }
+    }
+
+    /// A step carries where the workflow wrote what it runs, so a finding is
+    /// placed rather than searched for. Two steps running the same command
+    /// have two spans, which is what text search could never tell apart.
+    #[test]
+    fn a_step_carries_where_it_was_written() {
+        let source = "jobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo same\n      - run: echo same\n";
+
+        let found = steps_of(source);
+
+        assert_eq!(found.len(), 2, "{found:?}");
+        let spans: Vec<_> = found.iter().map(|s| s.at).collect();
+        assert!(spans.iter().all(Option::is_some), "{spans:?}");
+        let (one, two) = (found[0].at.expect("one"), found[1].at.expect("two"));
+        assert!(one.start < two.start, "{one:?} {two:?}");
+        for at in [one, two] {
+            assert!(
+                source[at.start..].starts_with("echo same"),
+                "the span starts at the command: {:?}",
+                &source[at.start..]
+            );
+        }
+    }
+
+    /// A job written with a merge key declared no steps at all, so every rule
+    /// was silent on it. The loader resolves an alias but not a merge.
+    #[test]
+    fn a_job_built_by_a_merge_key_has_its_steps_read() {
+        let found = steps_of(
+            "base: &b\n  runs-on: ubuntu-latest\n  steps:\n    - run: echo merged\njobs:\n  merged:\n    <<: *b\n  own:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo own\n",
+        );
+
+        let ran: Vec<&str> = found.iter().map(|s| s.run.as_str()).collect();
+        assert_eq!(ran.len(), 2, "{found:?}");
+        assert!(ran.contains(&"echo merged"), "{ran:?}");
+        assert!(ran.contains(&"echo own"), "{ran:?}");
+        // The merged job keeps the runner it was given, so it is judged.
+        assert!(found.iter().all(Step::is_posix_shell), "{found:?}");
     }
 
     /// A block scalar is one command of several lines, not several commands.

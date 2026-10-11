@@ -37,6 +37,7 @@ pub mod shell;
 pub mod surface;
 pub mod task;
 pub mod workflow;
+pub mod yaml;
 
 pub use autonomy::Autonomy;
 pub use catalogue::{Catalogue, shipped as catalogue};

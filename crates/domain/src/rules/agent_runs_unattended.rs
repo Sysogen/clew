@@ -3,7 +3,7 @@
 
 //! The `agent-runs-unattended` rule.
 
-use super::{about_file, found_at, where_written};
+use super::{about_file, found_at, where_command_sits};
 use crate::finding::{Finding, RuleId, Severity};
 use crate::rule::{Examined, Rule, Subject};
 use crate::shell;
@@ -181,13 +181,17 @@ impl Rule for AgentRunsUnattended {
             command,
             source,
             occurrence,
+            at: span,
         } = at
         else {
             return Vec::new();
         };
         // Where this command sits, so a flagged line is looked for inside it
         // rather than in an earlier step that happens to pass the same flag.
-        let from = where_written(source, command, *occurrence);
+        let from = where_command_sits(source, command, *occurrence, *span);
+        // A span bounds the search as well as starting it, so a flagged line
+        // is looked for inside this step and cannot be found in another.
+        let until = span.map_or(source.len(), |held| held.end.min(source.len()));
         let mut seen: Vec<&str> = Vec::new();
         let mut found = Vec::new();
         for removes in shell::commands(command)
@@ -203,7 +207,7 @@ impl Rule for AgentRunsUnattended {
             let nth = seen.iter().filter(|held| **held == flag).count();
             seen.push(flag);
             found.push(
-                from.and_then(|from| where_flagged(source, command, removes, nth, from))
+                from.and_then(|from| where_flagged(source, command, removes, nth, from, until))
                     .or(from)
                     .and_then(|at| found_at(path, self.id(), source, at, width))
                     .unwrap_or_else(|| about_file(path, self.id(), flag, width)),
@@ -229,6 +233,7 @@ fn where_flagged(
     removes: &Removes,
     nth: usize,
     from: usize,
+    until: usize,
 ) -> Option<usize> {
     let line = command
         .lines()
@@ -244,7 +249,7 @@ fn where_flagged(
         })
         .nth(nth)?
         .trim();
-    let rest = source.get(from..)?;
+    let rest = source.get(from..until.max(from))?;
     (!line.is_empty())
         .then(|| rest.match_indices(line).next())
         .flatten()
@@ -357,6 +362,7 @@ mod tests {
     use crate::finding::DEFAULT_EVIDENCE_WIDTH;
     use crate::repo_path::RepoPath;
     use crate::rule::judge;
+    use crate::yaml::Span;
 
     fn found_in(run: &str, source: &str) -> Vec<Finding> {
         judge(
@@ -365,6 +371,7 @@ mod tests {
                 command: run,
                 source,
                 occurrence: 0,
+                at: None,
             },
             &[RuleId::AgentRunsUnattended],
             DEFAULT_EVIDENCE_WIDTH,
@@ -621,6 +628,66 @@ mod tests {
         assert_eq!(found.len(), 1, "{found:?}");
         assert_eq!(found[0].at.map(|p| p.line), Some(6), "{found:?}");
         assert_eq!(found[0].severity, Severity::High);
+    }
+
+    /// With a span, a finding is placed where the file said the command is,
+    /// not where the text first matches. The decoys here are the point: the
+    /// same command is written in a comment and in a step name above the step
+    /// that runs it, and a search finds those first.
+    #[test]
+    fn a_span_places_a_finding_past_text_that_only_looks_like_it() {
+        let source = "jobs:\n  a:\n    steps:\n      # claude --dangerously-skip-permissions\n      - name: \"claude --dangerously-skip-permissions\"\n        run: |\n          claude --dangerously-skip-permissions\n";
+        let run = "claude --dangerously-skip-permissions";
+        let start = source.rfind(run).expect("the real one");
+
+        let found = judge(
+            &Examined::HookCommand {
+                path: &RepoPath::root().join(".github/workflows/ci.yml"),
+                command: run,
+                source,
+                occurrence: 0,
+                at: Some(Span {
+                    start,
+                    end: source.len(),
+                }),
+            },
+            &[RuleId::AgentRunsUnattended],
+            DEFAULT_EVIDENCE_WIDTH,
+        );
+
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].at.map(|p| p.line), Some(7), "{found:?}");
+    }
+
+    /// A folded block joins its lines, so the command is not written on any
+    /// one line of the file and the flagged line cannot be found inside the
+    /// step. The span's end is what stops the search there: a later step
+    /// writing the same words on one line is not this step's invocation.
+    #[test]
+    fn a_search_for_the_flagged_line_stops_at_the_span() {
+        let source = "jobs:\n  a:\n    steps:\n      - run: >\n          claude -p x\n          --dangerously-skip-permissions\n      - run: echo claude -p x --dangerously-skip-permissions\n";
+        let run = "claude -p x --dangerously-skip-permissions";
+        let start = source.find("claude -p x\n").expect("the fold");
+        let end = source.find("      - run: echo").expect("the next step");
+
+        let found = judge(
+            &Examined::HookCommand {
+                path: &RepoPath::root().join(".github/workflows/ci.yml"),
+                command: run,
+                source,
+                occurrence: 0,
+                at: Some(Span { start, end }),
+            },
+            &[RuleId::AgentRunsUnattended],
+            DEFAULT_EVIDENCE_WIDTH,
+        );
+
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(
+            found[0].at.map(|p| p.line),
+            Some(5),
+            "the folded block, not the echo below it: {found:?}"
+        );
     }
 
     /// A block may invoke an agent safely above invoking it unsafely. The

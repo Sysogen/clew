@@ -77,6 +77,21 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   finding on a job clew cannot place rather than reading one language as
   another.
 
+- YAML is read with the position of every value it holds, through the
+  parser's own events rather than the high-level loader, which gives a tree
+  with no positions in it. A finding in a workflow is placed where the file
+  wrote the command instead of by searching the text for it again, which went
+  wrong wherever the same text appeared twice: a command repeated in a
+  comment or a step name above the step that runs it, two jobs opening on the
+  same line, two steps running the same thing. The span bounds the search as
+  well as starting it, so a line inside a folded block cannot be found in a
+  later step.
+
+  The reader resolves merge keys, which the loader does not. A job written
+  `<<: *base` inherited no steps, so its commands were in the file and clew
+  said nothing about any of them. Anchors and aliases keep working as they
+  did, and a test now pins that, since the code reads as though it drops them.
+
 - `Format::Yaml`, which the workflow rows need and which nothing else uses
   yet. It is deliberately not folded in with JSON the way JSONC is: no tool
   writes a mode or a grant in YAML, and folding it in would have clew report a
@@ -155,8 +170,8 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   file writes them, because a parsed map was key-sorted. Occurrences were
   counted in one order and placed by searching in the other, so each job's
   finding landed in the other's block, carrying one job's evidence and the
-  other's line number. `serde_json` now preserves insertion order, which the
-  lock file already allowed.
+  other's line number. YAML is now read with the position of every value, so
+  nothing is placed by counting.
 
 - A finding was placed on any line holding the waiver's flag, whether or not
   that line ran an agent, so `echo --dangerously-skip-permissions` above a

