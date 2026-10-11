@@ -33,6 +33,21 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   because its `permissions` block admits a grant list alone and the flag that
   waives every prompt is passed on the command line, which no file records.
 
+  What the `crushrc` row does not do, stated rather than discounted: that form
+  configures Crush by calling builtins, so `hook add --command`,
+  `permissions allow` and `mcp add --url` declare as commands the same things
+  the JSON form declares as data, and no row reads them as such. A dangerous
+  payload inside one is still found, being shell in a file read as shell, but
+  it is reported as a line of text rather than as a hook, a grant or a server,
+  which means `unrestricted-shell` and `plaintext-transport` stay silent on the
+  form Crush now prefers. Reading them properly means parsing Bash
+  invocations, where `permissions allow $(cat list)` has no static answer.
+
+  Crush's own `defaultContextPaths` carries six spellings of its context file,
+  and a glob matches the case a file has on disk, so all six are named. It also
+  auto-loads `.config/crush/CRUSH.md` and `.config/AGENTS.md` from outside any
+  repository, which now have home rows.
+
   A global Crush config is read from `.config/crush`, the default for
   `$XDG_CONFIG_HOME/crush`. A machine that moves that variable keeps its global
   Crush config out of a home scan's reach, as it does for every other

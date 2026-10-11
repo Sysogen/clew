@@ -319,14 +319,16 @@ fn keyed_hooks(events: &serde_json::Map<String, serde_json::Value>) -> Vec<Hook>
                 .as_array()
                 .into_iter()
                 .flatten()
-                .flat_map(|entry| {
-                    // Claude and Codex nest the commands under `hooks`; Crush
-                    // puts one on the entry itself. An entry with no `hooks`
-                    // array is read as the single command it is.
-                    entry
-                        .get("hooks")
-                        .and_then(serde_json::Value::as_array)
-                        .map_or_else(|| vec![entry], |nested| nested.iter().collect())
+                .flat_map(|entry| match entry.get("hooks") {
+                    // Claude and Codex nest the commands under `hooks`. A key
+                    // written as anything but a list of them declares no hook,
+                    // and reading the entry instead would report a command the
+                    // tool does not run.
+                    Some(nested) => nested
+                        .as_array()
+                        .map_or_else(Vec::new, |hooks| hooks.iter().collect()),
+                    // Crush puts the one command on the entry itself.
+                    None => vec![entry],
                 })
                 .filter_map(move |hook| {
                     Some(Hook {
@@ -882,6 +884,20 @@ mod tests {
                 enabled: true,
             }]
         );
+    }
+
+    /// A `hooks` key that is not a list of hooks declares none. Falling back
+    /// to the entry there would report `outer` as a command Claude runs, which
+    /// it does not: only the absence of the key means Crush's shape.
+    #[test]
+    fn a_hooks_key_that_is_not_a_list_declares_no_hook() {
+        for entry in [
+            r#"{"hooks":{"PostToolUse":[{"hooks":{},"command":"outer"}]}}"#,
+            r#"{"hooks":{"PostToolUse":[{"hooks":"x","command":"outer"}]}}"#,
+            r#"{"hooks":{"PostToolUse":[{"hooks":null,"command":"outer"}]}}"#,
+        ] {
+            assert!(hooks_of(entry).is_empty(), "{entry}");
+        }
     }
 
     /// Reading the entry when it holds no inner array must not also read the

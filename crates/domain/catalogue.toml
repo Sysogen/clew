@@ -306,6 +306,15 @@ source = "https://docs.windsurf.com/windsurf/cascade/memories"
 # they run with the user's shell privileges before the UI appears. So `crushrc`
 # is read as the Bash it is and carries a hook script's checks, while the JSON
 # form is parsed.
+#
+# What that costs, stated rather than discounted: a `crushrc` configures Crush
+# by calling builtins, so `hook add --command`, `permissions allow` and
+# `mcp add --url` declare the same things the JSON form declares as data, and
+# no row reads them as such. A dangerous payload inside one is still found,
+# being shell in a file read as shell, but it is reported as a line of text
+# rather than as a hook, a grant or a server. Reading them properly means
+# parsing Bash invocations, where `permissions allow $(cat list)` has no static
+# answer, so it is its own change rather than a format on this row.
 
 [[surface]]
 glob = "**/{.crushrc,crushrc}"
@@ -400,13 +409,16 @@ check = ["invisible-unicode"]
 last_verified = "2026-09-12"
 source = "https://github.com/zed-industries/zed/blob/main/docs/src/ai/rules.md"
 
+# Crush's `defaultContextPaths` lists six spellings of its own context file,
+# and a glob matches the case on disk, so each is named. The rest of that list
+# is other tools' files, which keep their own rows.
 [[surface]]
-glob = "**/CRUSH.md"
+glob = "**/{crush.md,crush.local.md,Crush.md,Crush.local.md,CRUSH.md,CRUSH.local.md}"
 tool = "crush"
 kind = "instruction"
 check = ["invisible-unicode"]
 last_verified = "2026-10-11"
-source = "https://github.com/charmbracelet/crush/blob/main/docs/config/README.md"
+source = "https://github.com/charmbracelet/crush/blob/main/internal/config/config.go"
 
 [[surface]]
 glob = "**/.env"
@@ -571,6 +583,24 @@ extract = ["hooks", "permissions", "mcp-servers"]
 check = ["unrestricted-shell", "plaintext-transport"]
 last_verified = "2026-10-11"
 source = "https://github.com/charmbracelet/crush/blob/main/docs/hooks/README.md"
+
+[[surface]]
+scope = "home"
+glob = ".config/crush/CRUSH.md"
+tool = "crush"
+kind = "instruction"
+check = ["invisible-unicode"]
+last_verified = "2026-10-11"
+source = "https://github.com/charmbracelet/crush/blob/main/internal/config/load.go"
+
+[[surface]]
+scope = "home"
+glob = ".config/AGENTS.md"
+tool = "crush"
+kind = "instruction"
+check = ["invisible-unicode"]
+last_verified = "2026-10-11"
+source = "https://github.com/charmbracelet/crush/blob/main/internal/config/load.go"
 
 # --- Deployed by an administrator --------------------------------------------
 #

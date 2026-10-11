@@ -825,6 +825,8 @@ mod tests {
                     (Scope::Home, ".codeium/windsurf/memories/global_rules.md"),
                     (Scope::Home, ".agents/skills/review/SKILL.md"),
                     (Scope::Home, ".agents/AGENTS.md"),
+                    (Scope::Home, ".config/crush/CRUSH.md"),
+                    (Scope::Home, ".config/AGENTS.md"),
                     (Scope::System, "etc/devin/rules/policy.md"),
                     (Scope::System, "etc/windsurf/rules/policy.md"),
                 ],
@@ -1145,6 +1147,8 @@ mod tests {
             ),
             (".agents/skills/a/SKILL.md", SurfaceKind::Zed, &[]),
             (".agents/AGENTS.md", SurfaceKind::InstructionFile, &[]),
+            (".config/crush/CRUSH.md", SurfaceKind::InstructionFile, &[]),
+            (".config/AGENTS.md", SurfaceKind::InstructionFile, &[]),
             (".config/crush/crushrc", SurfaceKind::Crush, &[]),
             (
                 ".config/crush/crush.json",
@@ -1253,6 +1257,26 @@ mod tests {
         }
     }
 
+    /// Crush lists six spellings of its own context file, and a glob matches
+    /// the case the file carries on disk, so a row naming one name leaves the
+    /// other five invisible on any filesystem that keeps case.
+    #[test]
+    fn every_crush_context_file_name_is_matched() {
+        for name in [
+            "crush.md",
+            "crush.local.md",
+            "Crush.md",
+            "Crush.local.md",
+            "CRUSH.md",
+            "CRUSH.local.md",
+        ] {
+            let matched = shipped()
+                .lookup_in(&p(name), Scope::Repository)
+                .unwrap_or_else(|| panic!("{name} matched no row"));
+            assert_eq!(matched.kind, SurfaceKind::InstructionFile, "{name}");
+        }
+    }
+
     #[test]
     fn a_scan_enters_only_the_directories_its_rows_name() {
         assert_eq!(
@@ -1268,7 +1292,8 @@ mod tests {
                 ".codeium/windsurf/memories",
                 ".agents/skills",
                 ".agents",
-                ".config/crush"
+                ".config/crush",
+                ".config"
             ]
         );
         assert_eq!(
