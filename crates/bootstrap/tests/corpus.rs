@@ -10,9 +10,9 @@
 //! `corpus.snapshot` holds the findings clew reports in it, so a rule whose
 //! logic changes fails here rather than passing quietly under the same number.
 //!
-//! Half the fixtures are silent on purpose. Every rule's prose promises cases
-//! it does not fire on, and a rule that starts firing on one of those is as
-//! much a regression as one that stops firing at all.
+//! Nine of the twenty-two fixtures are silent on purpose. Every rule's prose
+//! promises cases it does not fire on, and a rule that starts firing on one of
+//! those is as much a regression as one that stops firing at all.
 //!
 //! A fixture is a manifest rather than a directory of real files, for one
 //! reason: clew scans its own repository in CI, and a directory of deliberate

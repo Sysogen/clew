@@ -45,15 +45,6 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `--format sarif`, since neither is a scan and accepting an option to then
   write something else is the silent kind of wrong.
 
-### Changed
-
-- `CONTRIBUTING.md` said pinning a rule's decisions "would take a corpus of
-  fixtures with their findings recorded, which clew does not have yet". It has
-  one now, and the section says what the corpus does and does not cover rather
-  than claiming more than it should.
-
-### Added
-
 - GitHub Actions workflows are read, which no row covered. A workflow is
   configuration that runs code with nobody at the keyboard, in a job holding
   its token and whatever secrets it was given; which events trigger it and
@@ -205,6 +196,13 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `$XDG_CONFIG_HOME/crush`. A machine that moves that variable keeps its global
   Crush config out of a home scan's reach, as it does for every other
   variable-rooted path.
+
+### Changed
+
+- `CONTRIBUTING.md` said pinning a rule's decisions "would take a corpus of
+  fixtures with their findings recorded, which clew does not have yet". It has
+  one now, and the section says what the corpus does and does not cover rather
+  than claiming more than it should.
 
 ### Fixed
 
