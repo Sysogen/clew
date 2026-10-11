@@ -645,6 +645,9 @@ fn workflow(root: &serde_json::Value) -> Vec<Step> {
         .collect()
 }
 
+/// A shell this file does not decide, which is read as no shell clew knows.
+const UNKNOWN_SHELL: &str = "unknown";
+
 /// The `defaults.run.shell` a workflow or a job sets, if it sets one.
 fn default_shell(at: &serde_json::Value) -> Option<&str> {
     non_blank(at.get("defaults")?.get("run")?.get("shell"))
@@ -652,24 +655,81 @@ fn default_shell(at: &serde_json::Value) -> Option<&str> {
 
 /// The shell a job's runner defaults to, which Windows decides differently.
 ///
-/// `runs-on` may be an expression or a matrix reference, which says nothing
-/// until the job runs. Reading the default as Bash there is the right guess:
-/// it is what every other runner uses, and a step whose shell is actually
-/// PowerShell reads as a shell clew does not judge either way.
+/// A `runs-on` naming its runner outright decides it. One written as an
+/// expression does not, so the matrix it refers to is read: a matrix holding
+/// only POSIX runners still decides it, and one that could be Windows leaves
+/// the shell unknown rather than guessed. Unknown is not read as a shell at
+/// all, which loses a finding on a job clew cannot place; calling it Bash
+/// would instead judge PowerShell by Bash's syntax, and report what was never
+/// written.
 fn runner_shell(job: &serde_json::Value) -> &'static str {
-    let names_windows = |value: Option<&serde_json::Value>| match value {
-        Some(serde_json::Value::String(text)) => text.to_lowercase().contains("windows"),
-        Some(serde_json::Value::Array(items)) => items.iter().any(|item| {
-            item.as_str()
-                .is_some_and(|text| text.to_lowercase().contains("windows"))
-        }),
-        _ => false,
+    let Some(runs_on) = job.get("runs-on").or_else(|| job.get("runner")) else {
+        return "bash";
     };
-    if names_windows(job.get("runs-on")) || names_windows(job.get("runner")) {
-        "pwsh"
-    } else {
-        "bash"
+    let named: Vec<&str> = match runs_on {
+        serde_json::Value::String(text) => vec![text.as_str()],
+        serde_json::Value::Array(items) => items.iter().filter_map(|i| i.as_str()).collect(),
+        _ => return UNKNOWN_SHELL,
+    };
+    let windows = |text: &str| text.to_lowercase().contains("windows");
+    if named.iter().any(|text| windows(text)) {
+        return "pwsh";
     }
+    // An expression is decided when the job runs. Where it names a matrix key
+    // this file holds, the values it can take are here to be read.
+    let referenced: Vec<&str> = named
+        .iter()
+        .filter(|text| text.contains("${{"))
+        .flat_map(|text| matrix_keys(text))
+        .collect();
+    if referenced.is_empty() {
+        return if named.iter().any(|text| text.contains("${{")) {
+            UNKNOWN_SHELL
+        } else {
+            "bash"
+        };
+    }
+    let matrix = job.get("strategy").and_then(|s| s.get("matrix"));
+    let mut resolved = 0;
+    for key in referenced {
+        let Some(values) = matrix.and_then(|m| m.get(key)) else {
+            return UNKNOWN_SHELL;
+        };
+        let options: Vec<&str> = match values {
+            serde_json::Value::String(text) => vec![text.as_str()],
+            serde_json::Value::Array(items) => items
+                .iter()
+                .filter_map(|item| {
+                    item.as_str()
+                        .or_else(|| item.get("os").and_then(serde_json::Value::as_str))
+                })
+                .collect(),
+            _ => return UNKNOWN_SHELL,
+        };
+        if options.is_empty() {
+            return UNKNOWN_SHELL;
+        }
+        if options.iter().any(|text| windows(text)) {
+            return UNKNOWN_SHELL;
+        }
+        resolved += 1;
+    }
+    if resolved == 0 { UNKNOWN_SHELL } else { "bash" }
+}
+
+/// Every matrix key a `runs-on` expression refers to, as `${{ matrix.os }}`
+/// does. A label may be built from more than one, and a key left unresolved
+/// leaves the runner unknown however well the others resolve.
+fn matrix_keys(text: &str) -> Vec<&str> {
+    text.split("matrix.")
+        .skip(1)
+        .filter_map(|after| {
+            let key = after
+                .split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '-'))
+                .next()?;
+            (!key.is_empty()).then_some(key)
+        })
+        .collect()
 }
 
 /// One server declaration. `None` when it reaches nothing: no command, and no
@@ -1416,6 +1476,77 @@ env = { DATABASE_URL = "postgres://u:hunter2@h/d", PGPORT = "5432" }
             shells("defaults:\n  run:\n    shell: pwsh\njobs:\n  a:\n    steps:\n      - run: x\n"),
             ["pwsh"]
         );
+    }
+
+    /// A `runs-on` written as an expression is decided when the job runs. The
+    /// matrix it names is here to be read, and a matrix that could be Windows
+    /// leaves the shell unknown rather than called Bash, which would judge
+    /// PowerShell by Bash's syntax.
+    #[test]
+    fn a_dynamic_runner_is_resolved_or_left_unknown() {
+        let shell = |yaml: &str| -> String {
+            steps_of(yaml)
+                .first()
+                .map(|s| s.shell.clone())
+                .unwrap_or_default()
+        };
+        let job = |body: &str| format!("jobs:\n  a:\n{body}    steps:\n      - run: x\n");
+
+        // Resolved through the matrix, both ways.
+        assert_eq!(
+            shell(&job(
+                "    runs-on: ${{ matrix.os }}\n    strategy:\n      matrix:\n        os: [ubuntu-latest, macos-latest]\n"
+            )),
+            "bash"
+        );
+        assert_eq!(
+            shell(&job(
+                "    runs-on: ${{ matrix.os }}\n    strategy:\n      matrix:\n        os: [windows-latest]\n"
+            )),
+            "unknown"
+        );
+        assert_eq!(
+            shell(&job(
+                "    runs-on: ${{ matrix.os }}\n    strategy:\n      matrix:\n        os: [ubuntu-latest, windows-latest]\n"
+            )),
+            "unknown"
+        );
+        // A matrix of objects still names the runner.
+        assert_eq!(
+            shell(&job(
+                "    runs-on: ${{ matrix.os }}\n    strategy:\n      matrix:\n        os:\n          - os: windows-2022\n"
+            )),
+            "unknown"
+        );
+        // A label built from two keys needs both: one resolving says nothing
+        // about the other, and a runner is only POSIX if every part is.
+        assert_eq!(
+            shell(&job(
+                "    runs-on: ${{ matrix.os }}-${{ matrix.arch }}\n    strategy:\n      matrix:\n        os: [ubuntu-latest]\n"
+            )),
+            "unknown"
+        );
+        assert_eq!(
+            shell(&job(
+                "    runs-on: ${{ matrix.os }}-${{ matrix.arch }}\n    strategy:\n      matrix:\n        os: [ubuntu-latest]\n        arch: [arm64]\n"
+            )),
+            "bash"
+        );
+        // No matrix to resolve it, or a key that is not there.
+        assert_eq!(shell(&job("    runs-on: ${{ matrix.os }}\n")), "unknown");
+        assert_eq!(
+            shell(&job(
+                "    runs-on: ${{ matrix.os }}\n    strategy:\n      matrix:\n        node: [20]\n"
+            )),
+            "unknown"
+        );
+        assert_eq!(
+            shell(&job("    runs-on: ${{ inputs.runner }}\n")),
+            "unknown"
+        );
+        // A runner named outright still decides it, and so does none at all.
+        assert_eq!(shell(&job("    runs-on: ubuntu-latest\n")), "bash");
+        assert_eq!(shell(&job("")), "bash");
     }
 
     /// A block scalar is one command of several lines, not several commands.

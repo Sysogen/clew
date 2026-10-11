@@ -92,6 +92,32 @@ const RUNNER_FORMS: &[&[&str]] = &[
     &["deno", "run"],
 ];
 
+/// A runner's options that take a value, so the value is not what it runs.
+///
+/// `npx --package @google/gemini-cli -- echo` runs `echo`, and a reader that
+/// took the first word not starting with a dash would take the package and
+/// report an agent that never ran. Listed together rather than per runner
+/// because these spellings do not collide, and a flag a runner does not have
+/// cannot appear in its command line.
+const RUNNER_VALUED: &[&str] = &[
+    "--package",
+    "-p",
+    "--call",
+    "-c",
+    "--node-arg",
+    "-n",
+    "--registry",
+    "--cache",
+    "--userconfig",
+    "--shell",
+    "--config",
+    "--import-map",
+    "--lock",
+];
+
+/// What ends a command's own options: everything after it is an operand.
+const TERMINATOR: &str = "--";
+
 /// The package names each agent is published under, which is how a runner
 /// names it.
 const PACKAGES: &[(&str, &str)] = &[
@@ -125,14 +151,16 @@ impl Rule for AgentRunsUnattended {
                 prompt: Claude Code's --dangerously-skip-permissions or --permission-mode \
                 bypassPermissions, Codex's --dangerously-bypass-approvals-and-sandbox, \
                 or Gemini CLI's --yolo, -y or --approval-mode yolo. Nothing asks and \
-                nothing bounds what the agent then does. In a CI workflow this runs on \
-                every push, with the repository's secrets in the environment and nobody \
-                at the keyboard, so a prompt injection reaching the model reaches the \
-                job's credentials. A flag that narrows a prompt rather than removing it \
-                is not flagged, nor is a value the flag's own reference does not define. \
-                Running an agent unattended is a deliberate pattern and some jobs do it \
-                in a sandbox: what this reports is that the prompt was removed, not that \
-                the job is wrong."
+                nothing bounds what the agent then does. In a CI workflow it runs \
+                whenever that workflow is triggered, with nobody at the keyboard and \
+                with the job's token and whatever secrets the job was given, so a prompt \
+                injection reaching the model reaches those. Which events trigger it and \
+                which secrets it holds are not read here, so neither is claimed. A flag \
+                that narrows a prompt rather than removing it is not flagged, nor is a \
+                value the flag's own reference does not define. Running an agent \
+                unattended is a deliberate pattern and some jobs do it in a sandbox: \
+                what this reports is that the prompt was removed, not that the job is \
+                wrong."
     }
 
     fn remediation(&self) -> &'static str {
@@ -215,9 +243,12 @@ fn waived(words: &[Option<String>]) -> Option<&'static str> {
     let named = agent(words)?;
     let (_, flags) = AGENTS.iter().find(|(name, _)| *name == named.0)?;
     // Only what follows the agent's own name: a runner's `-y` is its own.
+    // Stopping at the terminator, because `claude -- --dangerously-skip-\
+    // permissions` passes that text as an argument rather than as a flag.
     let given: Vec<&str> = words[named.1..]
         .iter()
         .filter_map(|word| word.as_deref())
+        .take_while(|word| *word != TERMINATOR)
         .collect();
     flags
         .iter()
@@ -262,18 +293,30 @@ fn agent(words: &[Option<String>]) -> Option<(&'static str, usize)> {
                 words.get(at).and_then(|w| w.as_deref()).map(basename) == Some(*word)
             })
     })?;
-    // The runner's own options come before what it runs, so the program is
-    // the first operand after the form: `npx -y claude` is npx answering its
-    // own prompt, not an agent being given a flag.
-    let (at, operand) = words
+    // The runner's own options come before what it runs. A terminator ends
+    // them outright; otherwise each option is stepped over, and so is the
+    // value of one that takes a value, or `--package X Y` would read X as the
+    // program when Y is.
+    let rest = &words[form.len()..];
+    let ends = rest
         .iter()
-        .enumerate()
-        .skip(form.len())
-        .find_map(|(at, word)| {
-            let word = word.as_deref()?;
-            (!word.starts_with('-')).then_some((at, word))
-        })?;
-    named_agent(operand).map(|name| (name, at + 1))
+        .position(|word| word.as_deref() == Some(TERMINATOR));
+    let (at, operand) = if let Some(end) = ends {
+        rest.get(end + 1..)?
+            .iter()
+            .enumerate()
+            .find_map(|(at, word)| Some((end + 1 + at, word.as_deref()?)))?
+    } else {
+        let mut at = 0;
+        loop {
+            let word = rest.get(at)?.as_deref()?;
+            if !word.starts_with('-') {
+                break (at, word);
+            }
+            at += if RUNNER_VALUED.contains(&word) { 2 } else { 1 };
+        }
+    };
+    named_agent(operand).map(|name| (name, form.len() + at + 1))
 }
 
 /// The agent a word names, by its own name or by the package it ships as.
@@ -451,6 +494,44 @@ mod tests {
             "yarn dlx @google/gemini-cli --yolo",
             "bun x @google/gemini-cli --yolo",
             "deno run @openai/codex --dangerously-bypass-approvals-and-sandbox",
+        ] {
+            assert!(fires(run), "{run}");
+        }
+    }
+
+    /// `--` ends a command's own options, so what follows is an argument. A
+    /// reader that kept scanning reports a prompt the flag never waived.
+    #[test]
+    fn a_flag_after_the_terminator_is_an_argument() {
+        for run in [
+            "claude -- --dangerously-skip-permissions",
+            "claude -p review -- --yolo --dangerously-skip-permissions",
+            "codex -- --dangerously-bypass-approvals-and-sandbox",
+            "gemini -- --yolo",
+        ] {
+            assert!(!fires(run), "{run}");
+        }
+        // Before it, the same flag is the flag.
+        assert!(fires(
+            "claude --dangerously-skip-permissions -- review this"
+        ));
+    }
+
+    /// A runner's option may take a value, and the value is not what runs.
+    /// `npx --package X -- echo` runs `echo`, so no agent runs at all.
+    #[test]
+    fn a_runners_option_value_is_not_what_it_runs() {
+        for run in [
+            "npx --package @google/gemini-cli -- echo --yolo",
+            "npx -p @anthropic-ai/claude-code -- echo --dangerously-skip-permissions",
+            "npm exec --package @openai/codex -- echo --dangerously-bypass-approvals-and-sandbox",
+        ] {
+            assert!(!fires(run), "{run}");
+        }
+        // The same options with the agent as the program do run it.
+        for run in [
+            "npx --package @google/gemini-cli -- gemini --yolo",
+            "npx --registry https://r.invalid claude --dangerously-skip-permissions",
         ] {
             assert!(fires(run), "{run}");
         }

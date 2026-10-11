@@ -43,8 +43,8 @@ CLAUDE.md                instruction file
 
 `path` reports every file an agent reads as configuration, across Claude Code,
 Codex, Crush, Cursor, VS Code, Gemini CLI, Kiro, Zed, Windsurf, Cline,
-Continue, Aider, Copilot and devcontainers, plus `.env` files and the GitHub
-Actions workflows that run an agent on a push. From those it reads:
+Continue, Aider, Copilot and devcontainers, plus `.env` files and GitHub
+Actions workflow files, whose `run:` steps are read as the shell they are. From those it reads:
 
 - the hooks each registers, the event each runs on, and whether it runs a
   command or injects a prompt, a hook switched off included;

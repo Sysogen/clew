@@ -55,10 +55,21 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   A package runner is read by the form it runs things in, not by its name.
   `npm view @openai/codex` and `pnpm add @google/gemini-cli` name a package
   without running it, so only `npx`, `bunx`, `uvx`, `npm exec`, `pnpm dlx`,
-  `pnpm exec`, `yarn dlx`, `bun x` and `deno run` count, and only their first
-  operand. A wrapper is read through, so `env FOO=1 claude --flag` and
-  `sudo -u ci gemini --yolo` are found; a runner handed a wrapper that then
-  runs the agent is knowingly missed, which the rule says.
+  `pnpm exec`, `yarn dlx`, `bun x` and `deno run` count, and within those the
+  option values and the `--` separator are read before the program, since
+  `npx --package @google/gemini-cli -- echo` runs `echo`. A wrapper is read
+  through, so `env FOO=1 claude --flag` and `sudo -u ci gemini --yolo` are
+  found; a runner handed a wrapper that then runs the agent is knowingly
+  missed, which the rule says.
+
+  `--` ends a command's own options, so `claude -- --dangerously-skip-\
+  permissions` passes that text as an argument and waives nothing.
+
+  A `runs-on` written as an expression is resolved through the matrix it
+  names. A matrix of POSIX runners still decides the shell; one that could be
+  Windows, or a key this file does not hold, leaves it unknown and unjudged.
+  Every matrix key a runner label refers to has to resolve, because one
+  resolving says nothing about another.
 
 - `Format::Yaml`, which the workflow rows need and which nothing else uses
   yet. It is deliberately not folded in with JSON the way JSONC is: no tool
@@ -76,6 +87,15 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Two steps whose blocks open on the same line were both placed in the first
   of them, because the copy was counted on the whole block while placement
   looks for the line it opens with. Counted on the same text now.
+
+- A step was redacted before the rules read it, which suppressed findings
+  rather than producing wrong ones. Masking `TOKEN=$(gh auth token)` to
+  `TOKEN=**** auth token)` destroys where the token came from, so the
+  exfiltration below it went unreported: the same command in a hook was a
+  `credential-exfiltration` finding and in a workflow was nothing. A step is
+  now judged as the workflow wrote it and redacted on its way into the report,
+  which is what a hook's command already did. A custom `shell:` is redacted
+  too, being a command line a token can be written into.
 
 - Two agent invocations in one block both pointed at the first, because the
   line holding the flag was looked for from the start of the file rather than

