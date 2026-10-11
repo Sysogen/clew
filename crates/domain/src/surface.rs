@@ -46,7 +46,7 @@ pub enum SurfaceKind {
     HookScript,
     /// A skill definition an agent loads.
     Skill,
-    /// A continuous integration workflow, which runs on a push.
+    /// A continuous integration workflow, run by whatever triggers it.
     Workflow,
 }
 

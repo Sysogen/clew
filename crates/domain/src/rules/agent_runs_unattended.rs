@@ -190,10 +190,11 @@ impl Rule for AgentRunsUnattended {
         let from = where_written(source, command, *occurrence);
         let mut seen: Vec<&str> = Vec::new();
         let mut found = Vec::new();
-        for flag in shell::commands(command)
+        for removes in shell::commands(command)
             .iter()
             .filter_map(|words| waived(words))
         {
+            let flag = removes.flag;
             // A `run:` block spans lines, and the one holding the flag is the
             // line to read. One block may invoke an agent twice, so the nth
             // command waiving by this flag takes the nth line passing it.
@@ -202,7 +203,7 @@ impl Rule for AgentRunsUnattended {
             let nth = seen.iter().filter(|held| **held == flag).count();
             seen.push(flag);
             found.push(
-                from.and_then(|from| where_flagged(source, command, flag, nth, from))
+                from.and_then(|from| where_flagged(source, command, removes, nth, from))
                     .or(from)
                     .and_then(|at| found_at(path, self.id(), source, at, width))
                     .unwrap_or_else(|| about_file(path, self.id(), flag, width)),
@@ -212,21 +213,29 @@ impl Rule for AgentRunsUnattended {
     }
 }
 
-/// Where `source` writes the `nth` line of `command` that passes `flag`,
-/// looked for from `from` so an earlier step passing the same flag is not it.
+/// Where `source` writes the `nth` line of `command` that waives the prompt by
+/// `removes`, looked for from `from` so an earlier step is not it.
+///
+/// The line has to waive it, not merely mention the flag. A block holding
+/// `claude --permission-mode plan` above `claude --permission-mode
+/// bypassPermissions` has one finding, and pointing it at the first line sends
+/// a reviewer to an invocation that asks about everything.
 ///
 /// `None` when the command holds no such line, or when the line is not in the
 /// text as written, which a quoted or folded block makes possible.
 fn where_flagged(
     source: &str,
     command: &str,
-    flag: &str,
+    removes: &Removes,
     nth: usize,
     from: usize,
 ) -> Option<usize> {
     let line = command
         .lines()
-        .filter(|line| line.split_whitespace().any(|word| word.starts_with(flag)))
+        .filter(|line| {
+            let words: Vec<&str> = line.split_whitespace().collect();
+            passed(&words, removes)
+        })
         .nth(nth)?
         .trim();
     let rest = source.get(from..)?;
@@ -236,8 +245,8 @@ fn where_flagged(
         .map(|(at, _)| from + at)
 }
 
-/// The flag that waived the prompt in one command, if one did.
-fn waived(words: &[Option<String>]) -> Option<&'static str> {
+/// How the prompt was waived in one command, if it was.
+fn waived(words: &[Option<String>]) -> Option<&'static Removes> {
     // A wrapper runs what follows it, so the agent may not be the first word.
     let words = shell::unwrapped(words);
     let named = agent(words)?;
@@ -250,10 +259,7 @@ fn waived(words: &[Option<String>]) -> Option<&'static str> {
         .filter_map(|word| word.as_deref())
         .take_while(|word| *word != TERMINATOR)
         .collect();
-    flags
-        .iter()
-        .find(|removes| passed(&given, removes))
-        .map(|removes| removes.flag)
+    flags.iter().find(|removes| passed(&given, removes))
 }
 
 /// Whether `given` passes this flag in a form that removes the prompt.
@@ -609,6 +615,38 @@ mod tests {
         assert_eq!(found.len(), 1, "{found:?}");
         assert_eq!(found[0].at.map(|p| p.line), Some(6), "{found:?}");
         assert_eq!(found[0].severity, Severity::High);
+    }
+
+    /// A block may invoke an agent safely above invoking it unsafely. The
+    /// finding belongs on the line that waives the prompt: pointing it at the
+    /// one that asks sends a reviewer to code that is fine, who then has
+    /// every reason to dismiss the report.
+    #[test]
+    fn a_finding_lands_on_the_line_that_waives_not_one_that_mentions_the_flag() {
+        let source = "jobs:\n  a:\n    steps:\n      - run: |\n          claude --permission-mode plan -p safe\n          claude --permission-mode bypassPermissions -p go\n";
+        let run = "claude --permission-mode plan -p safe\nclaude --permission-mode bypassPermissions -p go";
+
+        let found = found_in(run, source);
+
+        assert_eq!(found.len(), 1, "only the second waives: {found:?}");
+        assert_eq!(found[0].at.map(|p| p.line), Some(6), "{found:?}");
+        assert!(
+            found[0].evidence.as_str().contains("bypassPermissions"),
+            "{found:?}"
+        );
+    }
+
+    /// The same, where the earlier line writes the flag with a value that
+    /// waives nothing. `--yolo=false` holds the flag and waives no prompt.
+    #[test]
+    fn a_flag_given_a_value_that_waives_nothing_is_not_the_line() {
+        let source = "jobs:\n  a:\n    steps:\n      - run: |\n          gemini --yolo=false -p safe\n          gemini --yolo -p go\n";
+        let run = "gemini --yolo=false -p safe\ngemini --yolo -p go";
+
+        let found = found_in(run, source);
+
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].at.map(|p| p.line), Some(6), "{found:?}");
     }
 
     /// A word whose value the file does not hold is not a flag. Guessing what

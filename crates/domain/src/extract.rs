@@ -648,6 +648,13 @@ fn workflow(root: &serde_json::Value) -> Vec<Step> {
 /// A shell this file does not decide, which is read as no shell clew knows.
 const UNKNOWN_SHELL: &str = "unknown";
 
+/// What a runner label says when it names a POSIX operating system.
+///
+/// A label is read as POSIX only by saying so. `self-hosted`, and a label a
+/// project invented, say nothing about the machine behind them, and a
+/// self-hosted runner is as likely to be Windows as not.
+const POSIX_RUNNERS: &[&str] = &["ubuntu", "macos", "linux", "darwin", "debian", "alpine"];
+
 /// The `defaults.run.shell` a workflow or a job sets, if it sets one.
 fn default_shell(at: &serde_json::Value) -> Option<&str> {
     non_blank(at.get("defaults")?.get("run")?.get("shell"))
@@ -663,6 +670,7 @@ fn default_shell(at: &serde_json::Value) -> Option<&str> {
 /// would instead judge PowerShell by Bash's syntax, and report what was never
 /// written.
 fn runner_shell(job: &serde_json::Value) -> &'static str {
+    // No runner named at all is the hosted default, which is Linux.
     let Some(runs_on) = job.get("runs-on").or_else(|| job.get("runner")) else {
         return "bash";
     };
@@ -672,6 +680,10 @@ fn runner_shell(job: &serde_json::Value) -> &'static str {
         _ => return UNKNOWN_SHELL,
     };
     let windows = |text: &str| text.to_lowercase().contains("windows");
+    let posix = |text: &str| {
+        let text = text.to_lowercase();
+        POSIX_RUNNERS.iter().any(|name| text.contains(name))
+    };
     if named.iter().any(|text| windows(text)) {
         return "pwsh";
     }
@@ -683,19 +695,26 @@ fn runner_shell(job: &serde_json::Value) -> &'static str {
         .flat_map(|text| matrix_keys(text))
         .collect();
     if referenced.is_empty() {
-        return if named.iter().any(|text| text.contains("${{")) {
-            UNKNOWN_SHELL
-        } else {
+        // A label has to say which OS it is. `self-hosted` and a label a
+        // project made up say nothing, and a self-hosted runner may be
+        // Windows, so neither is read as a POSIX shell.
+        return if named.iter().any(|text| posix(text)) {
             "bash"
+        } else {
+            UNKNOWN_SHELL
         };
     }
     let matrix = job.get("strategy").and_then(|s| s.get("matrix"));
-    let mut resolved = 0;
+    // Every key the label refers to, since a part left unresolved leaves the
+    // runner unknown however well the others resolve. A key may hold an
+    // architecture rather than an OS, so what decides it is that some part
+    // names a POSIX system and no part names Windows.
+    let mut options: Vec<&str> = Vec::new();
     for key in referenced {
         let Some(values) = matrix.and_then(|m| m.get(key)) else {
             return UNKNOWN_SHELL;
         };
-        let options: Vec<&str> = match values {
+        let held: Vec<&str> = match values {
             serde_json::Value::String(text) => vec![text.as_str()],
             serde_json::Value::Array(items) => items
                 .iter()
@@ -706,15 +725,19 @@ fn runner_shell(job: &serde_json::Value) -> &'static str {
                 .collect(),
             _ => return UNKNOWN_SHELL,
         };
-        if options.is_empty() {
+        if held.is_empty() {
             return UNKNOWN_SHELL;
         }
-        if options.iter().any(|text| windows(text)) {
-            return UNKNOWN_SHELL;
-        }
-        resolved += 1;
+        options.extend(held);
     }
-    if resolved == 0 { UNKNOWN_SHELL } else { "bash" }
+    if options.iter().any(|text| windows(text)) {
+        return UNKNOWN_SHELL;
+    }
+    if options.iter().any(|text| posix(text)) {
+        "bash"
+    } else {
+        UNKNOWN_SHELL
+    }
 }
 
 /// Every matrix key a `runs-on` expression refers to, as `${{ matrix.os }}`
@@ -1547,6 +1570,25 @@ env = { DATABASE_URL = "postgres://u:hunter2@h/d", PGPORT = "5432" }
         // A runner named outright still decides it, and so does none at all.
         assert_eq!(shell(&job("    runs-on: ubuntu-latest\n")), "bash");
         assert_eq!(shell(&job("")), "bash");
+        // A label has to say which OS it is. `self-hosted` and a label a
+        // project invented say nothing, and a self-hosted runner may be
+        // Windows, so neither is read as a POSIX shell.
+        assert_eq!(shell(&job("    runs-on: self-hosted\n")), "unknown");
+        assert_eq!(shell(&job("    runs-on: our-big-box\n")), "unknown");
+        assert_eq!(
+            shell(&job("    runs-on: [self-hosted, our-big-box]\n")),
+            "unknown"
+        );
+        // Said alongside, it decides it.
+        assert_eq!(shell(&job("    runs-on: [self-hosted, linux]\n")), "bash");
+        assert_eq!(shell(&job("    runs-on: macos-14\n")), "bash");
+        // And a matrix of invented labels resolves no further than one label.
+        assert_eq!(
+            shell(&job(
+                "    runs-on: ${{ matrix.os }}\n    strategy:\n      matrix:\n        os: [our-big-box]\n"
+            )),
+            "unknown"
+        );
     }
 
     /// A block scalar is one command of several lines, not several commands.

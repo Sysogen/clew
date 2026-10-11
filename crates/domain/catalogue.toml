@@ -393,8 +393,9 @@ source = "https://containers.dev/implementors/json_reference/"
 
 # --- Continuous integration ------------------------------------------------
 #
-# A workflow is configuration that runs code on every push, in a job holding
-# the repository's secrets, with nobody at the keyboard. Only `run:` steps are
+# A workflow is configuration that runs code with nobody at the keyboard, in a
+# job holding its token and whatever secrets it was given. Which events trigger
+# it and which secrets it receives are not read here. Only `run:` steps are
 # read: a step naming an action with `uses` runs whatever that action runs,
 # which this file does not say, so the official agent actions are not reached
 # this way. GitHub Actions alone for now; the other providers are the same

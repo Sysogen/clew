@@ -8,12 +8,14 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - GitHub Actions workflows are read, which no row covered. A workflow is
-  configuration that runs code on every push, in a job holding the
-  repository's secrets, with nobody at the keyboard. Each `run:` step is
-  judged as the shell it is, so the six rules that already read a hook's
-  command read a CI step too: a `curl | sh` in a workflow is
+  configuration that runs code with nobody at the keyboard, in a job holding
+  its token and whatever secrets it was given; which events trigger it and
+  which secrets it receives are not read, so neither is claimed. Each `run:`
+  step is judged as the shell it is, so the five rules that already read a
+  hook's command read a CI step too: a `curl | sh` in a workflow is
   `download-and-execute` without a new rule, and `credential-exfiltration`
-  already knows what a token looks like.
+  already knows what a token looks like. `invisible-unicode` reads the file
+  as text rather than as commands, which is a sixth rule by a different path.
 
   `agent-runs-unattended`, severity high, flags a step that runs an agent CLI
   with the flag waiving every permission prompt. Each flag was read from that
@@ -77,34 +79,6 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   mode out of a workflow that happened to carry the key path. A CI workflow
   has a `permissions:` block of its own, which means something else entirely.
 
-### Fixed
-
-- A command written bare rather than as a JSON string yielded its finding
-  about the file rather than at the line, since placement looked only for the
-  quoted form a settings file writes. Every finding in a YAML `run:` block
-  would have been a path and nothing else to go on.
-
-- Two steps whose blocks open on the same line were both placed in the first
-  of them, because the copy was counted on the whole block while placement
-  looks for the line it opens with. Counted on the same text now.
-
-- A step was redacted before the rules read it, which suppressed findings
-  rather than producing wrong ones. Masking `TOKEN=$(gh auth token)` to
-  `TOKEN=**** auth token)` destroys where the token came from, so the
-  exfiltration below it went unreported: the same command in a hook was a
-  `credential-exfiltration` finding and in a workflow was nothing. A step is
-  now judged as the workflow wrote it and redacted on its way into the report,
-  which is what a hook's command already did. A custom `shell:` is redacted
-  too, being a command line a token can be written into.
-
-- Two agent invocations in one block both pointed at the first, because the
-  line holding the flag was looked for from the start of the file rather than
-  from the block, and without an ordinal. Each is now looked for inside its
-  own block, counted per flag so two commands waiving by different ones are
-  told apart.
-
-### Added
-
 - Crush is read, which it was not at all. Five rows cover both forms it loads:
   `crushrc`, which is Bash that runs with the user's shell privileges before
   the UI appears, and the deprecated `crush.json`, which is still discovered
@@ -167,6 +141,30 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   variable-rooted path.
 
 ### Fixed
+
+- A command written bare rather than as a JSON string yielded its finding
+  about the file rather than at the line, since placement looked only for the
+  quoted form a settings file writes. Every finding in a YAML `run:` block
+  would have been a path and nothing else to go on.
+
+- Two steps whose blocks open on the same line were both placed in the first
+  of them, because the copy was counted on the whole block while placement
+  looks for the line it opens with. Counted on the same text now.
+
+- A step was redacted before the rules read it, which suppressed findings
+  rather than producing wrong ones. Masking `TOKEN=$(gh auth token)` to
+  `TOKEN=**** auth token)` destroys where the token came from, so the
+  exfiltration below it went unreported: the same command in a hook was a
+  `credential-exfiltration` finding and in a workflow was nothing. A step is
+  now judged as the workflow wrote it and redacted on its way into the report,
+  which is what a hook's command already did. A custom `shell:` is redacted
+  too, being a command line a token can be written into.
+
+- Two agent invocations in one block both pointed at the first, because the
+  line holding the flag was looked for from the start of the file rather than
+  from the block, and without an ordinal. Each is now looked for inside its
+  own block, counted per flag so two commands waiving by different ones are
+  told apart.
 
 - A pre-approval under a key absent from the placement list yielded its finding
   about the file rather than at the line, quietly, since the finding still
