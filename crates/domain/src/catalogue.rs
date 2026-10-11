@@ -511,6 +511,8 @@ mod tests {
             (".kiro/steering/product.md", SurfaceKind::Kiro),
             (".kiro/hooks/lint-on-save.json", SurfaceKind::Kiro),
             (".codex/config.toml", SurfaceKind::Codex),
+            (".codex/hooks.json", SurfaceKind::Codex),
+            (".codex/hooks/session_start.py", SurfaceKind::HookScript),
             (".gemini/settings.json", SurfaceKind::Gemini),
             (".cursor/mcp.json", SurfaceKind::Cursor),
             (".cursor/rules/react.mdc", SurfaceKind::Cursor),
@@ -571,18 +573,14 @@ mod tests {
             ("cline_mcp_settings.json", servers),
             (
                 ".codex/config.toml",
-                &[Extraction::McpServers, Extraction::Autonomy][..],
+                &[
+                    Extraction::McpServers,
+                    Extraction::Autonomy,
+                    Extraction::Hooks,
+                ][..],
             ),
+            (".codex/hooks.json", &[Extraction::Hooks][..]),
         ];
-        let formats = [
-            (".codex/config.toml", Format::Toml),
-            (".zed/settings.json", Format::Jsonc),
-            (".vscode/settings.json", Format::Jsonc),
-            (".vscode/mcp.json", Format::Jsonc),
-            (".vscode/tasks.json", Format::Jsonc),
-            (".claude/skills/a/SKILL.md", Format::Markdown),
-        ];
-
         for (path, kind) in expected {
             let matched = shipped()
                 .lookup(&p(path))
@@ -597,13 +595,46 @@ mod tests {
                 matched.extract, want,
                 "{path} declares the wrong extractions"
             );
-
-            let expected_format = formats
-                .iter()
-                .find(|(q, _)| *q == path)
-                .map_or(Format::Json, |(_, f)| *f);
-            assert_eq!(matched.format, expected_format, "{path}");
         }
+    }
+
+    /// Every row that is not plain JSON, and nothing else. A row whose format
+    /// is wrong parses as a format the file is not written in, which reads as
+    /// a file that declares nothing.
+    #[test]
+    fn a_row_reads_the_format_its_file_is_written_in() {
+        let formats = [
+            (Scope::Repository, ".codex/config.toml", Format::Toml),
+            (Scope::Home, ".codex/config.toml", Format::Toml),
+            (Scope::Repository, ".zed/settings.json", Format::Jsonc),
+            (Scope::Repository, ".vscode/settings.json", Format::Jsonc),
+            (Scope::Repository, ".vscode/mcp.json", Format::Jsonc),
+            (Scope::Repository, ".vscode/tasks.json", Format::Jsonc),
+            (
+                Scope::Repository,
+                ".claude/skills/a/SKILL.md",
+                Format::Markdown,
+            ),
+        ];
+
+        for (scope, path, wanted) in formats {
+            let matched = shipped()
+                .lookup_in(&p(path), scope)
+                .unwrap_or_else(|| panic!("{path} matched no {scope:?} row"));
+            assert_eq!(matched.format, wanted, "{path} in {scope:?}");
+        }
+
+        // Counted, so a row that stops being JSON without a case here fails
+        // rather than being read as JSON quietly.
+        assert_eq!(
+            shipped()
+                .rules()
+                .iter()
+                .filter(|rule| rule.format != "json")
+                .count(),
+            formats.len(),
+            "every row that is not JSON needs a case here"
+        );
     }
 
     #[test]
@@ -772,9 +803,14 @@ mod tests {
                 ],
                 prose,
             ),
-            // A hook script is the one surface every shell rule reads.
+            // A hook script is the one surface every shell rule reads,
+            // wherever the tool keeps its scripts.
             (
-                vec![(Scope::Repository, ".claude/hooks/sync.sh")],
+                vec![
+                    (Scope::Repository, ".claude/hooks/sync.sh"),
+                    (Scope::Repository, ".codex/hooks/session_start.py"),
+                    (Scope::Home, ".codex/hooks/session_start.py"),
+                ],
                 vec![
                     RuleId::InvisibleUnicode,
                     RuleId::OpaqueHook,
@@ -826,6 +862,7 @@ mod tests {
                 vec![
                     (Scope::Repository, ".codex/config.toml"),
                     (Scope::Repository, ".zed/settings.json"),
+                    (Scope::Home, ".codex/config.toml"),
                 ],
                 vec![RuleId::BypassPermissions, RuleId::PlaintextTransport],
             ),
@@ -1024,8 +1061,24 @@ mod tests {
             Extraction::Autonomy,
         ][..];
         let servers = &[Extraction::McpServers][..];
+        let hooks = &[Extraction::Hooks][..];
         let expected: &[(&str, SurfaceKind, &[Extraction])] = &[
             (".claude/settings.json", SurfaceKind::ClaudeCode, all),
+            (
+                ".codex/config.toml",
+                SurfaceKind::Codex,
+                &[
+                    Extraction::McpServers,
+                    Extraction::Autonomy,
+                    Extraction::Hooks,
+                ][..],
+            ),
+            (".codex/hooks.json", SurfaceKind::Codex, hooks),
+            (
+                ".codex/hooks/session_start.py",
+                SurfaceKind::HookScript,
+                &[],
+            ),
             (
                 ".gemini/settings.json",
                 SurfaceKind::Gemini,
@@ -1118,6 +1171,8 @@ mod tests {
             shipped().roots_in(Scope::Home),
             vec![
                 ".claude",
+                ".codex",
+                ".codex/hooks",
                 ".gemini",
                 ".kiro/settings",
                 ".kiro/steering",
