@@ -34,8 +34,8 @@ USAGE:
 
 OPTIONS:
     --format FORMAT     text, the default; json, one document for tools; jsonl,
-                        one document per scan on its own line; or sarif, a
-                        code scanning log, for a path only
+                        one document per scan on its own line, for a scan
+                        only; or sarif, a code scanning log, for a path only
     --fail-on LEVEL     exit 2 when a finding is LEVEL or worse: low, medium,
                         or high
 
@@ -250,7 +250,14 @@ fn run(args: impl IntoIterator<Item = String>, out: &mut impl Write, err: &mut i
     };
     match written {
         Some(Ok(text)) => {
-            let _ = writeln!(out, "{text}");
+            // `lines` ends every record with a newline of its own. A second
+            // one is a blank line, which is not a record a reader taking the
+            // file line by line can do anything with.
+            if format == Format::Jsonl {
+                let _ = write!(out, "{text}");
+            } else {
+                let _ = writeln!(out, "{text}");
+            }
         }
         Some(Err(error)) => {
             let _ = writeln!(err, "clew: {error}");
@@ -399,6 +406,31 @@ mod tests {
         assert!(
             said.contains(&format!("catalogue {}", catalogue().revision())),
             "{said}"
+        );
+    }
+
+    /// A reader takes a JSONL file a line at a time, so every line has to be
+    /// a record. A blank one is not, and appending run after run to the same
+    /// file is what this format is for.
+    #[test]
+    fn jsonl_writes_records_and_nothing_else() {
+        let root = tree("jsonl", &[("CLAUDE.md", HIDDEN)]);
+
+        let (status, said, _) = clew_path(&root, &["--format", "jsonl"]);
+
+        assert_eq!(status, 0, "{said}");
+        assert!(said.ends_with('\n'), "{said:?}");
+        assert!(
+            !said.ends_with("\n\n"),
+            "a blank line is not a record: {said:?}"
+        );
+        let held: Vec<&str> = said.lines().collect();
+        assert_eq!(held.len(), 1, "{held:?}");
+        // That each line is a document is the adapter's test; this is about
+        // what the command writes around them.
+        assert!(
+            held[0].starts_with('{') && held[0].ends_with('}'),
+            "{held:?}"
         );
     }
 

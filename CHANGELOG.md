@@ -39,7 +39,11 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the shape a run over many repositories appends to. The same writer over the
   same types as `--format json`, so a line and a one-scan document cannot
   drift apart. Every line repeats the version numbers, because a line read on
-  its own has to say what judged it.
+  its own has to say what judged it, and every line is a record: nothing else
+  is written, so appending run after run leaves a file a reader can take a
+  line at a time. `rules` and `explain` refuse it as they refuse
+  `--format sarif`, since neither is a scan and accepting an option to then
+  write something else is the silent kind of wrong.
 
 ### Changed
 
