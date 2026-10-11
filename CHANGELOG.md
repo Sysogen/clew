@@ -27,6 +27,10 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   A fixture is a manifest rather than a directory of real files. clew scans
   its own repository in CI, and a tree of deliberate findings would fail that
   run, so each fixture is written to a temporary directory and scanned there.
+  Nothing a fixture lays out is platform-dependent: `opaque-hook` is a file of
+  invalid UTF-8 rather than a symbolic link, because a link cannot be made the
+  same way everywhere and a fixture that lays out differently on one operating
+  system records a snapshot that agrees with itself and nothing else.
   The test calls the library rather than the binary, because
   `check-no-exec.sh` reads every Rust file in the repository and a test that
   spawned a process would break the guarantee it checks.

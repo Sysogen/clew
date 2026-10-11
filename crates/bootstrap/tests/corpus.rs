@@ -37,8 +37,9 @@ use clew_domain::scope::Scope;
 /// Where a manifest names the file that follows it.
 const FILE: &str = ">>> ";
 
-/// Where a manifest names a symbolic link and what it points at.
-const LINK: &str = ">>>link ";
+/// Where a manifest names a file whose bytes follow as hex, for content a
+/// text manifest cannot hold.
+const BYTES: &str = ">>>bytes ";
 
 #[test]
 fn every_fixture_reports_what_the_snapshot_records() {
@@ -132,29 +133,35 @@ fn fixtures() -> Vec<PathBuf> {
 }
 
 /// Write a manifest out as a tree, and say where.
+///
+/// Nothing here is platform-dependent on purpose. A fixture that laid out
+/// differently on one operating system would record a different snapshot
+/// there, which is a corpus that agrees with itself and nothing else.
 fn laid_out(name: &str, source: &str) -> PathBuf {
     let at = std::env::temp_dir().join(format!("clew-corpus-{name}-{}", std::process::id()));
     let _ = fs::remove_dir_all(&at);
     fs::create_dir_all(&at).expect("a temporary directory");
 
-    let mut writing: Option<(PathBuf, String)> = None;
-    let write = |held: Option<(PathBuf, String)>| {
-        if let Some((path, text)) = held {
-            fs::create_dir_all(path.parent().expect("a parent")).expect("a directory");
+    let mut writing: Option<(PathBuf, String, bool)> = None;
+    let write = |held: Option<(PathBuf, String, bool)>| {
+        let Some((path, text, hex)) = held else {
+            return;
+        };
+        fs::create_dir_all(path.parent().expect("a parent")).expect("a directory");
+        if hex {
+            fs::write(&path, decoded(&text)).expect("a written file");
+        } else {
             fs::write(&path, text).expect("a written file");
         }
     };
     for line in source.lines() {
-        if let Some(rest) = line.strip_prefix(LINK) {
+        if let Some(path) = line.strip_prefix(BYTES) {
             write(writing.take());
-            let (from, to) = rest.split_once(" -> ").expect("a link and its target");
-            let from = at.join(from.trim());
-            fs::create_dir_all(from.parent().expect("a parent")).expect("a directory");
-            symlink(to.trim(), &from);
+            writing = Some((at.join(path.trim()), String::new(), true));
         } else if let Some(path) = line.strip_prefix(FILE) {
             write(writing.take());
-            writing = Some((at.join(path.trim()), String::new()));
-        } else if let Some((_, text)) = writing.as_mut() {
+            writing = Some((at.join(path.trim()), String::new(), false));
+        } else if let Some((_, text, _)) = writing.as_mut() {
             text.push_str(line);
             text.push('\n');
         }
@@ -163,16 +170,20 @@ fn laid_out(name: &str, source: &str) -> PathBuf {
     at
 }
 
-#[cfg(unix)]
-fn symlink(to: &str, from: &Path) {
-    std::os::unix::fs::symlink(to, from).expect("a symbolic link");
-}
-
-#[cfg(not(unix))]
-fn symlink(to: &str, from: &Path) {
-    // A link clew will not follow is the point, and a file standing in for one
-    // is read rather than refused, so the fixture is skipped instead of faked.
-    let _ = (to, from);
+/// Hex, whitespace ignored, as the bytes it names.
+fn decoded(text: &str) -> Vec<u8> {
+    let digits: Vec<char> = text.chars().filter(|c| !c.is_whitespace()).collect();
+    assert!(
+        digits.len().is_multiple_of(2),
+        "hex needs two digits a byte"
+    );
+    digits
+        .chunks(2)
+        .map(|pair| {
+            let held: String = pair.iter().collect();
+            u8::from_str_radix(&held, 16).expect("a hex byte")
+        })
+        .collect()
 }
 
 /// Scan a laid-out fixture the way the binary scans a repository.
