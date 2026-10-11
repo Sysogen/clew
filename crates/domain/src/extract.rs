@@ -44,6 +44,10 @@ pub enum Format {
     Jsonc,
     /// A Markdown file whose declarations live in a leading YAML block.
     Markdown,
+    /// A `crushrc`, which declares by calling Crush's builtins rather than by
+    /// holding keys. It is Bash, so it never fails to parse: a line that is
+    /// not a builtin call declares nothing.
+    Crushrc,
 }
 
 impl Format {
@@ -55,6 +59,7 @@ impl Format {
             "toml" => Self::Toml,
             "jsonc" => Self::Jsonc,
             "markdown" => Self::Markdown,
+            "crushrc" => Self::Crushrc,
             _ => return None,
         })
     }
@@ -67,6 +72,7 @@ impl Format {
                 serde_json::from_str(&without_comments(contents)).map_err(|_| ParseError::NotJson)
             }
             Self::Markdown => frontmatter(contents),
+            Self::Crushrc => Ok(crate::crushrc::parse(contents)),
         }
     }
 }
@@ -371,7 +377,7 @@ fn command_line(hook: &serde_json::Value) -> Option<String> {
 /// report grants the tool does not honour.
 fn permissions(root: &serde_json::Value, format: Format) -> Vec<Permission> {
     let entries = match format {
-        Format::Json | Format::Jsonc | Format::Toml => {
+        Format::Json | Format::Jsonc | Format::Toml | Format::Crushrc => {
             // Crush shares the `permissions` block and spells the list
             // differently; nothing reads both, so one block holds one list.
             let claude = root

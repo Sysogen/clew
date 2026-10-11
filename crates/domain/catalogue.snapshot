@@ -39,7 +39,7 @@ repository **/.rules zed json - invisible-unicode
 repository **/.devin/rules/**/*.md windsurf json - invisible-unicode
 repository **/.windsurf/rules/**/*.md windsurf json - invisible-unicode
 repository **/.windsurfrules windsurf json - invisible-unicode
-repository **/{.crushrc,crushrc} crush json - invisible-unicode,opaque-hook,download-and-execute,decode-and-execute,credential-exfiltration,unverified-download,unpinned-remote-package
+repository **/{.crushrc,crushrc} crush crushrc hooks,permissions,mcp-servers unrestricted-shell,plaintext-transport,invisible-unicode,opaque-hook,download-and-execute,decode-and-execute,credential-exfiltration,unverified-download,unpinned-remote-package
 repository **/{.crush.json,crush.json} crush jsonc hooks,permissions,mcp-servers unrestricted-shell,plaintext-transport
 repository **/.continue/config.json continue json - -
 repository **/.clinerules/**/*.{md,txt} cline json - invisible-unicode
@@ -62,7 +62,7 @@ home .codeium/windsurf/mcp_config.json windsurf json mcp-servers plaintext-trans
 home .codeium/windsurf/memories/global_rules.md windsurf json - invisible-unicode
 home .agents/skills/*/SKILL.md zed json - invisible-unicode
 home .agents/AGENTS.md instruction json - invisible-unicode
-home .config/crush/{.crushrc,crushrc} crush json - invisible-unicode,opaque-hook,download-and-execute,decode-and-execute,credential-exfiltration,unverified-download,unpinned-remote-package
+home .config/crush/{.crushrc,crushrc} crush crushrc hooks,permissions,mcp-servers unrestricted-shell,plaintext-transport,invisible-unicode,opaque-hook,download-and-execute,decode-and-execute,credential-exfiltration,unverified-download,unpinned-remote-package
 home .config/crush/{.crush.json,crush.json} crush jsonc hooks,permissions,mcp-servers unrestricted-shell,plaintext-transport
 home .config/crush/CRUSH.md instruction json - invisible-unicode
 home .config/AGENTS.md instruction json - invisible-unicode

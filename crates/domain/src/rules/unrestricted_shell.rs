@@ -3,7 +3,7 @@
 
 //! The `unrestricted-shell` rule.
 
-use super::{GRANT_LISTS, about_file, after_key, found_at};
+use super::{GRANT_BUILTIN, GRANT_LISTS, about_file, after_key, after_words, found_at};
 use crate::finding::{Finding, RuleId, Severity};
 use crate::rule::{Examined, Rule, Subject};
 
@@ -68,6 +68,8 @@ impl Rule for UnrestrictedShell {
             GRANT_LISTS
                 .iter()
                 .find_map(|key| after_key(source, key, &entry, *occurrence))
+                // A `crushrc` grants by calling a builtin, with no key to find.
+                .or_else(|| after_words(source, GRANT_BUILTIN, &entry, *occurrence))
                 .and_then(|at| found_at(path, self.id(), source, at, width))
                 .unwrap_or_else(|| about_file(path, self.id(), &entry, width)),
         ]

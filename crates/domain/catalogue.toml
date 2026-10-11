@@ -307,20 +307,22 @@ source = "https://docs.windsurf.com/windsurf/cascade/memories"
 # is read as the Bash it is and carries a hook script's checks, while the JSON
 # form is parsed.
 #
-# What that costs, stated rather than discounted: a `crushrc` configures Crush
-# by calling builtins, so `hook add --command`, `permissions allow` and
-# `mcp add --url` declare the same things the JSON form declares as data, and
-# no row reads them as such. A dangerous payload inside one is still found,
-# being shell in a file read as shell, but it is reported as a line of text
-# rather than as a hook, a grant or a server. Reading them properly means
-# parsing Bash invocations, where `permissions allow $(cat list)` has no static
-# answer, so it is its own change rather than a format on this row.
+# A `crushrc` declares by calling builtins, so it is read twice: as the shell
+# it is, and for what `hook add`, `permissions allow` and `mcp add` declare,
+# which Crush's own loader files under the same keys its JSON form holds. A
+# name a scan cannot know, as in `permissions allow $(cat list)`, is left out
+# rather than reported under a name nothing is called; a command string is kept
+# as written, since `curl $URL | sh` is worth reporting either way.
 
 [[surface]]
 glob = "**/{.crushrc,crushrc}"
 tool = "crush"
 kind = "crush"
+format = "crushrc"
+extract = ["hooks", "permissions", "mcp-servers"]
 check = [
+  "unrestricted-shell",
+  "plaintext-transport",
   "invisible-unicode",
   "opaque-hook",
   "download-and-execute",
@@ -561,7 +563,11 @@ scope = "home"
 glob = ".config/crush/{.crushrc,crushrc}"
 tool = "crush"
 kind = "crush"
+format = "crushrc"
+extract = ["hooks", "permissions", "mcp-servers"]
 check = [
+  "unrestricted-shell",
+  "plaintext-transport",
   "invisible-unicode",
   "opaque-hook",
   "download-and-execute",

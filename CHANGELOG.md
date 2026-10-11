@@ -33,15 +33,30 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   because its `permissions` block admits a grant list alone and the flag that
   waives every prompt is passed on the command line, which no file records.
 
-  What the `crushrc` row does not do, stated rather than discounted: that form
-  configures Crush by calling builtins, so `hook add --command`,
-  `permissions allow` and `mcp add --url` declare as commands the same things
-  the JSON form declares as data, and no row reads them as such. A dangerous
-  payload inside one is still found, being shell in a file read as shell, but
-  it is reported as a line of text rather than as a hook, a grant or a server,
-  which means `unrestricted-shell` and `plaintext-transport` stay silent on the
-  form Crush now prefers. Reading them properly means parsing Bash
-  invocations, where `permissions allow $(cat list)` has no static answer.
+  A `crushrc` is the only row read twice: as the Bash it is, and for what its
+  builtins declare. That form configures Crush by calling them, so
+  `hook add --command`, `permissions allow` and `mcp add --url` declare as
+  commands the same things the JSON form declares as data. The new `crushrc`
+  format reads those calls into the shape Crush's own loader files them under,
+  so every extractor reads a `crushrc` without a case for it, and a hook
+  registered there is followed to its script exactly as a JSON one is.
+
+  Only what a scan can know is recorded. `permissions allow $(cat list)` has
+  no answer until the file runs, so a tool or server name carrying a
+  substitution is left out rather than reported under a name nothing is
+  called; a substitution is kept whole while splitting it, or the tail of
+  `$(cat extra list)` would be read as a tool of its own. A command string is
+  kept as written, since `curl $URL | sh` is worth reporting whether or not
+  `$URL` is known. `permissions deny` hides a tool rather than pre-approving
+  one and is not read as a grant. Crush compares a whole argument against each
+  flag name, so `--command=x` is an unknown flag to it and is not read as one
+  here.
+
+  A finding in a `crushrc` is anchored to the call that causes it, because a
+  builtin separates a name from its values with spaces, which the key anchor
+  does not accept and must not: a bare word followed by a space is most of
+  English. Without that, every `crushrc` finding would point at the file rather
+  than at a line.
 
   Crush's own `defaultContextPaths` carries six spellings of its context file,
   and a glob matches the case a file has on disk, so all six are named. It also

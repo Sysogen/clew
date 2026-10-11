@@ -596,6 +596,14 @@ mod tests {
                     Extraction::McpServers,
                 ][..],
             ),
+            (
+                ".crushrc",
+                &[
+                    Extraction::Hooks,
+                    Extraction::Permissions,
+                    Extraction::McpServers,
+                ][..],
+            ),
         ];
         for &(path, kind) in expected {
             let matched = shipped()
@@ -627,6 +635,8 @@ mod tests {
             (Scope::Repository, ".vscode/mcp.json", Format::Jsonc),
             (Scope::Repository, ".vscode/tasks.json", Format::Jsonc),
             (Scope::Repository, "crush.json", Format::Jsonc),
+            (Scope::Repository, ".crushrc", Format::Crushrc),
+            (Scope::Home, ".config/crush/crushrc", Format::Crushrc),
             (Scope::Home, ".config/crush/crush.json", Format::Jsonc),
             (
                 Scope::Repository,
@@ -833,15 +843,12 @@ mod tests {
                 prose,
             ),
             // A hook script is the one surface every shell rule reads,
-            // wherever the tool keeps its scripts. A `crushrc` is not a script
-            // but is entirely shell, so it reads the same way.
+            // wherever the tool keeps its scripts.
             (
                 vec![
                     (Scope::Repository, ".claude/hooks/sync.sh"),
                     (Scope::Repository, ".codex/hooks/session_start.py"),
                     (Scope::Home, ".codex/hooks/session_start.py"),
-                    (Scope::Repository, ".crushrc"),
-                    (Scope::Home, ".config/crush/crushrc"),
                 ],
                 vec![
                     RuleId::InvisibleUnicode,
@@ -927,6 +934,26 @@ mod tests {
                     (Scope::Home, ".config/crush/crush.json"),
                 ],
                 vec![RuleId::UnrestrictedShell, RuleId::PlaintextTransport],
+            ),
+            // A `crushrc` is the only row read twice: every shell rule, for
+            // the Bash it is, and the two that judge what its builtins
+            // declare. Its JSON form is parsed and so reads only the latter.
+            (
+                vec![
+                    (Scope::Repository, ".crushrc"),
+                    (Scope::Home, ".config/crush/crushrc"),
+                ],
+                vec![
+                    RuleId::UnrestrictedShell,
+                    RuleId::PlaintextTransport,
+                    RuleId::InvisibleUnicode,
+                    RuleId::OpaqueHook,
+                    RuleId::DownloadAndExecute,
+                    RuleId::DecodeAndExecute,
+                    RuleId::CredentialExfiltration,
+                    RuleId::UnverifiedDownload,
+                    RuleId::UnpinnedRemotePackage,
+                ],
             ),
             // The one row that declares a task, and a trigger is all it says.
             (
@@ -1149,7 +1176,15 @@ mod tests {
             (".agents/AGENTS.md", SurfaceKind::InstructionFile, &[]),
             (".config/crush/CRUSH.md", SurfaceKind::InstructionFile, &[]),
             (".config/AGENTS.md", SurfaceKind::InstructionFile, &[]),
-            (".config/crush/crushrc", SurfaceKind::Crush, &[]),
+            (
+                ".config/crush/crushrc",
+                SurfaceKind::Crush,
+                &[
+                    Extraction::Hooks,
+                    Extraction::Permissions,
+                    Extraction::McpServers,
+                ][..],
+            ),
             (
                 ".config/crush/crush.json",
                 SurfaceKind::Crush,
