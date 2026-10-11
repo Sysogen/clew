@@ -41,6 +41,8 @@ pub enum RuleId {
     PlaintextTransport,
     /// A task a workspace asks to run when the folder is opened.
     AutoRunTask,
+    /// An agent invoked with the flag that removes its permission prompt.
+    AgentRunsUnattended,
 }
 
 impl RuleId {

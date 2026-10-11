@@ -104,6 +104,23 @@ fn declared(out: &mut String, report: &DiscoveryReport, surface: &Surface) {
         );
     }
 
+    for declared in report.steps.iter().filter(|d| d.source == surface.path) {
+        // One line, however long the block: a workflow's steps are many and
+        // the findings below say which one matters.
+        let run = declared.step.run.lines().next().unwrap_or_default();
+        let more = if declared.step.run.lines().count() > 1 {
+            " ..."
+        } else {
+            ""
+        };
+        let _ = writeln!(
+            out,
+            "  job \"{}\" runs: {}{more}",
+            shown(&declared.step.job),
+            shown(run)
+        );
+    }
+
     for declared in report.autonomy.iter().filter(|d| d.source == surface.path) {
         let _ = writeln!(
             out,
@@ -311,6 +328,7 @@ mod tests {
             servers: vec![],
             autonomy: vec![],
             tasks: vec![],
+            steps: vec![],
             unreadable: vec![],
             unparsed: vec![],
             findings: vec![],
@@ -344,6 +362,7 @@ mod tests {
             }],
             autonomy: vec![],
             tasks: vec![],
+            steps: vec![],
             unreadable: vec![],
             unparsed: vec![],
             findings: vec![],
@@ -369,6 +388,7 @@ mod tests {
                 },
             }],
             tasks: vec![],
+            steps: vec![],
             unreadable: vec![],
             unparsed: vec![],
             findings: vec![],
@@ -400,6 +420,7 @@ mod tests {
             servers: vec![],
             autonomy: vec![],
             tasks: vec![],
+            steps: vec![],
             unreadable: vec![],
             unparsed: vec![],
             findings: vec![],
@@ -423,6 +444,7 @@ mod tests {
             servers: vec![],
             autonomy: vec![],
             tasks: vec![],
+            steps: vec![],
             unreadable: vec![(
                 RepoPath::root().join("secret"),
                 FileTreeError::PermissionDenied,
@@ -447,6 +469,7 @@ mod tests {
             servers: vec![],
             autonomy: vec![],
             tasks: vec![],
+            steps: vec![],
             unreadable: vec![],
             unparsed: vec![],
             findings: vec![],
@@ -464,6 +487,7 @@ mod tests {
             servers: vec![],
             autonomy: vec![],
             tasks: vec![],
+            steps: vec![],
             unreadable: vec![(RepoPath::root().join("a"), FileTreeError::NotFound)],
             unparsed: vec![],
             findings: vec![],
@@ -477,6 +501,7 @@ mod tests {
             servers: vec![],
             autonomy: vec![],
             tasks: vec![],
+            steps: vec![],
             unreadable: vec![
                 (RepoPath::root().join("a"), FileTreeError::NotFound),
                 (RepoPath::root().join("b"), FileTreeError::NotFound),
@@ -505,6 +530,7 @@ mod tests {
             servers: vec![],
             autonomy: vec![],
             tasks: vec![],
+            steps: vec![],
             unreadable: vec![],
             unparsed: vec![],
             findings: vec![],
@@ -530,6 +556,7 @@ mod tests {
             servers: vec![],
             autonomy: vec![],
             tasks: vec![],
+            steps: vec![],
             unreadable: vec![],
             unparsed: vec![(
                 RepoPath::root().join(".claude").join("settings.json"),
@@ -566,6 +593,7 @@ mod tests {
             servers: vec![],
             autonomy: vec![],
             tasks: vec![],
+            steps: vec![],
             unreadable: vec![],
             unparsed: vec![],
             findings: vec![],
@@ -605,6 +633,7 @@ mod tests {
             }],
             autonomy: vec![],
             tasks: vec![],
+            steps: vec![],
             unreadable: vec![],
             unparsed: vec![],
             findings: vec![],
@@ -814,6 +843,7 @@ mod tests {
             }],
             autonomy: vec![],
             tasks: vec![],
+            steps: vec![],
             unreadable: vec![],
             unparsed: vec![],
             findings: vec![],

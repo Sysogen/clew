@@ -11,6 +11,8 @@ use crate::autonomy::Autonomy;
 use crate::hook::{Action, Hook};
 use crate::mcp_server::{McpServer, Transport};
 use crate::task::Task;
+use crate::workflow::Step;
+use crate::yaml;
 use yaml_rust2::{Yaml, YamlLoader};
 
 use crate::permission::Permission;
@@ -27,6 +29,9 @@ pub enum ParseError {
     /// The file opens a frontmatter block that is not closed or not YAML.
     #[error("frontmatter is not closed or not valid YAML")]
     NotFrontmatter,
+    /// The file is not valid YAML.
+    #[error("not valid YAML")]
+    NotYaml,
 }
 
 /// How a file is written.
@@ -44,6 +49,8 @@ pub enum Format {
     Jsonc,
     /// A Markdown file whose declarations live in a leading YAML block.
     Markdown,
+    /// YAML, which every CI workflow is written in.
+    Yaml,
     /// A `crushrc`, which declares by calling Crush's builtins rather than by
     /// holding keys. It is Bash, so it never fails to parse: a line that is
     /// not a builtin call declares nothing.
@@ -59,6 +66,7 @@ impl Format {
             "toml" => Self::Toml,
             "jsonc" => Self::Jsonc,
             "markdown" => Self::Markdown,
+            "yaml" => Self::Yaml,
             "crushrc" => Self::Crushrc,
             _ => return None,
         })
@@ -72,9 +80,22 @@ impl Format {
                 serde_json::from_str(&without_comments(contents)).map_err(|_| ParseError::NotJson)
             }
             Self::Markdown => frontmatter(contents),
+            Self::Yaml => yaml(contents),
             Self::Crushrc => Ok(crate::crushrc::parse(contents)),
         }
     }
+}
+
+/// A whole YAML document, where frontmatter reads a fenced block of one.
+///
+/// An empty file is an empty document rather than an error, as a workflow
+/// being added one commit at a time will be.
+fn yaml(contents: &str) -> Result<serde_json::Value, ParseError> {
+    let docs = YamlLoader::load_from_str(contents).map_err(|_| ParseError::NotYaml)?;
+    docs.first().map_or_else(
+        || Ok(serde_json::Value::Object(serde_json::Map::new())),
+        |doc| Ok(to_value(doc)),
+    )
 }
 
 /// The same text without its comments.
@@ -213,6 +234,8 @@ pub enum Extraction {
     Autonomy,
     /// Tasks a workspace declares, and when each runs.
     Tasks,
+    /// Steps a CI workflow runs.
+    Workflow,
 }
 
 impl Extraction {
@@ -225,6 +248,7 @@ impl Extraction {
             "mcp-servers" => Self::McpServers,
             "autonomy" => Self::Autonomy,
             "tasks" => Self::Tasks,
+            "workflow" => Self::Workflow,
             _ => return None,
         })
     }
@@ -243,6 +267,8 @@ pub struct Findings {
     pub autonomy: Vec<Autonomy>,
     /// Tasks the file declares.
     pub tasks: Vec<Task>,
+    /// Steps a CI workflow runs.
+    pub steps: Vec<Step>,
 }
 
 /// Run `wanted` over `contents`, parsing it once.
@@ -259,7 +285,18 @@ pub fn run(wanted: &[Extraction], format: Format, contents: &str) -> Result<Find
         return Ok(Findings::default());
     }
 
-    let root = format.parse(contents)?;
+    // YAML is read through the spanned reader, which keeps where each value
+    // was written. Every extraction but `workflow` reads the plain value, so
+    // the node is converted once and only the one that places findings by
+    // position keeps it.
+    let spanned = match format {
+        Format::Yaml => Some(yaml::parse(contents).map_err(|_| ParseError::NotYaml)?),
+        _ => None,
+    };
+    let root = match &spanned {
+        Some(node) => node.to_value(),
+        None => format.parse(contents)?,
+    };
 
     let mut found = Findings::default();
     for what in wanted {
@@ -269,6 +306,9 @@ pub fn run(wanted: &[Extraction], format: Format, contents: &str) -> Result<Find
             Extraction::McpServers => found.servers = mcp_servers(&root),
             Extraction::Autonomy => found.autonomy = autonomy(&root, format),
             Extraction::Tasks => found.tasks = tasks(&root),
+            Extraction::Workflow => {
+                found.steps = spanned.as_ref().map(workflow).unwrap_or_default();
+            }
         }
     }
     Ok(found)
@@ -389,6 +429,10 @@ fn permissions(root: &serde_json::Value, format: Format) -> Vec<Permission> {
             claude.or(gemini).map(listed_grants)
         }
         Format::Markdown => root.get("allowed-tools").map(grants),
+        // No tool reads a grant list out of YAML. Folding YAML in with the
+        // others would have clew read one from any YAML file that happened to
+        // carry the key path, a CI workflow included.
+        Format::Yaml => None,
     };
 
     let mut found: Vec<Permission> = entries
@@ -586,6 +630,165 @@ fn non_blank(value: Option<&serde_json::Value>) -> Option<&str> {
         .and_then(serde_json::Value::as_str)
         .map(str::trim)
         .filter(|s| !s.is_empty())
+}
+
+/// The steps a CI workflow runs, in job order then file order.
+///
+/// Only `jobs.<id>.steps[].run` is read. A step naming an action with `uses`
+/// runs whatever that action runs, which this file does not say, and a
+/// reusable workflow called with `jobs.<id>.uses` has no steps here at all.
+fn workflow(root: &yaml::Node) -> Vec<Step> {
+    let Some(jobs) = root.get("jobs") else {
+        return Vec::new();
+    };
+    let top = default_shell(root);
+    jobs.map()
+        .iter()
+        .flat_map(|(job, body)| {
+            let fallback = default_shell(body)
+                .or(top)
+                .unwrap_or_else(|| runner_shell(&body.to_value()));
+            body.get("steps")
+                .map(yaml::Node::seq)
+                .unwrap_or_default()
+                .iter()
+                .filter_map(move |step| {
+                    let (run, at) = step.get("run").and_then(yaml::Node::text)?;
+                    let shell = step
+                        .get("shell")
+                        .and_then(yaml::Node::text)
+                        .map_or(fallback, |(text, _)| text);
+                    Some(Step::new(job, run, shell, Some(at)))
+                })
+        })
+        .collect()
+}
+
+/// A shell this file does not decide, which is read as no shell clew knows.
+const UNKNOWN_SHELL: &str = "unknown";
+
+/// What a runner label says when it names a POSIX operating system.
+///
+/// A label is read as POSIX only by saying so. `self-hosted`, and a label a
+/// project invented, say nothing about the machine behind them, and a
+/// self-hosted runner is as likely to be Windows as not.
+const POSIX_RUNNERS: &[&str] = &["ubuntu", "macos", "linux", "darwin", "debian", "alpine"];
+
+/// The `defaults.run.shell` a workflow or a job sets, if it sets one.
+fn default_shell(at: &yaml::Node) -> Option<&str> {
+    at.get("defaults")?
+        .get("run")?
+        .get("shell")
+        .and_then(yaml::Node::text)
+        .map(|(text, _)| text)
+}
+
+/// The shell a job's runner defaults to, which Windows decides differently.
+///
+/// A `runs-on` naming its runner outright decides it. One written as an
+/// expression does not, so the matrix it refers to is read: a matrix holding
+/// only POSIX runners still decides it, and one that could be Windows leaves
+/// the shell unknown rather than guessed. Unknown is not read as a shell at
+/// all, which loses a finding on a job clew cannot place; calling it Bash
+/// would instead judge PowerShell by Bash's syntax, and report what was never
+/// written.
+fn runner_shell(job: &serde_json::Value) -> &'static str {
+    // `runs-on` is required of a job that has steps, so a job without one is
+    // a job GitHub refuses to run. There is no default to fall back on.
+    let Some(runs_on) = job.get("runs-on") else {
+        return UNKNOWN_SHELL;
+    };
+    let named: Vec<&str> = match runs_on {
+        serde_json::Value::String(text) => vec![text.as_str()],
+        serde_json::Value::Array(items) => items.iter().filter_map(|i| i.as_str()).collect(),
+        // The documented mapping form. A group names a pool rather than an
+        // operating system, so only its labels are read.
+        serde_json::Value::Object(_) => match runs_on.get("labels") {
+            Some(serde_json::Value::String(text)) => vec![text.as_str()],
+            Some(serde_json::Value::Array(items)) => {
+                items.iter().filter_map(|i| i.as_str()).collect()
+            }
+            _ => return UNKNOWN_SHELL,
+        },
+        _ => return UNKNOWN_SHELL,
+    };
+    let windows = |text: &str| text.to_lowercase().contains("windows");
+    let posix = |text: &str| {
+        let text = text.to_lowercase();
+        POSIX_RUNNERS.iter().any(|name| text.contains(name))
+    };
+    if named.iter().any(|text| windows(text)) {
+        return "pwsh";
+    }
+    // An expression is decided when the job runs. Where it names a matrix key
+    // this file holds, the values it can take are here to be read.
+    let referenced: Vec<&str> = named
+        .iter()
+        .filter(|text| text.contains("${{"))
+        .flat_map(|text| matrix_keys(text))
+        .collect();
+    if referenced.is_empty() {
+        // A label has to say which OS it is. `self-hosted` and a label a
+        // project made up say nothing, and a self-hosted runner may be
+        // Windows, so neither is read as a POSIX shell.
+        return if named.iter().any(|text| posix(text)) {
+            "bash"
+        } else {
+            UNKNOWN_SHELL
+        };
+    }
+    let matrix = job.get("strategy").and_then(|s| s.get("matrix"));
+    // Every key the label refers to, since a part left unresolved leaves the
+    // runner unknown however well the others resolve. A key may hold an
+    // architecture rather than an OS, so what decides it is that some part
+    // names a POSIX system and no part names Windows.
+    let mut decided = false;
+    for key in referenced {
+        let Some(values) = matrix.and_then(|m| m.get(key)) else {
+            return UNKNOWN_SHELL;
+        };
+        let held: Vec<&str> = match values {
+            serde_json::Value::String(text) => vec![text.as_str()],
+            serde_json::Value::Array(items) => items
+                .iter()
+                .filter_map(|item| {
+                    item.as_str()
+                        .or_else(|| item.get("os").and_then(serde_json::Value::as_str))
+                })
+                .collect(),
+            _ => return UNKNOWN_SHELL,
+        };
+        if held.is_empty() {
+            return UNKNOWN_SHELL;
+        }
+        // A key that names an operating system anywhere is the one deciding
+        // it, and then every value it can take has to be POSIX: a run of the
+        // job picks one, and `[ubuntu-latest, our-big-box]` may pick either.
+        // A key holding something else, an architecture say, decides nothing.
+        if !held.iter().any(|text| posix(text) || windows(text)) {
+            continue;
+        }
+        if !held.iter().all(|text| posix(text)) {
+            return UNKNOWN_SHELL;
+        }
+        decided = true;
+    }
+    if decided { "bash" } else { UNKNOWN_SHELL }
+}
+
+/// Every matrix key a `runs-on` expression refers to, as `${{ matrix.os }}`
+/// does. A label may be built from more than one, and a key left unresolved
+/// leaves the runner unknown however well the others resolve.
+fn matrix_keys(text: &str) -> Vec<&str> {
+    text.split("matrix.")
+        .skip(1)
+        .filter_map(|after| {
+            let key = after
+                .split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '-'))
+                .next()?;
+            (!key.is_empty()).then_some(key)
+        })
+        .collect()
 }
 
 /// One server declaration. `None` when it reaches nothing: no command, and no
@@ -1253,6 +1456,357 @@ env = { DATABASE_URL = "postgres://u:hunter2@h/d", PGPORT = "5432" }
             )
             .is_empty()
         );
+    }
+
+    fn steps_of(yaml: &str) -> Vec<Step> {
+        run(&[Extraction::Workflow], Format::Yaml, yaml)
+            .expect("valid yaml")
+            .steps
+    }
+
+    /// Every `run:` step of every job, which is what a workflow causes to run.
+    #[test]
+    fn reads_the_steps_a_workflow_runs() {
+        let found = steps_of(
+            "name: ci\non: [push]\njobs:\n  build:\n    steps:\n      - uses: actions/checkout@v4\n      - name: Install\n        run: npm ci\n      - run: npm test\n",
+        );
+
+        assert_eq!(found.len(), 2, "{found:?}");
+        assert!(found.iter().all(|s| s.job == "build"), "{found:?}");
+        assert!(found.iter().any(|s| s.run == "npm ci"), "{found:?}");
+        assert!(found.iter().any(|s| s.run == "npm test"), "{found:?}");
+    }
+
+    /// A step naming an action runs whatever that action runs, which this file
+    /// does not say, so there is no command here to judge.
+    #[test]
+    fn a_step_that_runs_nothing_itself_is_not_a_step() {
+        assert!(
+            steps_of("jobs:\n  a:\n    steps:\n      - uses: actions/checkout@v4\n").is_empty()
+        );
+        assert!(steps_of("jobs:\n  a:\n    uses: ./.github/workflows/other.yml\n").is_empty());
+        assert!(steps_of("jobs:\n  a:\n    steps:\n      - run: \"   \"\n").is_empty());
+        assert!(steps_of("on: [push]\n").is_empty());
+    }
+
+    /// The shell a step runs under is what decides how it can be read, and a
+    /// workflow sets it in three places. Reading a PowerShell step as Bash
+    /// would judge one language by another's syntax.
+    #[test]
+    fn a_step_carries_the_shell_the_workflow_gives_it() {
+        let shells =
+            |yaml: &str| -> Vec<String> { steps_of(yaml).into_iter().map(|s| s.shell).collect() };
+
+        // `runs-on` is required of a job with steps, so a job without one is
+        // one GitHub refuses to run and there is no default to fall back on.
+        assert_eq!(
+            shells("jobs:\n  a:\n    steps:\n      - run: x\n"),
+            ["unknown"]
+        );
+        assert_eq!(
+            shells("jobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: x\n"),
+            ["bash"]
+        );
+        assert_eq!(
+            shells("jobs:\n  a:\n    runs-on: windows-latest\n    steps:\n      - run: x\n"),
+            ["pwsh"]
+        );
+        assert_eq!(
+            shells(
+                "jobs:\n  a:\n    runs-on: [self-hosted, Windows]\n    steps:\n      - run: x\n"
+            ),
+            ["pwsh"]
+        );
+        // The step's own shell wins over every default.
+        assert_eq!(
+            shells(
+                "defaults:\n  run:\n    shell: pwsh\njobs:\n  a:\n    steps:\n      - run: x\n        shell: bash\n"
+            ),
+            ["bash"]
+        );
+        // A job's default wins over the workflow's.
+        assert_eq!(
+            shells(
+                "defaults:\n  run:\n    shell: pwsh\njobs:\n  a:\n    defaults:\n      run:\n        shell: python\n    steps:\n      - run: x\n"
+            ),
+            ["python"]
+        );
+        // The workflow's default reaches a job that sets none.
+        assert_eq!(
+            shells("defaults:\n  run:\n    shell: pwsh\njobs:\n  a:\n    steps:\n      - run: x\n"),
+            ["pwsh"]
+        );
+    }
+
+    /// A `runs-on` written as an expression is decided when the job runs. The
+    /// matrix it names is here to be read, and a matrix that could be Windows
+    /// leaves the shell unknown rather than called Bash, which would judge
+    /// PowerShell by Bash's syntax.
+    #[test]
+    fn a_dynamic_runner_is_resolved_or_left_unknown() {
+        let shell = |yaml: &str| -> String {
+            steps_of(yaml)
+                .first()
+                .map(|s| s.shell.clone())
+                .unwrap_or_default()
+        };
+        let job = |body: &str| format!("jobs:\n  a:\n{body}    steps:\n      - run: x\n");
+
+        // Resolved through the matrix, both ways.
+        assert_eq!(
+            shell(&job(
+                "    runs-on: ${{ matrix.os }}\n    strategy:\n      matrix:\n        os: [ubuntu-latest, macos-latest]\n"
+            )),
+            "bash"
+        );
+        assert_eq!(
+            shell(&job(
+                "    runs-on: ${{ matrix.os }}\n    strategy:\n      matrix:\n        os: [windows-latest]\n"
+            )),
+            "unknown"
+        );
+        assert_eq!(
+            shell(&job(
+                "    runs-on: ${{ matrix.os }}\n    strategy:\n      matrix:\n        os: [ubuntu-latest, windows-latest]\n"
+            )),
+            "unknown"
+        );
+        // A matrix of objects still names the runner.
+        assert_eq!(
+            shell(&job(
+                "    runs-on: ${{ matrix.os }}\n    strategy:\n      matrix:\n        os:\n          - os: windows-2022\n"
+            )),
+            "unknown"
+        );
+        // A label built from two keys needs both: one resolving says nothing
+        // about the other, and a runner is only POSIX if every part is.
+        assert_eq!(
+            shell(&job(
+                "    runs-on: ${{ matrix.os }}-${{ matrix.arch }}\n    strategy:\n      matrix:\n        os: [ubuntu-latest]\n"
+            )),
+            "unknown"
+        );
+        assert_eq!(
+            shell(&job(
+                "    runs-on: ${{ matrix.os }}-${{ matrix.arch }}\n    strategy:\n      matrix:\n        os: [ubuntu-latest]\n        arch: [arm64]\n"
+            )),
+            "bash"
+        );
+        // No matrix to resolve it, or a key that is not there.
+        assert_eq!(shell(&job("    runs-on: ${{ matrix.os }}\n")), "unknown");
+        assert_eq!(
+            shell(&job(
+                "    runs-on: ${{ matrix.os }}\n    strategy:\n      matrix:\n        node: [20]\n"
+            )),
+            "unknown"
+        );
+        assert_eq!(
+            shell(&job("    runs-on: ${{ inputs.runner }}\n")),
+            "unknown"
+        );
+    }
+
+    /// A label has to say which operating system it is, and a job with no
+    /// runner at all is a job GitHub refuses to run.
+    #[test]
+    fn a_runner_label_says_which_system_it_is() {
+        let shell = |yaml: &str| -> String {
+            steps_of(yaml)
+                .first()
+                .map(|s| s.shell.clone())
+                .unwrap_or_default()
+        };
+        let job = |body: &str| format!("jobs:\n  a:\n{body}    steps:\n      - run: x\n");
+
+        // A runner named outright decides it. None at all does not.
+        assert_eq!(shell(&job("    runs-on: ubuntu-latest\n")), "bash");
+        assert_eq!(shell(&job("")), "unknown");
+        // The documented mapping form, whose group names a pool rather than
+        // an operating system, so only its labels decide the shell.
+        assert_eq!(
+            shell(&job(
+                "    runs-on:\n      group: big\n      labels: [ubuntu-24.04-16core]\n"
+            )),
+            "bash"
+        );
+        assert_eq!(
+            shell(&job(
+                "    runs-on:\n      group: big\n      labels: ubuntu-latest\n"
+            )),
+            "bash"
+        );
+        assert_eq!(shell(&job("    runs-on:\n      group: big\n")), "unknown");
+        // A label naming Windows says which shell it is, not merely that it
+        // is not Bash.
+        assert_eq!(
+            shell(&job(
+                "    runs-on:\n      group: big\n      labels: [windows-latest]\n"
+            )),
+            "pwsh"
+        );
+        // A label has to say which OS it is. `self-hosted` and a label a
+        // project invented say nothing, and a self-hosted runner may be
+        // Windows, so neither is read as a POSIX shell.
+        assert_eq!(shell(&job("    runs-on: self-hosted\n")), "unknown");
+        assert_eq!(shell(&job("    runs-on: our-big-box\n")), "unknown");
+        assert_eq!(
+            shell(&job("    runs-on: [self-hosted, our-big-box]\n")),
+            "unknown"
+        );
+        // Said alongside, it decides it.
+        assert_eq!(shell(&job("    runs-on: [self-hosted, linux]\n")), "bash");
+        assert_eq!(shell(&job("    runs-on: macos-14\n")), "bash");
+        // Every value the deciding key can take has to be POSIX: a run picks
+        // one of them, and this one may pick a label whose OS nothing says.
+        assert_eq!(
+            shell(&job(
+                "    runs-on: ${{ matrix.runner }}\n    strategy:\n      matrix:\n        runner: [ubuntu-latest, our-big-box]\n"
+            )),
+            "unknown"
+        );
+        assert_eq!(
+            shell(&job(
+                "    runs-on: ${{ matrix.os }}\n    strategy:\n      matrix:\n        os: [ubuntu-latest, macos-14]\n"
+            )),
+            "bash"
+        );
+        // And a matrix of invented labels resolves no further than one label.
+        assert_eq!(
+            shell(&job(
+                "    runs-on: ${{ matrix.os }}\n    strategy:\n      matrix:\n        os: [our-big-box]\n"
+            )),
+            "unknown"
+        );
+    }
+
+    /// GitHub Actions allows anchors and aliases, and `to_value` maps
+    /// `Yaml::Alias` to null, which reads like a step going missing. It does
+    /// not: the loader resolves an alias to the node it names before the tree
+    /// reaches `to_value`, so that arm never sees one from a loaded document.
+    /// Pinned because the code says otherwise at a glance, and a step that
+    /// vanished would take every workflow rule with it.
+    #[test]
+    fn an_aliased_step_is_read_like_any_other() {
+        let found = steps_of(
+            "x: &cmd claude -p x --dangerously-skip-permissions\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: *cmd\n",
+        );
+        assert_eq!(found.len(), 1, "an aliased command: {found:?}");
+        assert!(found[0].run.starts_with("claude"), "{found:?}");
+
+        // An aliased step, an aliased step list, and a merge key.
+        let found = steps_of(
+            "x: &one\n  run: echo one\ny: &many\n  - run: echo many\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - *one\n  b:\n    runs-on: ubuntu-latest\n    steps: *many\n  c:\n    <<: *one\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo three\n",
+        );
+        let ran: Vec<&str> = found.iter().map(|s| s.run.as_str()).collect();
+        assert_eq!(ran.len(), 3, "{found:?}");
+        for wanted in ["echo one", "echo many", "echo three"] {
+            assert!(ran.contains(&wanted), "{wanted} missing from {ran:?}");
+        }
+    }
+
+    /// A step carries where the workflow wrote what it runs, so a finding is
+    /// placed rather than searched for. Two steps running the same command
+    /// have two spans, which is what text search could never tell apart.
+    #[test]
+    fn a_step_carries_where_it_was_written() {
+        let source = "jobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo same\n      - run: echo same\n";
+
+        let found = steps_of(source);
+
+        assert_eq!(found.len(), 2, "{found:?}");
+        let spans: Vec<_> = found.iter().map(|s| s.at).collect();
+        assert!(spans.iter().all(Option::is_some), "{spans:?}");
+        let (one, two) = (found[0].at.expect("one"), found[1].at.expect("two"));
+        assert!(one.start < two.start, "{one:?} {two:?}");
+        for at in [one, two] {
+            assert!(
+                source[at.start..].starts_with("echo same"),
+                "the span starts at the command: {:?}",
+                &source[at.start..]
+            );
+        }
+    }
+
+    /// A job written with a merge key declared no steps at all, so every rule
+    /// was silent on it. The loader resolves an alias but not a merge.
+    #[test]
+    fn a_job_built_by_a_merge_key_has_its_steps_read() {
+        let found = steps_of(
+            "base: &b\n  runs-on: ubuntu-latest\n  steps:\n    - run: echo merged\njobs:\n  merged:\n    <<: *b\n  own:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo own\n",
+        );
+
+        let ran: Vec<&str> = found.iter().map(|s| s.run.as_str()).collect();
+        assert_eq!(ran.len(), 2, "{found:?}");
+        assert!(ran.contains(&"echo merged"), "{ran:?}");
+        assert!(ran.contains(&"echo own"), "{ran:?}");
+        // The merged job keeps the runner it was given, so it is judged.
+        assert!(found.iter().all(Step::is_posix_shell), "{found:?}");
+    }
+
+    /// A block scalar is one command of several lines, not several commands.
+    #[test]
+    fn a_block_step_is_one_command() {
+        let found = steps_of(
+            "jobs:\n  a:\n    steps:\n      - run: |\n          echo one\n          echo two\n",
+        );
+
+        assert_eq!(found.len(), 1, "{found:?}");
+        // Trimmed on the way in, as every value a row reads is.
+        assert_eq!(found[0].run, "echo one\necho two");
+    }
+
+    /// Anything that is not a workflow declares no step rather than failing,
+    /// since a row reads the whole file and a repository holds other YAML.
+    #[test]
+    fn yaml_that_is_not_a_workflow_declares_no_step() {
+        assert!(steps_of("").is_empty());
+        assert!(steps_of("jobs: not-a-map\n").is_empty());
+        assert!(steps_of("jobs:\n  a:\n    steps: not-a-list\n").is_empty());
+        assert!(steps_of("- just\n- a\n- list\n").is_empty());
+    }
+
+    #[test]
+    fn malformed_yaml_is_its_own_error() {
+        assert_eq!(
+            run(
+                &[Extraction::Workflow],
+                Format::Yaml,
+                "a:\n  - b\n c: broken\n"
+            )
+            .map(|f| f.steps),
+            Err(ParseError::NotYaml)
+        );
+    }
+
+    /// No tool writes a mode or a grant in YAML, and a CI workflow is full of
+    /// keys that look like other tools'. Folding YAML in with JSON would have
+    /// clew report a mode out of a workflow that sets none.
+    #[test]
+    fn yaml_declares_no_mode_and_no_grant() {
+        let text = "permissions:\n  defaultMode: bypassPermissions\n  allow:\n    - Bash\ntools:\n  allowed:\n    - run_shell_command\n";
+
+        let found = run(
+            &[
+                Extraction::Autonomy,
+                Extraction::Permissions,
+                Extraction::McpServers,
+            ],
+            Format::Yaml,
+            text,
+        )
+        .expect("valid yaml");
+
+        assert!(found.autonomy.is_empty(), "{:?}", found.autonomy);
+        assert!(found.permissions.is_empty(), "{:?}", found.permissions);
+        // The same keys in JSON are read, so the test is about the format.
+        let json = run(
+            &[Extraction::Autonomy, Extraction::Permissions],
+            Format::Json,
+            r#"{"permissions":{"defaultMode":"bypassPermissions","allow":["Bash"]}}"#,
+        )
+        .expect("valid json");
+        assert_eq!(json.autonomy.len(), 1, "{:?}", json.autonomy);
+        assert_eq!(json.permissions.len(), 1, "{:?}", json.permissions);
     }
 
     fn perms_of(json: &str) -> Vec<Permission> {

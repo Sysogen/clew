@@ -525,6 +525,7 @@ mod tests {
             (".windsurf/rules/a.md", SurfaceKind::Windsurf),
             (".windsurfrules", SurfaceKind::Windsurf),
             (".crushrc", SurfaceKind::Crush),
+            (".github/workflows/ci.yml", SurfaceKind::Workflow),
             ("crush.json", SurfaceKind::Crush),
             ("CRUSH.md", SurfaceKind::InstructionFile),
             (".continue/config.json", SurfaceKind::Continue),
@@ -604,6 +605,7 @@ mod tests {
                     Extraction::McpServers,
                 ][..],
             ),
+            (".github/workflows/ci.yml", &[Extraction::Workflow][..]),
         ];
         for &(path, kind) in expected {
             let matched = shipped()
@@ -636,6 +638,7 @@ mod tests {
             (Scope::Repository, ".vscode/tasks.json", Format::Jsonc),
             (Scope::Repository, "crush.json", Format::Jsonc),
             (Scope::Repository, ".crushrc", Format::Crushrc),
+            (Scope::Repository, ".github/workflows/ci.yml", Format::Yaml),
             (Scope::Home, ".config/crush/crushrc", Format::Crushrc),
             (Scope::Home, ".config/crush/crush.json", Format::Jsonc),
             (
@@ -752,7 +755,7 @@ mod tests {
                glob = "x"
                tool = "x"
                kind = "skill"
-               format = "yaml"
+               format = "ini"
                last_verified = "2026-09-11"
                source = "https://example.invalid"
             "#,
@@ -948,6 +951,21 @@ mod tests {
                     RuleId::PlaintextTransport,
                     RuleId::InvisibleUnicode,
                     RuleId::OpaqueHook,
+                    RuleId::DownloadAndExecute,
+                    RuleId::DecodeAndExecute,
+                    RuleId::CredentialExfiltration,
+                    RuleId::UnverifiedDownload,
+                    RuleId::UnpinnedRemotePackage,
+                ],
+            ),
+            // A CI workflow runs shell on every push, so every rule that
+            // reads a hook's command reads its steps, plus the one that asks
+            // whether an agent was told not to ask.
+            (
+                vec![(Scope::Repository, ".github/workflows/ci.yml")],
+                vec![
+                    RuleId::AgentRunsUnattended,
+                    RuleId::InvisibleUnicode,
                     RuleId::DownloadAndExecute,
                     RuleId::DecodeAndExecute,
                     RuleId::CredentialExfiltration,
@@ -1310,6 +1328,36 @@ mod tests {
                 .unwrap_or_else(|| panic!("{name} matched no row"));
             assert_eq!(matched.kind, SurfaceKind::InstructionFile, "{name}");
         }
+    }
+
+    /// GitHub loads a workflow from the repository root alone. A nested
+    /// `.github/workflows` is a fixture, a vendored copy or another project's
+    /// tree, and a high-severity finding there would be about a file nothing
+    /// executes.
+    #[test]
+    fn a_workflow_is_only_matched_at_the_repository_root() {
+        for at in [".github/workflows/ci.yml", ".github/workflows/release.yaml"] {
+            let matched = shipped()
+                .lookup_in(&p(at), Scope::Repository)
+                .unwrap_or_else(|| panic!("{at} matched no row"));
+            assert_eq!(matched.kind, SurfaceKind::Workflow, "{at}");
+        }
+        for at in [
+            "fixtures/project/.github/workflows/ci.yml",
+            "vendor/other/.github/workflows/ci.yml",
+            "sub/.github/workflows/ci.yml",
+        ] {
+            assert!(
+                shipped().lookup_in(&p(at), Scope::Repository).is_none(),
+                "{at} is not a workflow GitHub runs"
+            );
+        }
+        // And a workflow directory holding something else is not a workflow.
+        assert!(
+            shipped()
+                .lookup_in(&p(".github/workflows/notes.txt"), Scope::Repository)
+                .is_none()
+        );
     }
 
     #[test]

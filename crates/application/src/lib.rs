@@ -11,5 +11,5 @@ pub mod discover_surfaces;
 
 pub use discover_surfaces::{
     DeclaredAutonomy, DeclaredServer, DeclaredTask, DiscoverSurfaces, DiscoveryReport,
-    GrantedPermission, RegisteredHook,
+    GrantedPermission, RegisteredHook, WorkflowStep,
 };

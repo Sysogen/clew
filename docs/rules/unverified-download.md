@@ -1,6 +1,6 @@
 # unverified-download
 
-Severity **medium**, pack core 3.
+Severity **medium**, pack core 4.
 
 A downloaded file run with no checksum or signature checked first
 

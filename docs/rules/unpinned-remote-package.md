@@ -1,6 +1,6 @@
 # unpinned-remote-package
 
-Severity **low**, pack core 3.
+Severity **low**, pack core 4.
 
 A registry package run at a tag that moves, such as @latest
 

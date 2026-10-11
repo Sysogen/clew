@@ -17,7 +17,7 @@
 #               against. Omitted means repository
 
 version = 2
-revision = 6
+revision = 7
 
 # --- Claude Code ------------------------------------------------------------
 
@@ -390,6 +390,38 @@ tool = "devcontainer"
 kind = "devcontainer"
 last_verified = "2026-09-11"
 source = "https://containers.dev/implementors/json_reference/"
+
+# --- Continuous integration ------------------------------------------------
+#
+# A workflow is configuration that runs code with nobody at the keyboard, in a
+# job holding its token and whatever secrets it was given. Which events trigger
+# it and which secrets it receives are not read here. Only `run:` steps are
+# read: a step naming an action with `uses` runs whatever that action runs,
+# which this file does not say, so the official agent actions are not reached
+# this way. GitHub Actions alone for now; the other providers are the same
+# shape in a different schema.
+#
+# Anchored at the root, not `**/`, because that is the only place GitHub loads
+# a workflow from. A nested `.github/workflows` is a fixture, a vendored copy
+# or another project's tree, and GitHub never runs it for this repository, so
+# a high-severity finding there would be about a file nothing executes.
+[[surface]]
+glob = ".github/workflows/*.{yml,yaml}"
+tool = "any"
+kind = "workflow"
+format = "yaml"
+extract = ["workflow"]
+check = [
+  "agent-runs-unattended",
+  "invisible-unicode",
+  "download-and-execute",
+  "decode-and-execute",
+  "credential-exfiltration",
+  "unverified-download",
+  "unpinned-remote-package",
+]
+last_verified = "2026-10-11"
+source = "https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax"
 
 # --- Read by more than one tool ----------------------------------------------
 #

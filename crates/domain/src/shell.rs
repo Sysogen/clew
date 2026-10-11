@@ -88,6 +88,53 @@ pub fn scripts(line: &str) -> Vec<String> {
 }
 
 fn collect(line: &str, depth: usize, found: &mut Vec<String>) {
+    walk(line, &mut |words| ran(words, depth, found));
+}
+
+/// `words` with every command wrapper taken off its front, so the first word
+/// is the program that actually runs.
+///
+/// `env FOO=1 claude --flag` and `sudo -u ci gemini --yolo` both run an agent,
+/// and a reader that only looked at the first word would see `env` and `sudo`.
+/// The wrappers and the options each takes are the same ones `scripts` already
+/// reads through, so a wrapper learnt there is learnt here.
+#[must_use]
+pub fn unwrapped(words: &[Option<String>]) -> &[Option<String>] {
+    let mut at = words;
+    // Bounded by the slice shrinking: each pass drops at least one word.
+    while let Some(program) = at.first().and_then(|w| w.as_deref()) {
+        let name = program.rsplit('/').next().unwrap_or(program);
+        if !WRAPPERS.contains(&name) {
+            break;
+        }
+        let Some(start) = wrapped(name, &at[1..]) else {
+            break;
+        };
+        let next = &at[1 + start..];
+        if next.len() >= at.len() {
+            break;
+        }
+        at = next;
+    }
+    at
+}
+
+/// Each command `line` runs, as the words it was given, in order.
+///
+/// A word that is not literal text is `None`: what it holds is decided when the
+/// line runs, and a reader that guessed would report a flag nobody passed. One
+/// line holds several commands, so a caller judging an invocation must judge
+/// each separately rather than search the whole line.
+#[must_use]
+pub fn commands(line: &str) -> Vec<Vec<Option<String>>> {
+    let mut found = Vec::new();
+    walk(line, &mut |words| found.push(words.to_vec()));
+    found
+}
+
+/// Hand each command in `line` to `each`, in document order, with every word
+/// resolved as far as the assignments above it allow.
+fn walk(line: &str, each: &mut impl FnMut(&[Option<String>])) {
     let Some(tree) = parser().parse(line, None) else {
         return;
     };
@@ -102,7 +149,7 @@ fn collect(line: &str, depth: usize, found: &mut Vec<String>) {
                     .into_iter()
                     .map(|word| word.and_then(|word| substituted(word, &assigned)))
                     .collect();
-                ran(&words, depth, found);
+                each(&words);
             }
             // A prefix assignment holds for its own command only.
             "variable_assignment" if node.parent().is_none_or(|p| p.kind() != "command") => {

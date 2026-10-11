@@ -15,11 +15,12 @@ use crate::mcp_server::McpServer;
 use crate::permission::Permission;
 use crate::repo_path::RepoPath;
 use crate::rules::{
-    auto_run_task, bypass_permissions, credential_exfiltration, decode_and_execute,
-    download_and_execute, invisible_unicode, opaque_hook, plaintext_transport, trusted_server,
-    unpinned_remote_package, unrestricted_shell, unverified_download,
+    agent_runs_unattended, auto_run_task, bypass_permissions, credential_exfiltration,
+    decode_and_execute, download_and_execute, invisible_unicode, opaque_hook, plaintext_transport,
+    trusted_server, unpinned_remote_package, unrestricted_shell, unverified_download,
 };
 use crate::task::Task;
+use crate::yaml::Span;
 
 /// A kind of thing clew judges.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,6 +61,11 @@ pub enum Examined<'a> {
         source: &'a str,
         /// Which copy of the command this is.
         occurrence: usize,
+        /// Where the file wrote it, when the reader knew. A finding is placed
+        /// here rather than by searching for the command, which cannot tell
+        /// two copies apart. `None` for a format read without positions,
+        /// where the copy is all there is to go on.
+        at: Option<Span>,
     },
     /// A mode a file starts an agent in.
     Mode {
@@ -173,6 +179,7 @@ pub fn of(id: RuleId) -> &'static dyn Rule {
         RuleId::TrustedServer => &trusted_server::TrustedServer,
         RuleId::PlaintextTransport => &plaintext_transport::PlaintextTransport,
         RuleId::AutoRunTask => &auto_run_task::AutoRunTask,
+        RuleId::AgentRunsUnattended => &agent_runs_unattended::AgentRunsUnattended,
     }
 }
 

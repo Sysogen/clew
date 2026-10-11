@@ -7,6 +7,97 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- GitHub Actions workflows are read, which no row covered. A workflow is
+  configuration that runs code with nobody at the keyboard, in a job holding
+  its token and whatever secrets it was given; which events trigger it and
+  which secrets it receives are not read, so neither is claimed. Each `run:`
+  step is judged as the shell it is, so the five rules that already read a
+  hook's command read a CI step too: a `curl | sh` in a workflow is
+  `download-and-execute` without a new rule, and `credential-exfiltration`
+  already knows what a token looks like. `invisible-unicode` reads the file
+  as text rather than as commands, which is a sixth rule by a different path.
+
+  `agent-runs-unattended`, severity high, flags a step that runs an agent CLI
+  with the flag waiving every permission prompt. Each flag was read from that
+  tool's own reference or its argument definitions: Claude Code's
+  `--dangerously-skip-permissions` and `--permission-mode bypassPermissions`,
+  Codex's `--dangerously-bypass-approvals-and-sandbox`, and Gemini CLI's
+  `--yolo`, `-y` and `--approval-mode yolo`.
+
+  The near misses are deliberately absent, which is most of what reading the
+  references bought. Claude Code's `--allow-dangerously-skip-permissions` adds
+  the bypass mode to the mode cycle without starting in it, so an unattended
+  run never reaches it. Codex's `--ask-for-approval never` on its own leaves
+  the sandbox at its read-only default, which is the same line
+  `bypass-permissions` already draws; only the flag that waives the sandbox
+  too is listed, and Codex's source confirms it sets both. Gemini CLI's
+  `--approval-mode auto_edit` auto-approves edit tools alone. `dontAsk` is not
+  listed because the reference names it without saying what it does.
+
+  A flag belongs to the tool that defines it. Reading them as one set would
+  have `-y`, which is `yes` to most of the world, waive a prompt Claude Code
+  never offered, and would fire on `npx -y` answering npx rather than the
+  agent it goes on to run. The rule reads the parsed commands rather than the
+  text, so `echo claude --dangerously-skip-permissions` runs no agent and a
+  lint forbidding the flag is not itself a finding. A word the file does not
+  hold, such as `$FLAGS`, is not read as a flag.
+
+  The row is anchored at the repository root rather than `**/`, because that
+  is the only place GitHub loads a workflow from. A nested `.github/workflows`
+  is a fixture, a vendored copy or another project's tree, and a
+  high-severity finding there would be about a file nothing executes.
+
+  Only a POSIX shell is read as one. A workflow may run PowerShell, Python or
+  a shell of its own choosing, and a Windows runner defaults to PowerShell, so
+  the effective shell is resolved from the step, the nearest
+  `defaults.run.shell` and the runner, and a step that is not Bash or sh is
+  reported and left unjudged. Judging one language by another's syntax answers
+  a question nobody asked.
+
+  A package runner is read by the form it runs things in, not by its name.
+  `npm view @openai/codex` and `pnpm add @google/gemini-cli` name a package
+  without running it, so only `npx`, `bunx`, `uvx`, `npm exec`, `pnpm dlx`,
+  `pnpm exec`, `yarn dlx`, `bun x` and `deno run` count, and within those the
+  option values and the `--` separator are read before the program, since
+  `npx --package @google/gemini-cli -- echo` runs `echo`. A wrapper is read
+  through, so `env FOO=1 claude --flag` and `sudo -u ci gemini --yolo` are
+  found; a runner handed a wrapper that then runs the agent is knowingly
+  missed, which the rule says.
+
+  `--` ends a command's own options, so `claude -- --dangerously-skip-\
+  permissions` passes that text as an argument and waives nothing.
+
+  A runner has to say which operating system it is. `runs-on: ubuntu-latest`
+  and the `group`/`labels` mapping both do; `self-hosted`, a label a project
+  invented, and a job with no `runs-on` at all do not, and a job without one
+  is a job GitHub refuses to run. An expression is resolved through the matrix
+  it names, where every key the label refers to has to resolve and every value
+  the deciding key can take has to be POSIX, since a run picks one of them. A
+  step whose shell stays unknown is reported and left unjudged, which loses a
+  finding on a job clew cannot place rather than reading one language as
+  another.
+
+- YAML is read with the position of every value it holds, through the
+  parser's own events rather than the high-level loader, which gives a tree
+  with no positions in it. A finding in a workflow is placed where the file
+  wrote the command instead of by searching the text for it again, which went
+  wrong wherever the same text appeared twice: a command repeated in a
+  comment or a step name above the step that runs it, two jobs opening on the
+  same line, two steps running the same thing. The span bounds the search as
+  well as starting it, so a line inside a folded block cannot be found in a
+  later step.
+
+  The reader resolves merge keys, which the loader does not. A job written
+  `<<: *base` inherited no steps, so its commands were in the file and clew
+  said nothing about any of them. Anchors and aliases keep working as they
+  did, and a test now pins that, since the code reads as though it drops them.
+
+- `Format::Yaml`, which the workflow rows need and which nothing else uses
+  yet. It is deliberately not folded in with JSON the way JSONC is: no tool
+  writes a mode or a grant in YAML, and folding it in would have clew report a
+  mode out of a workflow that happened to carry the key path. A CI workflow
+  has a `permissions:` block of its own, which means something else entirely.
+
 - Crush is read, which it was not at all. Five rows cover both forms it loads:
   `crushrc`, which is Bash that runs with the user's shell privileges before
   the UI appears, and the deprecated `crush.json`, which is still discovered
@@ -69,6 +160,42 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   variable-rooted path.
 
 ### Fixed
+
+- A command written bare rather than as a JSON string yielded its finding
+  about the file rather than at the line, since placement looked only for the
+  quoted form a settings file writes. Every finding in a YAML `run:` block
+  would have been a path and nothing else to go on.
+
+- Two jobs were read in the order their names sort rather than the order the
+  file writes them, because a parsed map was key-sorted. Occurrences were
+  counted in one order and placed by searching in the other, so each job's
+  finding landed in the other's block, carrying one job's evidence and the
+  other's line number. YAML is now read with the position of every value, so
+  nothing is placed by counting.
+
+- A finding was placed on any line holding the waiver's flag, whether or not
+  that line ran an agent, so `echo --dangerously-skip-permissions` above a
+  real invocation took the finding. The same reading that finds it now
+  chooses where it goes.
+
+- Two steps whose blocks open on the same line were both placed in the first
+  of them, because the copy was counted on the whole block while placement
+  looks for the line it opens with. Counted on the same text now.
+
+- A step was redacted before the rules read it, which suppressed findings
+  rather than producing wrong ones. Masking `TOKEN=$(gh auth token)` to
+  `TOKEN=**** auth token)` destroys where the token came from, so the
+  exfiltration below it went unreported: the same command in a hook was a
+  `credential-exfiltration` finding and in a workflow was nothing. A step is
+  now judged as the workflow wrote it and redacted on its way into the report,
+  which is what a hook's command already did. A custom `shell:` is redacted
+  too, being a command line a token can be written into.
+
+- Two agent invocations in one block both pointed at the first, because the
+  line holding the flag was looked for from the start of the file rather than
+  from the block, and without an ordinal. Each is now looked for inside its
+  own block, counted per flag so two commands waiving by different ones are
+  told apart.
 
 - A pre-approval under a key absent from the placement list yielded its finding
   about the file rather than at the line, quietly, since the finding still
