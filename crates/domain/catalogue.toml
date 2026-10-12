@@ -420,8 +420,11 @@ source = "https://containers.dev/implementors/json_reference/"
 # A linked worktree and a submodule have a `.git` file holding the path to the
 # real git directory, and git runs their hooks from there. That path leads out
 # of the tree being scanned, which clew does not follow, so those hooks are
-# not read and the scan does not pretend otherwise by calling them absent in
-# the report it prints.
+# not read, and the scan reports no hooks rather than reporting that it could
+# not look. The alternative is a gap, and a gap is a non-zero exit for every
+# worktree and every submodule, none of which has anything wrong with it. A
+# `.git` that is a symlink is the one case clew does call a gap, because
+# following it is a policy clew chose rather than a path it cannot name.
 #
 # A hook git ignores because it is not executable is counted here as one it
 # runs. The tree a scan reads exposes no file mode, so these are candidate
