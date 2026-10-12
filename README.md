@@ -43,8 +43,9 @@ CLAUDE.md                instruction file
 
 `path` reports every file an agent reads as configuration, across Claude Code,
 Codex, Crush, Cursor, VS Code, Gemini CLI, Kiro, Zed, Windsurf, Cline,
-Continue, Aider, Copilot and devcontainers, plus `.env` files and GitHub
-Actions workflow files, whose `run:` steps are read as the shell they are. From those it reads:
+Continue, Aider, Copilot and devcontainers, plus `.env` files, GitHub Actions
+workflow files, whose `run:` steps are read as the shell they are, and git
+hooks. From those it reads:
 
 - the hooks each registers, the event each runs on, and whether it runs a
   command or injects a prompt, a hook switched off included;
@@ -160,6 +161,43 @@ for it, so the same key copied into a file read by a tool that ignores it is
 reported as part of the declaration and is not a finding. A per-tool list such
 as Cline's `autoApprove` names what it approves rather than approving all of
 it, so it is not this rule.
+
+### Git hooks, and what is not followed
+
+A git hook runs on commit, on push and on merge without being asked, with
+whoever's credentials are at the keyboard, and an agent that commits triggers
+one. clew reads them from `.git/hooks`, `.githooks`, `.husky` and `hooks` at
+the repository root, by the names git itself looks for.
+
+Four limits, stated because a scanner that implies more than it reads is worse
+than one that reads less:
+
+- **`core.hooksPath` is not read.** A repository that points it at a directory
+  other than those four has hooks clew does not see, and one that never set it
+  has the other three read as surfaces although git runs nothing in them.
+  Reading it means reading `.git/config`, which is INI and inside the
+  directory a scan prunes.
+- **A helper a hook sources is not followed.** What the hook file itself says
+  is what gets read.
+- **A linked worktree's hooks are not read.** A worktree and a submodule hold
+  a `.git` file pointing at the real git directory, and git runs their hooks
+  from there, outside the tree being scanned. clew does not follow a path out
+  of the scan root.
+- **A hook is read by its name, not its mode.** git ignores a hook that is not
+  executable; the tree a scan reads exposes no file mode, so one that git
+  would ignore is still reported.
+
+`.git/hooks` is the only one git reads without being told to, so a scan that
+cannot enter it says so and exits non-zero: the usual reason is a `.git` that
+is a link, which git follows and clew does not. The other three hold
+candidate hooks, files git would run if `core.hooksPath` pointed at them, and
+one of those being a link is passed over in the silence a scan leaves every
+link it declines.
+
+Matching by name is also what keeps the samples `git init` writes out of the
+report: git runs a hook by the name it looks for, so `pre-commit.sample` is
+not one, and a wildcard would call a dozen files a surface in every repository
+ever initialised.
 
 ### Output formats
 

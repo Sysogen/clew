@@ -10,7 +10,7 @@
 //! `corpus.snapshot` holds the findings clew reports in it, so a rule whose
 //! logic changes fails here rather than passing quietly under the same number.
 //!
-//! Nine of the twenty-two fixtures are silent on purpose. Every rule's prose
+//! Ten of the twenty-four fixtures are silent on purpose. Every rule's prose
 //! promises cases it does not fire on, and a rule that starts firing on one of
 //! those is as much a regression as one that stops firing at all.
 //!
@@ -53,7 +53,6 @@ fn every_fixture_reports_what_the_snapshot_records() {
         let source = fs::read_to_string(&fixture).expect("a readable fixture");
         let at = laid_out(&name, &source);
         let report = scanned(&at);
-        let _ = fs::remove_dir_all(&at);
 
         if report.findings.is_empty() {
             held.push(format!("{name} -"));
@@ -132,15 +131,55 @@ fn fixtures() -> Vec<PathBuf> {
     held
 }
 
+/// A laid-out fixture, removed when it goes out of scope.
+///
+/// A fixture whose snapshot does not match panics, and a panic unwinds past
+/// any cleanup written after the scan. `Drop` runs on that path too, so a
+/// failing run leaves nothing behind in the temporary directory.
+struct Scratch(PathBuf);
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+impl std::ops::Deref for Scratch {
+    type Target = Path;
+
+    fn deref(&self) -> &Path {
+        &self.0
+    }
+}
+
 /// Write a manifest out as a tree, and say where.
 ///
 /// Nothing here is platform-dependent on purpose. A fixture that laid out
 /// differently on one operating system would record a different snapshot
 /// there, which is a corpus that agrees with itself and nothing else.
-fn laid_out(name: &str, source: &str) -> PathBuf {
-    let at = std::env::temp_dir().join(format!("clew-corpus-{name}-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&at);
-    fs::create_dir_all(&at).expect("a temporary directory");
+fn laid_out(name: &str, source: &str) -> Scratch {
+    // Created rather than cleared: a process id is reused, and a counter
+    // restarts at zero in every process, so the same names come round again.
+    // `create_dir` fails when one is taken, which steps over a leftover
+    // instead of laying this fixture out over it.
+    //
+    // Guarded as it is reserved, not once it is laid out: every write below
+    // panics on failure, and a guard built after them would not exist to run
+    // while the panic unwinds.
+    let at = Scratch(
+        (0..4096)
+            .map(|n| {
+                std::env::temp_dir().join(format!("clew-corpus-{name}-{}-{n}", std::process::id()))
+            })
+            .find(|at| match fs::create_dir(at) {
+                Ok(()) => true,
+                // Only a taken name advances: a temp directory that cannot be
+                // written to would otherwise be reported as 4096 collisions.
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => false,
+                Err(error) => panic!("create {}: {error}", at.display()),
+            })
+            .expect("a free temporary directory"),
+    );
 
     let mut writing: Option<(PathBuf, String, bool)> = None;
     let write = |held: Option<(PathBuf, String, bool)>| {

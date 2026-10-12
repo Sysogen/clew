@@ -86,8 +86,14 @@ impl FileTree for StdFileTree {
             }
         } else {
             // symlink_metadata does not follow, so a link found while walking
-            // is refused rather than walked out of the scan root.
+            // is refused rather than walked out of the scan root. It is told
+            // apart from a plain file because a link may lead to a directory,
+            // and a caller reporting what it could not read needs to know
+            // which of the two it is looking at.
             let found = fs::symlink_metadata(&absolute).map_err(|e| map_error(&e))?;
+            if found.file_type().is_symlink() {
+                return Err(FileTreeError::IsALink);
+            }
             if !found.is_dir() {
                 return Err(FileTreeError::NotADirectory);
             }
@@ -204,12 +210,54 @@ mod contents_tests {
 
     use super::*;
 
-    /// Scratch directory, unique per process and `tag`. Tags must not repeat.
-    fn scratch(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("clew-contents-{}-{tag}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).expect("create scratch dir");
-        dir
+    /// A directory of this test's own, removed when the test ends. A tag is a
+    /// label rather than a key, so two tests may share one.
+    ///
+    /// Created rather than cleared. `create_dir` fails when the name is taken,
+    /// so a leftover from a run whose process id the system has since reused
+    /// is stepped over instead of being written into. Clearing the name first
+    /// and trusting the clear is what let a tree from a week earlier stand in
+    /// for this one, and a counter alone does not help: it restarts at zero in
+    /// every process, so the same names come round again.
+    ///
+    /// Stepping over a name only works while there are names left, which is
+    /// why this is removed on the way out rather than left for the next run to
+    /// step over. A panicking test drops it too.
+    struct Scratch(PathBuf);
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    impl std::ops::Deref for Scratch {
+        type Target = Path;
+
+        fn deref(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    // So a scratch directory is handed to a root the way a path is, which is
+    // what every caller here was already doing.
+    impl From<&Scratch> for PathBuf {
+        fn from(held: &Scratch) -> Self {
+            held.0.clone()
+        }
+    }
+
+    fn scratch(tag: &str) -> Scratch {
+        for n in 0..4096 {
+            let dir = std::env::temp_dir()
+                .join(format!("clew-contents-{}-{n}-{tag}", std::process::id()));
+            match fs::create_dir(&dir) {
+                Ok(()) => return Scratch(dir),
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+                Err(error) => panic!("create scratch dir: {error}"),
+            }
+        }
+        panic!("no free scratch directory for {tag}")
     }
 
     fn path(name: &str) -> RepoPath {
@@ -310,7 +358,7 @@ mod contents_tests {
 
         assert_eq!(
             read,
-            Err(FileTreeError::NotADirectory),
+            Err(FileTreeError::IsALink),
             "a linked directory must be refused, not walked"
         );
     }
@@ -383,6 +431,62 @@ mod contents_tests {
             .expect("the named root is read");
 
         assert_eq!(entries.len(), 1);
+    }
+
+    /// A name already taken is stepped over rather than cleared and reused.
+    /// The case this guards cannot be reached from inside one process, since
+    /// it needs a directory left by an earlier run whose process id the system
+    /// has since handed out again, so the occupied name is made by hand here.
+    #[test]
+    fn a_scratch_name_already_taken_is_stepped_over() {
+        let taken =
+            std::env::temp_dir().join(format!("clew-contents-{}-0-stepover", std::process::id()));
+        let _ = fs::remove_dir_all(&taken);
+        fs::create_dir_all(&taken).expect("mkdir");
+        fs::write(taken.join("from-an-earlier-run"), "x").expect("write");
+
+        let dir = scratch("stepover");
+
+        assert_ne!(*dir, *taken, "the taken name was reused");
+        assert!(
+            taken.join("from-an-earlier-run").exists(),
+            "what was there is still there, not cleared"
+        );
+        assert!(dir.exists() && fs::read_dir(&*dir).expect("read").next().is_none());
+
+        // Made by hand, so it is cleared by hand: a `Scratch` clears only
+        // what it created, and this run should leave nothing behind.
+        let _ = fs::remove_dir_all(&taken);
+    }
+
+    /// `never_walks_into_a_linked_directory` covers the refusal. This covers
+    /// what makes the refusal insufficient on its own: `symlink_metadata` does
+    /// not follow a path's last component but does follow every ancestor, so a
+    /// path *through* a link resolves and is read. A caller handed a path two
+    /// segments deep has to ask about each segment, which is what a scan
+    /// seeding `.git/hooks` does; without it a `.git` pointing elsewhere puts
+    /// files from outside the root into the report as though they were in it.
+    #[cfg(unix)]
+    #[test]
+    fn a_path_through_a_link_resolves_so_each_segment_must_be_asked_about() {
+        let dir = scratch("throughlink");
+        let outside = dir.join("outside");
+        fs::create_dir_all(outside.join("hooks")).expect("mkdir");
+        fs::write(outside.join("hooks/pre-commit"), "#!/bin/sh\n").expect("write");
+        let inside = dir.join("root");
+        fs::create_dir(&inside).expect("mkdir");
+        std::os::unix::fs::symlink(&outside, inside.join(".git")).expect("symlink");
+        let tree = StdFileTree::new(&inside);
+
+        assert_eq!(
+            tree.read_dir(&path(".git")),
+            Err(FileTreeError::IsALink),
+            "asked about the link, it is refused"
+        );
+        assert!(
+            tree.read_dir(&path(".git/hooks")).is_ok(),
+            "asked about what is under it, the link has already been followed"
+        );
     }
 
     #[cfg(unix)]

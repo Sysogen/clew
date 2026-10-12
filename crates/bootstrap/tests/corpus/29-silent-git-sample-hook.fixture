@@ -1,0 +1,16 @@
+What `git init` writes into `.git/hooks`, and the other files that collect
+there. git runs a hook by the name it looks for, so none of these is one, and
+a wildcard would call every repository ever initialised a dozen surfaces.
+
+The sample content is git's own, which carries nothing any rule flags: the
+cost of matching these would be noise in a count rather than false findings,
+and a count is what a prevalence figure is.
+
+>>> .git/hooks/pre-commit.sample
+#!/bin/sh
+exec git diff-index --check --cached HEAD --
+>>> .git/hooks/commit-msg.sample
+#!/bin/sh
+test "" = "$(grep '^Signed-off-by: ' "$1" | sort | uniq -c | sed -n '/^[ ]*1[ ]/p')"
+>>> .git/hooks/README
+Hooks live here. The samples above are shipped by git init.

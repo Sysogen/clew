@@ -94,6 +94,16 @@ pub enum CatalogueError {
         /// The glob as written.
         glob: String,
     },
+    /// A row names a seed that is not a plain path inside the scan root. The
+    /// seed is joined to that root and read, so a traversal segment or an
+    /// absolute path would reach outside it.
+    #[error("row {row} seeds a directory outside the scan: {seed:?}")]
+    UnrootedSeed {
+        /// Which row, counting from zero.
+        row: usize,
+        /// The seed as written.
+        seed: String,
+    },
     /// A row names a kind the domain does not have.
     #[error("row {row} has an unknown kind {kind:?}")]
     UnknownKind {
@@ -146,6 +156,11 @@ pub struct SurfaceRule {
     /// Which tree it is matched against. Omitted means the repository.
     #[serde(default = "default_scope")]
     pub scope: String,
+    /// A directory the scan must be told to enter for this row to be
+    /// reachable, because the walk prunes its way there. Omitted means the
+    /// walk reaches it on its own, which is true of every other row.
+    #[serde(default)]
+    pub seed: Option<String>,
 }
 
 fn default_scope() -> String {
@@ -157,9 +172,15 @@ fn default_format() -> String {
 }
 
 /// The schema this crate reads. Raised when the shape of the file changes, as
-/// it did when `revision` was added, so a file written for an older shape is
-/// refused rather than half read.
-const SCHEMA: u32 = 2;
+/// it did when `revision` was added and again when `seed` was, so a file
+/// written for an older shape is refused rather than half read.
+///
+/// `seed` raised it although a reader that did not know the field would still
+/// parse the file: it would parse it and enter none of the directories the
+/// field names, which is the half reading this number exists to refuse. A
+/// field that changes what a scan reaches is a shape change whether or not
+/// serde minds.
+const SCHEMA: u32 = 3;
 
 /// Just the schema, read before the rest: a file written for an older shape is
 /// missing fields the current one requires, and "missing field `revision`" says
@@ -284,19 +305,16 @@ impl Catalogue {
                     row,
                     scope: rule.scope.clone(),
                 })?;
-            // A home scan enters only the directories its rows name, so the
-            // first segment has to be one.
-            let mut segments = rule.glob.split('/');
-            let anchored = segments
-                .next()
-                .is_some_and(|first| !first.is_empty() && !first.contains(['*', '?', '[', '{']));
-            // A traversal segment anywhere resolves outside the root the scan
-            // was given, so none is allowed at any position.
-            let walks_out = rule.glob.split('/').any(|s| s == "." || s == "..");
-            if scope != Scope::Repository && (!anchored || walks_out) {
+            if scope != Scope::Repository && !anchored(&rule.glob) {
                 return Err(CatalogueError::UnanchoredRow {
                     row,
                     glob: rule.glob.clone(),
+                });
+            }
+            if let Some(seed) = rule.seed.as_deref().filter(|seed| !rooted(seed)) {
+                return Err(CatalogueError::UnrootedSeed {
+                    row,
+                    seed: seed.to_owned(),
                 });
             }
             scopes.push(scope);
@@ -384,6 +402,50 @@ impl Catalogue {
         roots
     }
 
+    /// The row an entry of a seeded directory matches, among the rows that
+    /// asked for that directory to be entered.
+    ///
+    /// A seed steps around the prune list for the row that names it, and for
+    /// no other. Matching the whole catalogue inside a seeded directory would
+    /// hand every row a subtree the walk was told to skip: a `CLAUDE.md` left
+    /// in `.git/hooks` is not an instruction file an agent reads, and
+    /// reporting it would claim more of that directory than any row asked for.
+    #[must_use]
+    pub fn lookup_seeded(&self, path: &RepoPath, scope: Scope, seed: &str) -> Option<Matched<'_>> {
+        let first =
+            self.globs.matches(path.as_str()).into_iter().find(|i| {
+                self.scopes[*i] == scope && self.rules[*i].seed.as_deref() == Some(seed)
+            })?;
+        Some(Matched {
+            rule: &self.rules[first],
+            kind: self.kinds[first],
+            extract: &self.extractions[first],
+            check: &self.checks[first],
+            format: self.formats[first],
+            scope: self.scopes[first],
+        })
+    }
+
+    /// The directories a repository scan must be told to enter.
+    ///
+    /// A row inside a pruned directory is unreachable by walking, and relaxing
+    /// the prune would turn the one type whose job is "what not to enter" into
+    /// a set of exceptions. Naming the directory on the row instead keeps the
+    /// exception where a reviewer reads it.
+    #[must_use]
+    pub fn seeds_in(&self, scope: Scope) -> Vec<&str> {
+        let mut held: Vec<&str> = Vec::new();
+        for (rule, wanted) in self.rules.iter().zip(&self.scopes) {
+            if *wanted != scope {
+                continue;
+            }
+            if let Some(seed) = rule.seed.as_deref().filter(|s| !held.contains(s)) {
+                held.push(seed);
+            }
+        }
+        held
+    }
+
     /// Every row, in declaration order.
     #[must_use]
     pub fn rules(&self) -> &[SurfaceRule] {
@@ -400,7 +462,37 @@ impl Catalogue {
     }
 }
 
-/// Whether `value` is a calendar day written `YYYY-MM-DD`.
+/// Whether a glob names the directory a scan outside a repository starts at.
+///
+/// A home scan enters only the directories its rows name, so the first segment
+/// has to be one. A traversal segment anywhere resolves outside the root the
+/// scan was given, so none is allowed at any position.
+fn anchored(glob: &str) -> bool {
+    let named = glob
+        .split('/')
+        .next()
+        .is_some_and(|first| !first.is_empty() && !first.contains(['*', '?', '[', '{']));
+    named && !glob.split('/').any(|s| s == "." || s == "..")
+}
+
+/// Whether a seed is a plain path inside the scan root.
+///
+/// A seed is joined to that root and read, rather than matched against a path
+/// the walk already found, so it is the one field that can reach outside it. An
+/// empty segment is what a leading slash leaves, so an absolute path needs no
+/// check of its own; a drive letter and a UNC prefix do, since neither leaves
+/// one.
+fn rooted(seed: &str) -> bool {
+    !seed.contains(':')
+        && !seed.is_empty()
+        // Split on both separators: a seed is joined to a path, and on the
+        // platform where `\` separates, `a\..\out` traverses as surely as
+        // `a/../out` does.
+        && seed
+            .split(['/', '\\'])
+            .all(|segment| !segment.is_empty() && segment != "." && segment != "..")
+}
+
 /// The directory a glob is rooted at: its leading literal segments, without a
 /// trailing filename.
 ///
@@ -421,6 +513,7 @@ fn literal_prefix(glob: &str) -> &str {
     &glob[..end]
 }
 
+/// Whether `value` is a calendar day written `YYYY-MM-DD`.
 fn is_iso_date(value: &str) -> bool {
     let parts: Vec<&str> = value.split('-').collect();
     let [y, m, d] = parts[..] else { return false };
@@ -526,6 +619,7 @@ mod tests {
             (".windsurfrules", SurfaceKind::Windsurf),
             (".crushrc", SurfaceKind::Crush),
             (".github/workflows/ci.yml", SurfaceKind::Workflow),
+            (".git/hooks/pre-commit", SurfaceKind::HookScript),
             ("crush.json", SurfaceKind::Crush),
             ("CRUSH.md", SurfaceKind::InstructionFile),
             (".continue/config.json", SurfaceKind::Continue),
@@ -706,13 +800,183 @@ mod tests {
             shipped().lookup(&p("hooks/.claude/readme")).is_none(),
             "hooks is an ancestor here"
         );
-        assert!(shipped().lookup(&p(".git/hooks/pre-commit")).is_none());
+        // `.git/hooks/pre-commit` is a surface, by its own row rather than
+        // this one: the Claude glob wants a `hooks` directory below `.claude`.
+        assert_eq!(
+            shipped()
+                .lookup(&p(".git/hooks/pre-commit"))
+                .map(|m| m.kind),
+            Some(SurfaceKind::HookScript)
+        );
+    }
+
+    /// git runs a hook by the name it looks for, so a file under any other
+    /// name is not one. That is also what keeps the samples `git init` writes
+    /// out of the report: every repository ever initialised holds a dozen,
+    /// and a wildcard would call each one a surface.
+    #[test]
+    fn a_git_hook_is_matched_by_name_and_a_sample_is_not() {
+        for at in [
+            ".git/hooks/pre-commit",
+            ".git/hooks/commit-msg",
+            ".git/hooks/post-index-change",
+            ".githooks/pre-push",
+            ".husky/pre-commit",
+            "hooks/prepare-commit-msg",
+        ] {
+            assert_eq!(
+                shipped()
+                    .lookup_in(&p(at), Scope::Repository)
+                    .map(|m| m.kind),
+                Some(SurfaceKind::HookScript),
+                "{at}"
+            );
+        }
+        for at in [
+            // What `git init` writes, and nothing git runs.
+            ".git/hooks/pre-commit.sample",
+            ".git/hooks/README",
+            ".git/hooks/pre-commit.bak",
+            // A name git does not look for is not a hook git runs.
+            ".githooks/install.sh",
+            ".husky/_/husky.sh",
+            // The directory a React project keeps its own hooks in, which is
+            // why `hooks` is matched by name rather than by wildcard.
+            "hooks/useAuth.ts",
+            "hooks/index.js",
+            // And only at the root, not wherever the name appears.
+            "vendor/x/.git/hooks/pre-commit",
+            "packages/a/hooks/pre-commit",
+        ] {
+            assert!(
+                shipped().lookup_in(&p(at), Scope::Repository).is_none(),
+                "{at} is not a hook git runs"
+            );
+        }
+    }
+
+    /// A seed is joined to the scan root and read, rather than matched against
+    /// a path the walk already found. So it is the one field that can reach
+    /// outside the root, and it is checked whatever the scope.
+    #[test]
+    fn a_seed_that_reaches_outside_the_scan_is_refused() {
+        for seed in [
+            "../outside",
+            "a/../../outside",
+            "/etc",
+            "/",
+            "",
+            ".",
+            "..",
+            "a//b",
+            "a/./b",
+            "C:/windows",
+            "\\\\server\\share",
+        ] {
+            let error = Catalogue::load(&format!(
+                r#"version = 3
+                   revision = 1
+                   [[surface]]
+                   glob = "x"
+                   tool = "x"
+                   kind = "hook-script"
+                   seed = '{seed}'
+                   last_verified = "2026-09-11"
+                   source = "https://example.invalid"
+                "#
+            ))
+            .expect_err("a seed outside the scan must not load");
+            assert!(
+                matches!(error, CatalogueError::UnrootedSeed { .. }),
+                "{seed:?}: {error:?}"
+            );
+        }
+        // A backslash separates on the platform that uses one, so a
+        // traversal written with backslashes traverses just as surely.
+        for seed in ["a\\..\\outside", "..\\outside", "a\\.\\b", "a\\\\b"] {
+            let error = Catalogue::load(&format!(
+                r#"version = 3
+                   revision = 1
+                   [[surface]]
+                   glob = "x"
+                   tool = "x"
+                   kind = "hook-script"
+                   seed = '{seed}'
+                   last_verified = "2026-09-11"
+                   source = "https://example.invalid"
+                "#
+            ))
+            .expect_err("a backslash traversal must not load");
+            assert!(
+                matches!(error, CatalogueError::UnrootedSeed { .. }),
+                "{seed:?}: {error:?}"
+            );
+        }
+        // A plain path inside the scan loads, whatever the scope.
+        for scope in ["repository", "home", "system"] {
+            let held = Catalogue::load(&format!(
+                r#"version = 3
+                   revision = 1
+                   [[surface]]
+                   scope = "{scope}"
+                   glob = "a/b"
+                   tool = "x"
+                   kind = "hook-script"
+                   seed = "a/b"
+                   last_verified = "2026-09-11"
+                   source = "https://example.invalid"
+                "#
+            ));
+            assert!(held.is_ok(), "{scope}: {held:?}");
+        }
+    }
+
+    /// A seeded directory is matched against the rows that named it, so a
+    /// file there that some other row would claim is not claimed.
+    #[test]
+    fn a_seeded_lookup_sees_only_the_rows_that_asked_for_it() {
+        let held = shipped();
+        assert_eq!(
+            held.lookup_seeded(&p(".git/hooks/pre-commit"), Scope::Repository, ".git/hooks")
+                .map(|m| m.kind),
+            Some(SurfaceKind::HookScript)
+        );
+        for at in [".git/hooks/CLAUDE.md", ".git/hooks/.env"] {
+            assert!(
+                held.lookup_seeded(&p(at), Scope::Repository, ".git/hooks")
+                    .is_none(),
+                "{at} is claimed by a row that did not ask for this directory"
+            );
+            // And the plain lookup does claim them, which is why the seeded
+            // one has to exist at all.
+            assert!(held.lookup_in(&p(at), Scope::Repository).is_some(), "{at}");
+        }
+        // A seed nothing declares matches nothing.
+        assert!(
+            held.lookup_seeded(&p(".git/hooks/pre-commit"), Scope::Repository, "elsewhere")
+                .is_none()
+        );
+    }
+
+    /// The directory a scan is told to enter, because the walk prunes its way
+    /// there. Naming it on the row keeps the exception where it is read.
+    ///
+    /// Only `.git/hooks`. The other three the row matches are reachable by
+    /// walking, and are not where git looks in any case: git reads
+    /// `$GIT_DIR/hooks` unless `core.hooksPath` says otherwise, which clew
+    /// does not read. Seeding them would spend a gap on directories git does
+    /// not run hooks from.
+    #[test]
+    fn the_git_hooks_directory_is_seeded_and_nothing_else_is() {
+        assert_eq!(shipped().seeds_in(Scope::Repository), vec![".git/hooks"]);
+        assert!(shipped().seeds_in(Scope::Home).is_empty());
+        assert!(shipped().seeds_in(Scope::System).is_empty());
     }
 
     #[test]
     fn an_invalid_glob_is_rejected_at_load() {
         let error = Catalogue::load(
-            r#"version = 2
+            r#"version = 3
                revision = 1
                [[surface]]
                glob = "["
@@ -729,7 +993,7 @@ mod tests {
     #[test]
     fn an_unknown_kind_is_rejected_at_load() {
         let error = Catalogue::load(
-            r#"version = 2
+            r#"version = 3
                revision = 1
                [[surface]]
                glob = "x"
@@ -749,7 +1013,7 @@ mod tests {
     #[test]
     fn an_unknown_format_is_rejected_at_load() {
         let error = Catalogue::load(
-            r#"version = 2
+            r#"version = 3
                revision = 1
                [[surface]]
                glob = "x"
@@ -770,7 +1034,7 @@ mod tests {
     #[test]
     fn an_unknown_check_is_rejected_at_load() {
         let error = Catalogue::load(
-            r#"version = 2
+            r#"version = 3
                revision = 1
                [[surface]]
                glob = "x"
@@ -852,6 +1116,9 @@ mod tests {
                     (Scope::Repository, ".claude/hooks/sync.sh"),
                     (Scope::Repository, ".codex/hooks/session_start.py"),
                     (Scope::Home, ".codex/hooks/session_start.py"),
+                    // A git hook is shell that runs without being asked, and
+                    // an agent that commits is what asks for it.
+                    (Scope::Repository, ".git/hooks/pre-commit"),
                 ],
                 vec![
                     RuleId::InvisibleUnicode,
@@ -1039,13 +1306,14 @@ mod tests {
                 }
             };
             held.push(format!(
-                "{} {} {} {} {} {}",
+                "{} {} {} {} {} {} {}",
                 rule.scope,
                 rule.glob,
                 rule.kind,
                 rule.format,
                 list(&rule.extract),
                 list(&rule.check),
+                rule.seed.as_deref().unwrap_or("-"),
             ));
             assert!(row < pinned.len(), "{} has no pinned line", rule.glob);
         }
@@ -1059,8 +1327,13 @@ mod tests {
     }
 
     /// A file written for an older shape is refused rather than half read.
-    /// `revision` became required when it was added, which is a change of
-    /// shape, so the schema says 2.
+    ///
+    /// The schema says 3. `revision` raised it to 2 by becoming required,
+    /// which serde would refuse on its own. `seed` raised it to 3 and serde
+    /// would not: an optional field reads as absent, and a reader that did
+    /// not know it would parse the file and enter none of the directories it
+    /// names. Half reading is what this number refuses, whether or not the
+    /// parser minds.
     #[test]
     fn a_file_written_for_another_schema_is_refused() {
         let error = Catalogue::load(
@@ -1080,7 +1353,7 @@ mod tests {
                 error,
                 CatalogueError::UnknownSchema {
                     found: 1,
-                    expected: 2
+                    expected: 3
                 }
             ),
             "{error:?}"
@@ -1090,7 +1363,7 @@ mod tests {
     #[test]
     fn an_unknown_extraction_is_rejected_at_load() {
         let error = Catalogue::load(
-            r#"version = 2
+            r#"version = 3
                revision = 1
                [[surface]]
                glob = "x"
@@ -1260,7 +1533,7 @@ mod tests {
     fn a_row_outside_a_repository_cannot_walk_out_of_its_root() {
         for glob in ["../outside/**", "./**", ".", ".."] {
             let error = Catalogue::load(&format!(
-                r#"version = 2
+                r#"version = 3
                revision = 1
                    [[surface]]
                    scope = "home"
@@ -1392,7 +1665,7 @@ mod tests {
     fn a_row_outside_a_repository_cannot_reach_past_its_root() {
         for glob in ["foo/../../outside/**/*.md", "a/./b/**/*.md", "a/../b"] {
             let error = Catalogue::load(&format!(
-                r#"version = 2
+                r#"version = 3
                revision = 1
                    [[surface]]
                    scope = "home"
@@ -1606,7 +1879,7 @@ mod tests {
             "2026-13-01",
         ] {
             let toml = format!(
-                r#"version = 2
+                r#"version = 3
                revision = 1
                    [[surface]]
                    glob = "x"
@@ -1623,7 +1896,7 @@ mod tests {
             );
         }
 
-        let leap = r#"version = 2
+        let leap = r#"version = 3
                revision = 1
                       [[surface]]
                       glob = "x"
@@ -1638,7 +1911,7 @@ mod tests {
     #[test]
     fn a_row_missing_its_citation_is_rejected_at_load() {
         let error = Catalogue::load(
-            r#"version = 2
+            r#"version = 3
                revision = 1
                [[surface]]
                glob = "x"

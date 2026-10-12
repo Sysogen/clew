@@ -208,7 +208,7 @@ driver.
 | Number | Where | Raise it when |
 | --- | --- | --- |
 | Rule pack | `version` on the pack in `crates/domain/src/pack.rs` | one of *its* rules is added or removed, an id changes meaning, a severity changes, or a rule moves pack |
-| Catalogue | `revision` at the top of `crates/domain/catalogue.toml` | a row is added or removed, or its `scope`, `glob`, `kind`, `format`, `extract` or `check` changes |
+| Catalogue | `revision` at the top of `crates/domain/catalogue.toml` | a row is added or removed, or its `scope`, `glob`, `kind`, `format`, `extract`, `check` or `seed` changes |
 
 Rewording a rule's `detail`, re-dating a row's `last_verified`, or correcting
 its `source` changes no finding, so neither number moves for those: raising one
@@ -228,7 +228,7 @@ alone.
 
 What pins a decision is the corpus: `crates/bootstrap/tests/corpus/`, a small
 repository per rule with the findings recorded in `corpus.snapshot`. A rule
-whose logic changes fails there. Thirteen fixtures fire a rule each and nine
+whose logic changes fails there. Fourteen fixtures fire a rule each and ten
 are silent on purpose, each of those a case some rule's own prose promises it
 does not fire on, because a rule that starts firing is as much a regression as
 one that stops.

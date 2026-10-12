@@ -7,6 +7,73 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Git hooks are read, which no row covered: `.git` is pruned by default, so
+  `.git/hooks` was never entered, and clew did not see its own hooks in
+  `.githooks` either. A hook runs on commit, on push and on merge without
+  being asked and with whoever's credentials are at the keyboard, which is
+  what an agent that commits triggers.
+
+  Read from `.git/hooks`, `.githooks`, `.husky` and `hooks` at the repository
+  root, by the twenty-nine names git's own documentation lists. By name rather
+  than by wildcard for two reasons: git runs a hook by the name it looks for,
+  so a file under any other name is not one, and `git init` fills `.git/hooks`
+  with a sample per hook. Measured rather than assumed, those samples carry
+  nothing any rule flags, so a wildcard would have cost a dozen surfaces in
+  every repository ever initialised rather than a dozen findings. A count is
+  what a prevalence figure is, so that is still a cost. Matching by name also
+  keeps `hooks` usable as a row at all: it is where a React project keeps its
+  own hooks.
+
+  `.git/hooks` is reached by naming it on the row, which the scan seeds, and
+  not by relaxing the prune. The one type whose whole job is what not to enter
+  stays one rule rather than a rule with exceptions inside it. It is also the
+  only one of the four git reads without being told to, so a scan that cannot
+  enter it says so: a `.git` that is a link, which git follows and clew does not, is
+  a gap rather than an absence. A directory that is simply not there stays an
+  answer, as does the `.git` file a linked worktree carries, and so does a
+  link at one of the other three, which hold candidate hooks rather than
+  hooks git runs.
+
+  Four holes, stated in the row, the README and here rather than left for
+  someone to find. `core.hooksPath` is not read, so a repository pointing it
+  somewhere else has hooks clew does not see; reading it means reading
+  `.git/config`, which is INI and inside the pruned directory. A helper script
+  a hook sources is not followed. A linked worktree and a submodule keep their
+  hooks in the git directory their `.git` file points at, which is outside the
+  tree being scanned and so not read. And a hook git ignores for not being
+  executable is still reported, because the tree a scan reads exposes no file
+  mode: these are candidate hooks rather than proven active ones, which
+  inflates a count by whatever share is not executable.
+
+  A surface reached twice is read once. A seeded directory can also be reached
+  by walking, since a policy is free not to prune `.git`, and reading the same
+  hook twice would have reported it twice and every finding in it twice.
+
+  A seeded directory is read for the rows that named it and nothing else, one
+  level deep. Putting it into the ordinary walk instead would have handed
+  every row a subtree the prune list was told to skip, so a `CLAUDE.md` left
+  in `.git/hooks` would have been read as an instruction file and a `.claude`
+  directory there descended into.
+
+  `seed` is validated as a plain path inside the scan root and recorded in the
+  catalogue snapshot. It is the one field joined to that root and read rather
+  than matched against something the walk already found, so a traversal
+  segment in it would reach outside; and it changes which files a scan
+  reaches, so the snapshot has to pin it or a later change could pass without
+  the revision moving.
+
+  A seed that is there and cannot be read is a gap, like every other
+  directory this scan cannot open. Saying the scan was complete would mean
+  reporting nothing found in hooks nobody looked at. Absent, and not a
+  directory, stay answers: most repositories have no `.git/hooks`, and in a
+  linked worktree or a submodule `.git` is a file.
+
+  The catalogue schema is 3, not because a reader without `seed` would refuse
+  the file but because it would parse the file and enter none of the
+  directories the field names. That is the half reading the number exists to
+  refuse.
+
+
 - A corpus that pins what the rules decide, which neither version number
   could. `crates/bootstrap/tests/corpus/` holds a small repository per rule
   and `corpus.snapshot` holds the findings clew reports in each, so a rule
@@ -17,7 +84,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   corpus, and so does a rule that starts firing where its prose promises
   silence.
 
-  Nine of the twenty-two fixtures are silent on purpose, each a case some
+  Ten of the twenty-four fixtures are silent on purpose, each a case some
   rule's own text names: the `grep` pattern that quotes `curl | sh` without
   running one, the download that reaches `tar` rather than an interpreter,
   `npx` running what the project already installed, an MCP server on
@@ -205,6 +272,22 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   than claiming more than it should.
 
 ### Fixed
+
+- A scratch directory in three test helpers was named by the process id
+  alone. Process ids are reused, so a run inheriting an earlier run's
+  leftovers laid one test's tree over another's, and the removal meant to
+  prevent that discards its error. Found by writing a test that collided with
+  one from a week earlier: this machine held leftovers from 360 distinct
+  process ids.
+
+  Each is now created rather than cleared, and removed when the test ends.
+  `create_dir` fails when the name is taken, so a leftover is stepped over
+  instead of written into. A counter was the first attempt and was not enough:
+  it restarts at zero in every process, so the same names come round again
+  with the same process id. Stepping over a name only works while names are
+  left, so the directory is a guard that clears itself rather than another
+  entry in a pile that was already 2,500 deep. A full run adds none now.
+
 
 - A command written bare rather than as a JSON string yielded its finding
   about the file rather than at the line, since placement looked only for the

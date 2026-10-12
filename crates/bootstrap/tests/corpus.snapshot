@@ -25,6 +25,7 @@
 11-plaintext-transport plaintext-transport medium .mcp.json:3
 12-auto-run-task auto-run-task high .vscode/tasks.json:1
 13-agent-runs-unattended agent-runs-unattended high .github/workflows/review.yml:7
+14-git-hook download-and-execute high .githooks/pre-commit:2
 20-silent-grep-names-a-pipe -
 21-silent-download-to-an-archive -
 22-silent-local-package -
@@ -34,3 +35,4 @@
 26-silent-agent-asked-to-ask -
 27-silent-mode-that-asks -
 28-silent-prose-with-no-hidden-text -
+29-silent-git-sample-hook -

@@ -434,10 +434,49 @@ mod tests {
         );
     }
 
-    /// Files under a scratch directory, unique to this process and `name`.
-    fn tree(name: &str, files: &[(&str, &[u8])]) -> PathBuf {
-        let root = env::temp_dir().join(format!("clew-run-{}-{name}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
+    /// Files under a scratch directory of this test's own, removed when the
+    /// test ends.
+    ///
+    /// Created rather than cleared: a process id is reused, and a counter
+    /// restarts at zero in every process, so the same names come round again.
+    /// `create_dir` fails when one is taken, which steps over a leftover
+    /// instead of writing into it. Stepping over a name only works while
+    /// there are names left, so the directory goes away on the way out.
+    struct Scratch(PathBuf);
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    impl std::ops::Deref for Scratch {
+        type Target = Path;
+
+        fn deref(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    fn tree(name: &str, files: &[(&str, &[u8])]) -> Scratch {
+        // Guarded as it is reserved, not once it is laid out: writing a file
+        // below panics on failure, and a guard built after that point would
+        // not exist to run while the panic unwinds.
+        let root = Scratch(
+            (0..4096)
+                .map(|n| {
+                    env::temp_dir().join(format!("clew-run-{}-{n}-{name}", std::process::id()))
+                })
+                .find(|at| match fs::create_dir(at) {
+                    Ok(()) => true,
+                    // Only a taken name advances, so a temp directory that
+                    // cannot be written to says so rather than looking like
+                    // collisions.
+                    Err(error) if error.kind() == io::ErrorKind::AlreadyExists => false,
+                    Err(error) => panic!("create {}: {error}", at.display()),
+                })
+                .expect("a free scratch directory"),
+        );
         for (path, bytes) in files {
             let file = root.join(path);
             fs::create_dir_all(file.parent().expect("a parent")).expect("mkdir");

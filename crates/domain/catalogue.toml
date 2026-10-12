@@ -16,8 +16,8 @@
 # scope         repository, home, or system: the tree the glob is matched
 #               against. Omitted means repository
 
-version = 2
-revision = 7
+version = 3
+revision = 10
 
 # --- Claude Code ------------------------------------------------------------
 
@@ -390,6 +390,76 @@ tool = "devcontainer"
 kind = "devcontainer"
 last_verified = "2026-09-11"
 source = "https://containers.dev/implementors/json_reference/"
+
+# --- Git hooks --------------------------------------------------------------
+#
+# A git hook runs on commit, on push and on merge with whoever's credentials
+# are at the keyboard, and it runs without being asked. An agent that commits
+# triggers one, which is why these sit beside the agents' own hooks and carry
+# the same checks.
+#
+# Named from git's own documented list rather than wildcarded, for two
+# reasons. git runs a hook by the name it looks for, so a file in one of these
+# directories under any other name is not a hook git runs. And `git init`
+# fills `.git/hooks` with a sample per hook: fourteen of them on a current
+# git, which a wildcard would report as fourteen surfaces in every repository
+# ever initialised. Measured, not assumed: those samples carry nothing any
+# rule flags, so the cost would be noise in a count rather than false
+# findings, which is still a cost a prevalence figure cannot afford.
+#
+# `.git/hooks` is seeded, which is how a scan enters it although the walk
+# prunes `.git`. The other three are not: the walk reaches them, and they are
+# not where git looks. git runs `$GIT_DIR/hooks` unless `core.hooksPath` names
+# somewhere else, so what those three hold is a candidate hook, a file git
+# would run if pointed at it, which is also why one of them being a link is
+# left in silence rather than reported as a directory clew could not read.
+# Spending a gap, and the non-zero exit that comes with it, on a `hooks` a
+# React project keeps its own hooks in would cost more than it finds.
+#
+# Four holes, stated rather than hidden, because a row that implies more than
+# it reads is worse than one that reads less.
+#
+# `core.hooksPath` is not read, which costs a row in both directions: a
+# repository pointing it at a directory not named here has hooks clew does not
+# see, and one that never set it has `.githooks`, `.husky` and `hooks` read as
+# surfaces although git runs nothing in them. Reading it means reading
+# `.git/config`, which is INI and inside the directory a scan prunes. Until
+# then every one of these is a candidate hook rather than a proven active one.
+#
+# A helper script a hook sources is not followed, so what the hook itself says
+# is what gets read.
+#
+# A linked worktree and a submodule have a `.git` file holding the path to the
+# real git directory, and git runs their hooks from there. That path leads out
+# of the tree being scanned, which clew does not follow, so those hooks are
+# not read, and the scan reports no hooks rather than reporting that it could
+# not look. The alternative is a gap, and a gap is a non-zero exit for every
+# worktree and every submodule, none of which has anything wrong with it. A
+# `.git` that is a symlink is the one case clew does call a gap, because
+# following it is a policy clew chose rather than a path it cannot name.
+#
+# A hook git ignores because it is not executable is counted here as one it
+# runs. The tree a scan reads exposes no file mode, so these are candidate
+# hooks rather than proven active ones, which inflates a count by whatever
+# share of them is not executable. Checking in a hook preserves its mode, so
+# that share is expected to be small, and measuring it needs the mode carried
+# through discovery.
+[[surface]]
+glob = "{.git/hooks,.githooks,.husky,hooks}/{applypatch-msg,pre-applypatch,post-applypatch,pre-commit,pre-merge-commit,prepare-commit-msg,commit-msg,post-commit,pre-rebase,post-checkout,post-merge,pre-push,pre-receive,update,proc-receive,post-receive,post-update,reference-transaction,receive-report,push-to-checkout,pre-auto-gc,post-rewrite,sendemail-validate,fsmonitor-watchman,p4-changelist,p4-prepare-changelist,p4-post-changelist,p4-pre-submit,post-index-change}"
+tool = "any"
+kind = "hook-script"
+seed = ".git/hooks"
+check = [
+  "invisible-unicode",
+  "opaque-hook",
+  "download-and-execute",
+  "decode-and-execute",
+  "credential-exfiltration",
+  "unverified-download",
+  "unpinned-remote-package",
+]
+last_verified = "2026-10-12"
+source = "https://git-scm.com/docs/githooks"
 
 # --- Continuous integration ------------------------------------------------
 #
