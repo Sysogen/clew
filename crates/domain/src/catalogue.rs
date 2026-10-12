@@ -94,6 +94,16 @@ pub enum CatalogueError {
         /// The glob as written.
         glob: String,
     },
+    /// A row names a seed that is not a plain path inside the scan root. The
+    /// seed is joined to that root and read, so a traversal segment or an
+    /// absolute path would reach outside it.
+    #[error("row {row} seeds a directory outside the scan: {seed:?}")]
+    UnrootedSeed {
+        /// Which row, counting from zero.
+        row: usize,
+        /// The seed as written.
+        seed: String,
+    },
     /// A row names a kind the domain does not have.
     #[error("row {row} has an unknown kind {kind:?}")]
     UnknownKind {
@@ -295,19 +305,16 @@ impl Catalogue {
                     row,
                     scope: rule.scope.clone(),
                 })?;
-            // A home scan enters only the directories its rows name, so the
-            // first segment has to be one.
-            let mut segments = rule.glob.split('/');
-            let anchored = segments
-                .next()
-                .is_some_and(|first| !first.is_empty() && !first.contains(['*', '?', '[', '{']));
-            // A traversal segment anywhere resolves outside the root the scan
-            // was given, so none is allowed at any position.
-            let walks_out = rule.glob.split('/').any(|s| s == "." || s == "..");
-            if scope != Scope::Repository && (!anchored || walks_out) {
+            if scope != Scope::Repository && !anchored(&rule.glob) {
                 return Err(CatalogueError::UnanchoredRow {
                     row,
                     glob: rule.glob.clone(),
+                });
+            }
+            if let Some(seed) = rule.seed.as_deref().filter(|seed| !rooted(seed)) {
+                return Err(CatalogueError::UnrootedSeed {
+                    row,
+                    seed: seed.to_owned(),
                 });
             }
             scopes.push(scope);
@@ -437,6 +444,35 @@ impl Catalogue {
 ///
 /// `etc/devin/rules/**/*.md` is entered at `etc/devin/rules`, not at `etc`, so
 /// a scan reads what the row names rather than the rest of the machine.
+/// Whether a glob names the directory a scan outside a repository starts at.
+///
+/// A home scan enters only the directories its rows name, so the first segment
+/// has to be one. A traversal segment anywhere resolves outside the root the
+/// scan was given, so none is allowed at any position.
+fn anchored(glob: &str) -> bool {
+    let named = glob
+        .split('/')
+        .next()
+        .is_some_and(|first| !first.is_empty() && !first.contains(['*', '?', '[', '{']));
+    named && !glob.split('/').any(|s| s == "." || s == "..")
+}
+
+/// Whether a seed is a plain path inside the scan root.
+///
+/// A seed is joined to that root and read, rather than matched against a path
+/// the walk already found, so it is the one field that can reach outside it. An
+/// empty segment is what a leading slash leaves, so an absolute path needs no
+/// check of its own; a drive letter and a UNC prefix do, since neither leaves
+/// one.
+fn rooted(seed: &str) -> bool {
+    !seed.starts_with('\\')
+        && !seed.contains(':')
+        && !seed.is_empty()
+        && seed
+            .split('/')
+            .all(|segment| !segment.is_empty() && segment != "." && segment != "..")
+}
+
 fn literal_prefix(glob: &str) -> &str {
     let wild = |s: &&str| s.contains(['*', '?', '[', '{']);
     let segments: Vec<&str> = glob.split('/').collect();
@@ -793,6 +829,61 @@ mod tests {
         }
     }
 
+    /// A seed is joined to the scan root and read, rather than matched against
+    /// a path the walk already found. So it is the one field that can reach
+    /// outside the root, and it is checked whatever the scope.
+    #[test]
+    fn a_seed_that_reaches_outside_the_scan_is_refused() {
+        for seed in [
+            "../outside",
+            "a/../../outside",
+            "/etc",
+            "/",
+            "",
+            ".",
+            "..",
+            "a//b",
+            "a/./b",
+            "C:/windows",
+            "\\\\server\\share",
+        ] {
+            let error = Catalogue::load(&format!(
+                r#"version = 3
+                   revision = 1
+                   [[surface]]
+                   glob = "x"
+                   tool = "x"
+                   kind = "hook-script"
+                   seed = '{seed}'
+                   last_verified = "2026-09-11"
+                   source = "https://example.invalid"
+                "#
+            ))
+            .expect_err("a seed outside the scan must not load");
+            assert!(
+                matches!(error, CatalogueError::UnrootedSeed { .. }),
+                "{seed:?}: {error:?}"
+            );
+        }
+        // A plain path inside the scan loads, whatever the scope.
+        for scope in ["repository", "home", "system"] {
+            let held = Catalogue::load(&format!(
+                r#"version = 3
+                   revision = 1
+                   [[surface]]
+                   scope = "{scope}"
+                   glob = "a/b"
+                   tool = "x"
+                   kind = "hook-script"
+                   seed = "a/b"
+                   last_verified = "2026-09-11"
+                   source = "https://example.invalid"
+                "#
+            ));
+            assert!(held.is_ok(), "{scope}: {held:?}");
+        }
+    }
+
     /// The directory a scan is told to enter, because the walk prunes its way
     /// there. Naming it on the row keeps the exception where it is read.
     #[test]
@@ -1135,13 +1226,14 @@ mod tests {
                 }
             };
             held.push(format!(
-                "{} {} {} {} {} {}",
+                "{} {} {} {} {} {} {}",
                 rule.scope,
                 rule.glob,
                 rule.kind,
                 rule.format,
                 list(&rule.extract),
                 list(&rule.check),
+                rule.seed.as_deref().unwrap_or("-"),
             ));
             assert!(row < pinned.len(), "{} has no pinned line", rule.glob);
         }

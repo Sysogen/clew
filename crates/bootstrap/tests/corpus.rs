@@ -146,7 +146,13 @@ fn laid_out(name: &str, source: &str) -> PathBuf {
         .map(|n| {
             std::env::temp_dir().join(format!("clew-corpus-{name}-{}-{n}", std::process::id()))
         })
-        .find(|at| fs::create_dir(at).is_ok())
+        .find(|at| match fs::create_dir(at) {
+            Ok(()) => true,
+            // Only a taken name advances: a temp directory that cannot be
+            // written to would otherwise be reported as 4096 collisions.
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => false,
+            Err(error) => panic!("create {}: {error}", at.display()),
+        })
         .expect("a free temporary directory");
 
     let mut writing: Option<(PathBuf, String, bool)> = None;

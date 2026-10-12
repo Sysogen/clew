@@ -407,11 +407,28 @@ source = "https://containers.dev/implementors/json_reference/"
 # rule flags, so the cost would be noise in a count rather than false
 # findings, which is still a cost a prevalence figure cannot afford.
 #
-# Two holes, stated rather than hidden. `core.hooksPath` is not read, so a
-# repository pointing it at a directory not named here has hooks clew does not
-# see; reading it means reading `.git/config`, which is INI and inside the
-# directory a scan prunes. And a helper script a hook sources is not followed,
-# so what the hook itself says is what gets read.
+# Four holes, stated rather than hidden, because a row that implies more than
+# it reads is worse than one that reads less.
+#
+# `core.hooksPath` is not read, so a repository pointing it at a directory not
+# named here has hooks clew does not see; reading it means reading
+# `.git/config`, which is INI and inside the directory a scan prunes.
+#
+# A helper script a hook sources is not followed, so what the hook itself says
+# is what gets read.
+#
+# A linked worktree and a submodule have a `.git` file holding the path to the
+# real git directory, and git runs their hooks from there. That path leads out
+# of the tree being scanned, which clew does not follow, so those hooks are
+# not read and the scan does not pretend otherwise by calling them absent in
+# the report it prints.
+#
+# A hook git ignores because it is not executable is counted here as one it
+# runs. The tree a scan reads exposes no file mode, so these are candidate
+# hooks rather than proven active ones, which inflates a count by whatever
+# share of them is not executable. Checking in a hook preserves its mode, so
+# that share is expected to be small, and measuring it needs the mode carried
+# through discovery.
 [[surface]]
 glob = "{.git/hooks,.githooks,.husky,hooks}/{applypatch-msg,pre-applypatch,post-applypatch,pre-commit,pre-merge-commit,prepare-commit-msg,commit-msg,post-commit,pre-rebase,post-checkout,post-merge,pre-push,pre-receive,update,proc-receive,post-receive,post-update,reference-transaction,receive-report,push-to-checkout,pre-auto-gc,post-rewrite,sendemail-validate,fsmonitor-watchman,p4-changelist,p4-prepare-changelist,p4-post-changelist,p4-pre-submit,post-index-change}"
 tool = "any"

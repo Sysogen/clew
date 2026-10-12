@@ -177,6 +177,13 @@ than one that reads less:
   `.git/config`, which is INI and inside the directory a scan prunes.
 - **A helper a hook sources is not followed.** What the hook file itself says
   is what gets read.
+- **A linked worktree's hooks are not read.** A worktree and a submodule hold
+  a `.git` file pointing at the real git directory, and git runs their hooks
+  from there, outside the tree being scanned. clew does not follow a path out
+  of the scan root.
+- **A hook is read by its name, not its mode.** git ignores a hook that is not
+  executable; the tree a scan reads exposes no file mode, so one that git
+  would ignore is still reported.
 
 Matching by name is also what keeps the samples `git init` writes out of the
 report: git runs a hook by the name it looks for, so `pre-commit.sample` is

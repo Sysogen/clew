@@ -29,11 +29,23 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   stays one rule rather than a rule with exceptions inside it, and a directory
   that is not there is an answer rather than a gap.
 
-  Two holes, stated in the row, the README and here rather than left for
+  Four holes, stated in the row, the README and here rather than left for
   someone to find. `core.hooksPath` is not read, so a repository pointing it
   somewhere else has hooks clew does not see; reading it means reading
-  `.git/config`, which is INI and inside the pruned directory. And a helper
-  script a hook sources is not followed.
+  `.git/config`, which is INI and inside the pruned directory. A helper script
+  a hook sources is not followed. A linked worktree and a submodule keep their
+  hooks in the git directory their `.git` file points at, which is outside the
+  tree being scanned and so not read. And a hook git ignores for not being
+  executable is still reported, because the tree a scan reads exposes no file
+  mode: these are candidate hooks rather than proven active ones, which
+  inflates a count by whatever share is not executable.
+
+  `seed` is validated as a plain path inside the scan root and recorded in the
+  catalogue snapshot. It is the one field joined to that root and read rather
+  than matched against something the walk already found, so a traversal
+  segment in it would reach outside; and it changes which files a scan
+  reaches, so the snapshot has to pin it or a later change could pass without
+  the revision moving.
 
   A seed that is there and cannot be read is a gap, like every other
   directory this scan cannot open. Saying the scan was complete would mean

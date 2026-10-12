@@ -442,7 +442,13 @@ mod tests {
         // leftover instead of writing into it.
         let root = (0..4096)
             .map(|n| env::temp_dir().join(format!("clew-run-{}-{n}-{name}", std::process::id())))
-            .find(|at| fs::create_dir(at).is_ok())
+            .find(|at| match fs::create_dir(at) {
+                Ok(()) => true,
+                // Only a taken name advances, so a temp directory that cannot
+                // be written to says so rather than looking like collisions.
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => false,
+                Err(error) => panic!("create {}: {error}", at.display()),
+            })
             .expect("a free scratch directory");
         for (path, bytes) in files {
             let file = root.join(path);
