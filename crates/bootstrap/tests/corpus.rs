@@ -53,7 +53,6 @@ fn every_fixture_reports_what_the_snapshot_records() {
         let source = fs::read_to_string(&fixture).expect("a readable fixture");
         let at = laid_out(&name, &source);
         let report = scanned(&at);
-        let _ = fs::remove_dir_all(&at);
 
         if report.findings.is_empty() {
             held.push(format!("{name} -"));
@@ -132,12 +131,33 @@ fn fixtures() -> Vec<PathBuf> {
     held
 }
 
+/// A laid-out fixture, removed when it goes out of scope.
+///
+/// A fixture whose snapshot does not match panics, and a panic unwinds past
+/// any cleanup written after the scan. `Drop` runs on that path too, so a
+/// failing run leaves nothing behind in the temporary directory.
+struct Scratch(PathBuf);
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+impl std::ops::Deref for Scratch {
+    type Target = Path;
+
+    fn deref(&self) -> &Path {
+        &self.0
+    }
+}
+
 /// Write a manifest out as a tree, and say where.
 ///
 /// Nothing here is platform-dependent on purpose. A fixture that laid out
 /// differently on one operating system would record a different snapshot
 /// there, which is a corpus that agrees with itself and nothing else.
-fn laid_out(name: &str, source: &str) -> PathBuf {
+fn laid_out(name: &str, source: &str) -> Scratch {
     // Created rather than cleared: a process id is reused, and a counter
     // restarts at zero in every process, so the same names come round again.
     // `create_dir` fails when one is taken, which steps over a leftover
@@ -180,7 +200,7 @@ fn laid_out(name: &str, source: &str) -> PathBuf {
         }
     }
     write(writing.take());
-    at
+    Scratch(at)
 }
 
 /// Hex, whitespace ignored, as the bytes it names.
