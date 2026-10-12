@@ -17,7 +17,7 @@
 #               against. Omitted means repository
 
 version = 3
-revision = 9
+revision = 10
 
 # --- Claude Code ------------------------------------------------------------
 
@@ -407,20 +407,24 @@ source = "https://containers.dev/implementors/json_reference/"
 # rule flags, so the cost would be noise in a count rather than false
 # findings, which is still a cost a prevalence figure cannot afford.
 #
-# All four directories are seeded. `.git/hooks` has to be: the walk prunes
-# `.git`, so nothing inside it is reachable otherwise. The other three are
-# reachable by walking, and are seeded for the other thing a seed gives, which
-# is hearing about a directory that could not be entered. A walk declines one
-# that is a link without saying so, and for a directory of hooks git does
-# follow that is a clean report over hooks that run. Read twice, by the walk
-# and by the seed, and reported once.
+# `.git/hooks` is seeded, which is how a scan enters it although the walk
+# prunes `.git`. The other three are not: the walk reaches them, and they are
+# not where git looks. git runs `$GIT_DIR/hooks` unless `core.hooksPath` names
+# somewhere else, so what those three hold is a candidate hook, a file git
+# would run if pointed at it, which is also why one of them being a link is
+# left in silence rather than reported as a directory clew could not read.
+# Spending a gap, and the non-zero exit that comes with it, on a `hooks` a
+# React project keeps its own hooks in would cost more than it finds.
 #
 # Four holes, stated rather than hidden, because a row that implies more than
 # it reads is worse than one that reads less.
 #
-# `core.hooksPath` is not read, so a repository pointing it at a directory not
-# named here has hooks clew does not see; reading it means reading
-# `.git/config`, which is INI and inside the directory a scan prunes.
+# `core.hooksPath` is not read, which costs a row in both directions: a
+# repository pointing it at a directory not named here has hooks clew does not
+# see, and one that never set it has `.githooks`, `.husky` and `hooks` read as
+# surfaces although git runs nothing in them. Reading it means reading
+# `.git/config`, which is INI and inside the directory a scan prunes. Until
+# then every one of these is a candidate hook rather than a proven active one.
 #
 # A helper script a hook sources is not followed, so what the hook itself says
 # is what gets read.
@@ -444,7 +448,7 @@ source = "https://containers.dev/implementors/json_reference/"
 glob = "{.git/hooks,.githooks,.husky,hooks}/{applypatch-msg,pre-applypatch,post-applypatch,pre-commit,pre-merge-commit,prepare-commit-msg,commit-msg,post-commit,pre-rebase,post-checkout,post-merge,pre-push,pre-receive,update,proc-receive,post-receive,post-update,reference-transaction,receive-report,push-to-checkout,pre-auto-gc,post-rewrite,sendemail-validate,fsmonitor-watchman,p4-changelist,p4-prepare-changelist,p4-post-changelist,p4-pre-submit,post-index-change}"
 tool = "any"
 kind = "hook-script"
-seed = [".git/hooks", ".githooks", ".husky", "hooks"]
+seed = ".git/hooks"
 check = [
   "invisible-unicode",
   "opaque-hook",

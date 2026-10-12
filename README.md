@@ -173,8 +173,10 @@ Four limits, stated because a scanner that implies more than it reads is worse
 than one that reads less:
 
 - **`core.hooksPath` is not read.** A repository that points it at a directory
-  other than those four has hooks clew does not see. Reading it means reading
-  `.git/config`, which is INI and inside the directory a scan prunes.
+  other than those four has hooks clew does not see, and one that never set it
+  has the other three read as surfaces although git runs nothing in them.
+  Reading it means reading `.git/config`, which is INI and inside the
+  directory a scan prunes.
 - **A helper a hook sources is not followed.** What the hook file itself says
   is what gets read.
 - **A linked worktree's hooks are not read.** A worktree and a submodule hold
@@ -185,10 +187,12 @@ than one that reads less:
   executable; the tree a scan reads exposes no file mode, so one that git
   would ignore is still reported.
 
-One of those four directories being a link is reported rather than passed
-over: git follows the link and runs what it finds, clew does not follow it,
-and so the scan says it could not look there and exits non-zero. A clean
-report over a directory clew declined to enter would be the worse answer.
+`.git/hooks` is the one git reads without being told to, so a scan that
+cannot enter it says so and exits non-zero: the usual reason is a `.git` that
+is a link, which git follows and clew does not. The other three hold
+candidate hooks, files git would run if `core.hooksPath` pointed at them, and
+one of those being a link is passed over in the silence a scan leaves every
+link it declines.
 
 Matching by name is also what keeps the samples `git init` writes out of the
 report: git runs a hook by the name it looks for, so `pre-commit.sample` is

@@ -24,16 +24,15 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   keeps `hooks` usable as a row at all: it is where a React project keeps its
   own hooks.
 
-  All four directories are named on the row as seeds, which the scan enters
-  rather than waiting for the walk to arrive. `.git/hooks` has to be: the walk
-  prunes `.git`, and relaxing the prune would turn the one type whose whole job
-  is what not to enter into a rule with exceptions inside it. The other three
-  are reachable by walking and are seeded for the other thing a seed gives,
-  which is hearing about a directory that could not be entered: a walk declines
-  one that is a link and says nothing, and for a directory of hooks git does
-  follow that is a clean report over hooks that run. A directory that is simply
-  not there stays an answer rather than a gap, as does the `.git` file a linked
-  worktree carries.
+  `.git/hooks` is reached by naming it on the row, which the scan seeds, and
+  not by relaxing the prune. The one type whose whole job is what not to enter
+  stays one rule rather than a rule with exceptions inside it. It is also the
+  one of the four git reads without being told to, so a scan that cannot enter
+  it says so: a `.git` that is a link, which git follows and clew does not, is
+  a gap rather than an absence. A directory that is simply not there stays an
+  answer, as does the `.git` file a linked worktree carries, and so does a
+  link at one of the other three, which hold candidate hooks rather than
+  hooks git runs.
 
   Four holes, stated in the row, the README and here rather than left for
   someone to find. `core.hooksPath` is not read, so a repository pointing it

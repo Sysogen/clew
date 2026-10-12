@@ -156,16 +156,11 @@ pub struct SurfaceRule {
     /// Which tree it is matched against. Omitted means the repository.
     #[serde(default = "default_scope")]
     pub scope: String,
-    /// The directories the scan is told to enter for this row, rather than
-    /// waiting for the walk to arrive. Omitted means the walk reaches what the
-    /// row names on its own, which is true of every other row.
-    ///
-    /// A row names one for either of two reasons: the walk prunes its way
-    /// there, or the row needs to know when it could not be entered. A walk
-    /// declines a directory that is a link and says nothing, so a row that
-    /// would rather hear about it names the directory here.
+    /// A directory the scan must be told to enter for this row to be
+    /// reachable, because the walk prunes its way there. Omitted means the
+    /// walk reaches it on its own, which is true of every other row.
     #[serde(default)]
-    pub seed: Vec<String>,
+    pub seed: Option<String>,
 }
 
 fn default_scope() -> String {
@@ -316,10 +311,10 @@ impl Catalogue {
                     glob: rule.glob.clone(),
                 });
             }
-            if let Some(seed) = rule.seed.iter().find(|seed| !rooted(seed)) {
+            if let Some(seed) = rule.seed.as_deref().filter(|seed| !rooted(seed)) {
                 return Err(CatalogueError::UnrootedSeed {
                     row,
-                    seed: seed.clone(),
+                    seed: seed.to_owned(),
                 });
             }
             scopes.push(scope);
@@ -419,7 +414,7 @@ impl Catalogue {
     pub fn lookup_seeded(&self, path: &RepoPath, scope: Scope, seed: &str) -> Option<Matched<'_>> {
         let first =
             self.globs.matches(path.as_str()).into_iter().find(|i| {
-                self.scopes[*i] == scope && self.rules[*i].seed.iter().any(|s| s == seed)
+                self.scopes[*i] == scope && self.rules[*i].seed.as_deref() == Some(seed)
             })?;
         Some(Matched {
             rule: &self.rules[first],
@@ -431,17 +426,12 @@ impl Catalogue {
         })
     }
 
-    /// The directories a repository scan is told to enter.
+    /// The directories a repository scan must be told to enter.
     ///
     /// A row inside a pruned directory is unreachable by walking, and relaxing
     /// the prune would turn the one type whose job is "what not to enter" into
     /// a set of exceptions. Naming the directory on the row instead keeps the
     /// exception where a reviewer reads it.
-    ///
-    /// A row also names a directory it wants to hear about when it could not
-    /// be entered. The walk declines one that is a link and says nothing,
-    /// which for a directory of hooks git does follow is a miss reported as a
-    /// clean result.
     #[must_use]
     pub fn seeds_in(&self, scope: Scope) -> Vec<&str> {
         let mut held: Vec<&str> = Vec::new();
@@ -449,10 +439,8 @@ impl Catalogue {
             if *wanted != scope {
                 continue;
             }
-            for seed in &rule.seed {
-                if !held.contains(&seed.as_str()) {
-                    held.push(seed);
-                }
+            if let Some(seed) = rule.seed.as_deref().filter(|s| !held.contains(s)) {
+                held.push(seed);
             }
         }
         held
@@ -892,7 +880,7 @@ mod tests {
                    glob = "x"
                    tool = "x"
                    kind = "hook-script"
-                   seed = ['{seed}']
+                   seed = '{seed}'
                    last_verified = "2026-09-11"
                    source = "https://example.invalid"
                 "#
@@ -913,7 +901,7 @@ mod tests {
                    glob = "x"
                    tool = "x"
                    kind = "hook-script"
-                   seed = ['{seed}']
+                   seed = '{seed}'
                    last_verified = "2026-09-11"
                    source = "https://example.invalid"
                 "#
@@ -924,26 +912,6 @@ mod tests {
                 "{seed:?}: {error:?}"
             );
         }
-        // Every entry is checked, not just the first: a row that names four
-        // directories is refused for the one of them that reaches out.
-        let error = Catalogue::load(
-            r#"version = 3
-               revision = 1
-               [[surface]]
-               glob = "x"
-               tool = "x"
-               kind = "hook-script"
-               seed = ["a/b", ".git/hooks", "../outside"]
-               last_verified = "2026-09-11"
-               source = "https://example.invalid"
-            "#,
-        )
-        .expect_err("one seed outside the scan must not load");
-        assert!(
-            matches!(&error, CatalogueError::UnrootedSeed { seed, .. } if seed == "../outside"),
-            "{error:?}"
-        );
-
         // A plain path inside the scan loads, whatever the scope.
         for scope in ["repository", "home", "system"] {
             let held = Catalogue::load(&format!(
@@ -954,7 +922,7 @@ mod tests {
                    glob = "a/b"
                    tool = "x"
                    kind = "hook-script"
-                   seed = ["a/b"]
+                   seed = "a/b"
                    last_verified = "2026-09-11"
                    source = "https://example.invalid"
                 "#
@@ -990,16 +958,17 @@ mod tests {
         );
     }
 
-    /// The directories a scan is told to enter. `.git/hooks` because the walk
-    /// prunes its way there, and the other three because the walk declines a
-    /// directory that is a link without saying so, which for a directory of
-    /// hooks git does follow is a miss the row would rather report.
+    /// The directory a scan is told to enter, because the walk prunes its way
+    /// there. Naming it on the row keeps the exception where it is read.
+    ///
+    /// Only `.git/hooks`. The other three the row matches are reachable by
+    /// walking, and are not where git looks in any case: git reads
+    /// `$GIT_DIR/hooks` unless `core.hooksPath` says otherwise, which clew
+    /// does not read. Seeding them would spend a gap on directories git does
+    /// not run hooks from.
     #[test]
-    fn the_hook_directories_are_seeded_and_nothing_else_is() {
-        assert_eq!(
-            shipped().seeds_in(Scope::Repository),
-            vec![".git/hooks", ".githooks", ".husky", "hooks"]
-        );
+    fn the_git_hooks_directory_is_seeded_and_nothing_else_is() {
+        assert_eq!(shipped().seeds_in(Scope::Repository), vec![".git/hooks"]);
         assert!(shipped().seeds_in(Scope::Home).is_empty());
         assert!(shipped().seeds_in(Scope::System).is_empty());
     }
@@ -1344,7 +1313,7 @@ mod tests {
                 rule.format,
                 list(&rule.extract),
                 list(&rule.check),
-                list(&rule.seed),
+                rule.seed.as_deref().unwrap_or("-"),
             ));
             assert!(row < pinned.len(), "{} has no pinned line", rule.glob);
         }
