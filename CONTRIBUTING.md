@@ -173,7 +173,12 @@ it, what it reads, and what it finds.
 4. Add it to a pack's `rules` in `crates/domain/src/pack.rs`. A rule in no pack
    never runs.
 5. Add the line to `rule-pack.snapshot`, raising that pack's version.
-6. Name it in the `check` list of the catalogue rows it reads.
+6. Name it where the catalogue enables it. A rule reading one file at a time
+   goes in the `check` list of every row it reads. A rule reading a whole scan,
+   one whose `reads` names `Subject::Report`, goes in `report_checks` at the
+   top of the file instead, because it belongs to no row. Either name in the
+   wrong list is refused when the catalogue loads, since a rule in the wrong
+   list is a rule that never runs.
 
 Three tests guard the wiring: `every_rule_file_is_reachable` catches a rule
 written and never reached, `no_rule_is_registered_twice` catches two rules
@@ -208,7 +213,7 @@ driver.
 | Number | Where | Raise it when |
 | --- | --- | --- |
 | Rule pack | `version` on the pack in `crates/domain/src/pack.rs` | one of *its* rules is added or removed, an id changes meaning, a severity changes, or a rule moves pack |
-| Catalogue | `revision` at the top of `crates/domain/catalogue.toml` | a row is added or removed, or its `scope`, `glob`, `kind`, `format`, `extract`, `check` or `seed` changes |
+| Catalogue | `revision` at the top of `crates/domain/catalogue.toml` | a row is added or removed, or its `scope`, `glob`, `kind`, `format`, `extract`, `check` or `seed` changes, or `report_checks` does |
 
 Rewording a rule's `detail`, re-dating a row's `last_verified`, or correcting
 its `source` changes no finding, so neither number moves for those: raising one
@@ -228,10 +233,12 @@ alone.
 
 What pins a decision is the corpus: `crates/bootstrap/tests/corpus/`, a small
 repository per rule with the findings recorded in `corpus.snapshot`. A rule
-whose logic changes fails there. Fourteen fixtures fire a rule each and ten
-are silent on purpose, each of those a case some rule's own prose promises it
-does not fire on, because a rule that starts firing is as much a regression as
-one that stops.
+whose logic changes fails there. Fifteen fixtures fire and eleven are silent on
+purpose, each of those a case some rule's own prose promises it does not fire
+on, because a rule that starts firing is as much a regression as one that
+stops. Those two numbers are asserted by the corpus itself, so a fixture added
+without updating them fails rather than leaving this paragraph describing a
+corpus that no longer exists.
 
 So a study should still cite the clew release alongside both numbers: the
 corpus covers every rule once and the silent cases their prose names, not every
