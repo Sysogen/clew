@@ -15,9 +15,16 @@
 # source        the documentation it was checked against
 # scope         repository, home, or system: the tree the glob is matched
 #               against. Omitted means repository
+#
+# One rule reads a whole scan rather than one file: it fires on a pair of
+# settings each of which is deliberately silent alone. A rule like that belongs
+# to no row, so `report_checks` below names it, and the answer to what decides
+# whether a rule runs stays this file.
 
-version = 3
-revision = 10
+version = 4
+revision = 11
+
+report_checks = ["unprompted-write-access"]
 
 # --- Claude Code ------------------------------------------------------------
 

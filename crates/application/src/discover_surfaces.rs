@@ -10,7 +10,7 @@ use clew_domain::finding::{Finding, RuleId, Severity};
 use clew_domain::hook::{Action, project_of};
 use clew_domain::ports::file_contents::{FileContents, FileContentsError};
 use clew_domain::ports::file_tree::{EntryKind, FileTree, FileTreeError};
-use clew_domain::rule::{self, Examined};
+use clew_domain::rule::{self, Examined, FoundMode};
 use clew_domain::scope::Scope;
 use clew_domain::{
     Autonomy, Hook, McpServer, Permission, RepoPath, ScanPolicy, Step, Surface, SurfaceKind, Task,
@@ -211,6 +211,11 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
     }
 
     fn read_surfaces(&self, report: &mut DiscoveryReport) {
+        // Kept for the report rules, which read the set of modes rather than
+        // one of them, and read them raw: the copy in the report is masked,
+        // and masking first destroys the values a rule compares.
+        let mut declared: Vec<(RepoPath, String, Vec<Autonomy>)> = Vec::new();
+
         let paths: Vec<RepoPath> = report.surfaces.iter().map(|s| s.path.clone()).collect();
         for path in paths {
             let Some(matched) = catalogue().lookup_in(&path, self.scope) else {
@@ -311,22 +316,65 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
                     step: step.redacted(),
                 });
             }
-            for mode in found.autonomy {
-                report.findings.extend(rule::judge(
-                    &Examined::Mode {
-                        path: &path,
-                        mode: &mode,
-                        source: &text,
-                    },
-                    matched.check,
-                    self.policy.evidence_width(),
-                ));
-                report.autonomy.push(DeclaredAutonomy {
-                    source: path.clone(),
-                    autonomy: mode.redacted(),
-                });
+            self.read_modes(&path, &text, &found.autonomy, matched.check, report);
+            if !found.autonomy.is_empty() {
+                declared.push((path, text, found.autonomy));
             }
         }
+
+        self.read_report(&declared, report);
+    }
+
+    /// Judge each mode a file declares, and record it.
+    fn read_modes(
+        &self,
+        path: &RepoPath,
+        text: &str,
+        modes: &[Autonomy],
+        checks: &[RuleId],
+        report: &mut DiscoveryReport,
+    ) {
+        for mode in modes {
+            report.findings.extend(rule::judge(
+                &Examined::Mode {
+                    path,
+                    mode,
+                    source: text,
+                },
+                checks,
+                self.policy.evidence_width(),
+            ));
+            report.autonomy.push(DeclaredAutonomy {
+                source: path.clone(),
+                autonomy: mode.redacted(),
+            });
+        }
+    }
+
+    /// Judge the scan as a whole, for the rules that read more than one file.
+    ///
+    /// Enabled by `report_checks` rather than by a row, because a rule reading
+    /// the whole scan belongs to no row. The catalogue stays the one place
+    /// deciding whether a rule runs.
+    fn read_report(
+        &self,
+        declared: &[(RepoPath, String, Vec<Autonomy>)],
+        report: &mut DiscoveryReport,
+    ) {
+        let modes: Vec<FoundMode<'_>> = declared
+            .iter()
+            .flat_map(|(path, source, modes)| {
+                modes
+                    .iter()
+                    .map(move |mode| FoundMode { path, source, mode })
+            })
+            .collect();
+
+        report.findings.extend(rule::judge(
+            &Examined::Report { modes: &modes },
+            catalogue().report_checks(),
+            self.policy.evidence_width(),
+        ));
     }
 
     /// Read `path` and run `checks` on it, returning the text.

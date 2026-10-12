@@ -17,6 +17,7 @@ pub(crate) mod opaque_hook;
 pub(crate) mod plaintext_transport;
 pub(crate) mod trusted_server;
 pub(crate) mod unpinned_remote_package;
+pub(crate) mod unprompted_write_access;
 pub(crate) mod unrestricted_shell;
 pub(crate) mod unverified_download;
 
@@ -289,6 +290,20 @@ pub(crate) fn is_shell(path: &RepoPath, text: &str) -> bool {
                 .any(|word| matches!(word, "sh" | "bash" | "zsh" | "ksh" | "dash" | "fish"))
 }
 
+/// Where byte `at` of `text` is, counted for a report, with the line there.
+fn placed(text: &str, at: usize) -> Option<(Position, &str)> {
+    let before = text.get(..at)?;
+    let start = before.rfind('\n').map_or(0, |newline| newline + 1);
+    let column = text.get(start..at)?.chars().count();
+    Some((
+        Position {
+            line: before.matches('\n').count() + 1,
+            column: column + 1,
+        },
+        text.get(start..)?.lines().next().unwrap_or_default(),
+    ))
+}
+
 /// A finding under `rule` at byte `at` of `text`, quoting its line.
 pub(crate) fn found_at(
     path: &RepoPath,
@@ -297,19 +312,37 @@ pub(crate) fn found_at(
     at: usize,
     width: usize,
 ) -> Option<Finding> {
-    let before = text.get(..at)?;
-    let start = before.rfind('\n').map_or(0, |newline| newline + 1);
-    let column = text.get(start..at)?.chars().count();
-    let raw = text.get(start..)?.lines().next().unwrap_or_default();
+    let (position, raw) = placed(text, at)?;
     Some(Finding {
         path: path.clone(),
-        at: Some(Position {
-            line: before.matches('\n').count() + 1,
-            column: column + 1,
-        }),
+        at: Some(position),
         rule,
         severity: rule.severity(),
-        evidence: Evidence::quote(&Line::new(raw), column, width),
+        evidence: Evidence::quote(&Line::new(raw), position.column - 1, width),
+    })
+}
+
+/// A finding at byte `at` of `text` quoting `said` rather than the line there.
+///
+/// For a rule about two places at once. The position takes a reader to one of
+/// them, and the evidence has to name both: a rule whose halves are each
+/// silent on their own would otherwise quote a line its own prose calls
+/// harmless, and a reader would be right to think the finding wrong.
+pub(crate) fn said_at(
+    path: &RepoPath,
+    rule: RuleId,
+    text: &str,
+    at: usize,
+    said: &str,
+    width: usize,
+) -> Option<Finding> {
+    let (position, _) = placed(text, at)?;
+    Some(Finding {
+        path: path.clone(),
+        at: Some(position),
+        rule,
+        severity: rule.severity(),
+        evidence: Evidence::quote(&Line::new(said), 0, width),
     })
 }
 

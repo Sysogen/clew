@@ -1,6 +1,6 @@
 # bypass-permissions
 
-Severity **high**, pack core 4.
+Severity **high**, pack core 5.
 
 A mode that starts an agent with neither a permission prompt nor a sandbox
 

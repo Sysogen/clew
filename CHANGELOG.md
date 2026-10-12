@@ -7,6 +7,49 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `unprompted-write-access`, the first rule that reads a whole scan rather
+  than one thing in one file. It fires on a pair of Codex settings each of
+  which clew calls harmless on its own: `approval_policy = "never"`, which
+  stops the asking, together with a sandbox that permits writes, written
+  either as `sandbox_mode = "workspace-write"` or as
+  `default_permissions = ":workspace"`.
+
+  The pair was already written down here as a limitation. `approval_policy`
+  stays out of `bypass-permissions` because Codex still sandboxes, so an
+  unasked agent is bounded; a sandbox permitting writes is bounded by
+  something asking. Set both and neither bound is left, and what the agent
+  may write unasked includes the files deciding what the next run does: a git
+  hook, an instruction file, that configuration. `danger-full-access` is left
+  to `bypass-permissions`, which reports it alone, so one key is not reported
+  twice.
+
+  A rule reading the whole scan belongs to no row, and a row's `check` list is
+  what makes the catalogue the place behaviour is decided. So the catalogue
+  names it, in `report_checks` beside `revision`, rather than every
+  report-reading rule running ungated. Schema 4, because a reader that did not
+  know the field would run none of the rules it names and report a clean scan,
+  which is the half-reading this number exists to refuse.
+
+  The finding is placed at the sandbox key, which is the half granting the
+  writes, and its evidence names both halves rather than quoting that line:
+  a reader shown `sandbox_mode = "workspace-write"` on its own, which this
+  rule's own page calls harmless, would be right to think the finding wrong.
+
+  Naming a rule in the wrong one of the two lists is refused at load, both
+  ways round. A row offers a rule the file it matched, so a row naming a
+  rule that reads the whole scan runs nothing; `report_checks` offers nothing
+  a file rule reads, so naming one there runs nothing either. Either mistake
+  would otherwise be a rule listed, never run, and a clean scan.
+
+- Codex's `default_permissions` is read, and `:danger-full-access` fires
+  `bypass-permissions` as `sandbox_mode = "danger-full-access"` already did.
+  The two are the same decision in two spellings, and reading one of them is
+  how a configuration escapes a rule by being written the newer way.
+  `approval_policy` is read as inventory, since a scan saying what a file
+  declares cannot leave out the key deciding whether anyone is asked. Its
+  table form, `{ granular = ... }`, selects categories rather than a mode, so
+  nothing is recorded for it.
+
 - Git hooks are read, which no row covered: `.git` is pruned by default, so
   `.git/hooks` was never entered, and clew did not see its own hooks in
   `.githooks` either. A hook runs on commit, on push and on merge without

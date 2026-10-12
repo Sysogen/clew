@@ -1,0 +1,11 @@
+Two Codex settings, each of which clew calls harmless on its own.
+
+`approval_policy = "never"` is not a finding because the sandbox still bounds
+what an unasked agent reaches. `sandbox_mode = "workspace-write"` is not a
+finding because something still asks. Set together they leave neither
+control, and what the agent may write unasked includes the files deciding
+what the next run does.
+
+>>> .codex/config.toml
+approval_policy = "never"
+sandbox_mode = "workspace-write"

@@ -17,7 +17,8 @@ use crate::repo_path::RepoPath;
 use crate::rules::{
     agent_runs_unattended, auto_run_task, bypass_permissions, credential_exfiltration,
     decode_and_execute, download_and_execute, invisible_unicode, opaque_hook, plaintext_transport,
-    trusted_server, unpinned_remote_package, unrestricted_shell, unverified_download,
+    trusted_server, unpinned_remote_package, unprompted_write_access, unrestricted_shell,
+    unverified_download,
 };
 use crate::task::Task;
 use crate::yaml::Span;
@@ -39,6 +40,23 @@ pub enum Subject {
     Task,
     /// A file that is there and cannot be read.
     Unreadable,
+    /// Everything one scan found, judged once rather than file by file.
+    Report,
+}
+
+/// One mode a scan found, and what is needed to place a finding in its file.
+///
+/// A report rule is handed these rather than a [`Examined::Mode`] at a time,
+/// because what it reads is the set: two keys that each leave one control
+/// standing, and together leave none.
+#[derive(Debug, Clone, Copy)]
+pub struct FoundMode<'a> {
+    /// The file that set it.
+    pub path: &'a RepoPath,
+    /// The file's text, for placing the finding.
+    pub source: &'a str,
+    /// The mode, as the file wrote it and before anything was masked.
+    pub mode: &'a Autonomy,
 }
 
 /// One thing to judge, and what is needed to place a finding in its file.
@@ -116,6 +134,15 @@ pub enum Examined<'a> {
         /// Why it could not be read.
         reason: &'a str,
     },
+    /// Everything one scan found.
+    ///
+    /// Only the modes, because only one rule reads a whole scan and that is
+    /// what it reads. Another part is added when a rule needs it, rather than
+    /// carried now against the chance that one will.
+    Report {
+        /// Every mode the scan found, with the file that set each.
+        modes: &'a [FoundMode<'a>],
+    },
 }
 
 impl Examined<'_> {
@@ -130,6 +157,7 @@ impl Examined<'_> {
             Self::Server { .. } => Subject::Server,
             Self::Task { .. } => Subject::Task,
             Self::Unreadable { .. } => Subject::Unreadable,
+            Self::Report { .. } => Subject::Report,
         }
     }
 }
@@ -180,6 +208,7 @@ pub fn of(id: RuleId) -> &'static dyn Rule {
         RuleId::PlaintextTransport => &plaintext_transport::PlaintextTransport,
         RuleId::AutoRunTask => &auto_run_task::AutoRunTask,
         RuleId::AgentRunsUnattended => &agent_runs_unattended::AgentRunsUnattended,
+        RuleId::UnpromptedWriteAccess => &unprompted_write_access::UnpromptedWriteAccess,
     }
 }
 

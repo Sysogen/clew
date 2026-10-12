@@ -16,6 +16,7 @@ use thiserror::Error;
 use crate::extract::{Extraction, Format};
 use crate::finding::RuleId;
 use crate::repo_path::RepoPath;
+use crate::rule::Subject;
 use crate::scope::Scope;
 use crate::surface::SurfaceKind;
 
@@ -67,6 +68,33 @@ pub enum CatalogueError {
     UnknownCheck {
         /// Which row, counting from zero.
         row: usize,
+        /// The rule as written.
+        check: String,
+    },
+    /// `report_checks` names a rule that does not exist.
+    #[error("report_checks names an unknown check {check:?}")]
+    UnknownReportCheck {
+        /// The rule as written.
+        check: String,
+    },
+    /// A row names a rule that reads a whole scan rather than one file.
+    ///
+    /// A row offers a rule the file it matched, so a rule reading the scan is
+    /// offered nothing there and runs nothing. It belongs in `report_checks`.
+    #[error("row {row} names {check:?}, which reads a whole scan: put it in report_checks")]
+    ReportCheckInRow {
+        /// Which row, counting from zero.
+        row: usize,
+        /// The rule as written.
+        check: String,
+    },
+    /// `report_checks` names a rule that reads a file rather than a scan.
+    ///
+    /// The other way round, and just as silent: the report offers nothing a
+    /// file rule reads, so it runs nothing. It belongs on the rows whose
+    /// files it should read.
+    #[error("report_checks names {check:?}, which reads a file: put it on a row")]
+    RowCheckInReport {
         /// The rule as written.
         check: String,
     },
@@ -172,15 +200,18 @@ fn default_format() -> String {
 }
 
 /// The schema this crate reads. Raised when the shape of the file changes, as
-/// it did when `revision` was added and again when `seed` was, so a file
-/// written for an older shape is refused rather than half read.
+/// it did when `revision` was added, again when `seed` was, and again when
+/// `report_checks` was, so a file written for an older shape is refused rather
+/// than half read.
 ///
 /// `seed` raised it although a reader that did not know the field would still
 /// parse the file: it would parse it and enter none of the directories the
 /// field names, which is the half reading this number exists to refuse. A
 /// field that changes what a scan reaches is a shape change whether or not
-/// serde minds.
-const SCHEMA: u32 = 3;
+/// serde minds. `report_checks` raised it for the same reason, one rule
+/// further on: a reader that did not know it would run none of the rules it
+/// names and report a clean scan.
+const SCHEMA: u32 = 4;
 
 /// Just the schema, read before the rest: a file written for an older shape is
 /// missing fields the current one requires, and "missing field `revision`" says
@@ -197,6 +228,14 @@ struct CatalogueFile {
     /// Raised when a row changes what a scan finds. `version` above says how
     /// the file is shaped; this says what it holds.
     revision: u32,
+    /// The rules that read a whole scan rather than one file.
+    ///
+    /// A row names the rules that read the file it matches, which is what
+    /// makes this file the place behaviour is decided. A rule reading the
+    /// whole scan belongs to no row, so it is named here instead, and the
+    /// answer to what decides whether a rule runs stays the same one.
+    #[serde(default)]
+    report_checks: Vec<String>,
     surface: Vec<SurfaceRule>,
 }
 
@@ -204,6 +243,7 @@ struct CatalogueFile {
 #[derive(Debug)]
 pub struct Catalogue {
     revision: u32,
+    report_checks: Vec<RuleId>,
     rules: Vec<SurfaceRule>,
     kinds: Vec<SurfaceKind>,
     extractions: Vec<Vec<Extraction>>,
@@ -278,10 +318,19 @@ impl Catalogue {
                 rule.check
                     .iter()
                     .map(|name| {
-                        RuleId::from_catalogue(name).ok_or_else(|| CatalogueError::UnknownCheck {
-                            row,
-                            check: name.clone(),
-                        })
+                        let id = RuleId::from_catalogue(name).ok_or_else(|| {
+                            CatalogueError::UnknownCheck {
+                                row,
+                                check: name.clone(),
+                            }
+                        })?;
+                        if reads_a_report(id) {
+                            return Err(CatalogueError::ReportCheckInRow {
+                                row,
+                                check: name.clone(),
+                            });
+                        }
+                        Ok(id)
                     })
                     .collect::<Result<Vec<_>, _>>()?,
             );
@@ -322,6 +371,7 @@ impl Catalogue {
 
         Ok(Self {
             revision: file.revision,
+            report_checks: report_checks(&file.report_checks)?,
             globs: builder
                 .build()
                 .map_err(|e| CatalogueError::Invalid(e.to_string()))?,
@@ -338,6 +388,12 @@ impl Catalogue {
     #[must_use]
     pub fn revision(&self) -> u32 {
         self.revision
+    }
+
+    /// The rules that read a whole scan.
+    #[must_use]
+    pub fn report_checks(&self) -> &[RuleId] {
+        &self.report_checks
     }
 
     /// The row matching `path`, if any.
@@ -460,6 +516,33 @@ impl Catalogue {
             .position(|k| *k == kind)
             .map_or(&[][..], |row| self.checks[row].as_slice())
     }
+}
+
+/// The rules `report_checks` names, or the first name that cannot go there.
+///
+/// A rule that reads no whole scan would run nothing from here, so it is
+/// refused rather than listed and ignored.
+fn report_checks(names: &[String]) -> Result<Vec<RuleId>, CatalogueError> {
+    names
+        .iter()
+        .map(|name| {
+            let id =
+                RuleId::from_catalogue(name).ok_or_else(|| CatalogueError::UnknownReportCheck {
+                    check: name.clone(),
+                })?;
+            if !reads_a_report(id) {
+                return Err(CatalogueError::RowCheckInReport {
+                    check: name.clone(),
+                });
+            }
+            Ok(id)
+        })
+        .collect()
+}
+
+/// Whether a rule reads a whole scan.
+fn reads_a_report(id: RuleId) -> bool {
+    crate::rule::of(id).reads().contains(&Subject::Report)
 }
 
 /// Whether a glob names the directory a scan outside a repository starts at.
@@ -874,7 +957,7 @@ mod tests {
             "\\\\server\\share",
         ] {
             let error = Catalogue::load(&format!(
-                r#"version = 3
+                r#"version = 4
                    revision = 1
                    [[surface]]
                    glob = "x"
@@ -895,7 +978,7 @@ mod tests {
         // traversal written with backslashes traverses just as surely.
         for seed in ["a\\..\\outside", "..\\outside", "a\\.\\b", "a\\\\b"] {
             let error = Catalogue::load(&format!(
-                r#"version = 3
+                r#"version = 4
                    revision = 1
                    [[surface]]
                    glob = "x"
@@ -915,7 +998,7 @@ mod tests {
         // A plain path inside the scan loads, whatever the scope.
         for scope in ["repository", "home", "system"] {
             let held = Catalogue::load(&format!(
-                r#"version = 3
+                r#"version = 4
                    revision = 1
                    [[surface]]
                    scope = "{scope}"
@@ -976,7 +1059,7 @@ mod tests {
     #[test]
     fn an_invalid_glob_is_rejected_at_load() {
         let error = Catalogue::load(
-            r#"version = 3
+            r#"version = 4
                revision = 1
                [[surface]]
                glob = "["
@@ -993,7 +1076,7 @@ mod tests {
     #[test]
     fn an_unknown_kind_is_rejected_at_load() {
         let error = Catalogue::load(
-            r#"version = 3
+            r#"version = 4
                revision = 1
                [[surface]]
                glob = "x"
@@ -1013,7 +1096,7 @@ mod tests {
     #[test]
     fn an_unknown_format_is_rejected_at_load() {
         let error = Catalogue::load(
-            r#"version = 3
+            r#"version = 4
                revision = 1
                [[surface]]
                glob = "x"
@@ -1034,7 +1117,7 @@ mod tests {
     #[test]
     fn an_unknown_check_is_rejected_at_load() {
         let error = Catalogue::load(
-            r#"version = 3
+            r#"version = 4
                revision = 1
                [[surface]]
                glob = "x"
@@ -1048,6 +1131,109 @@ mod tests {
         .expect_err("an unknown check must not load");
         assert!(
             matches!(error, CatalogueError::UnknownCheck { .. }),
+            "{error:?}"
+        );
+    }
+
+    /// `report_checks` is resolved the way a row's `check` is, so a typo in
+    /// it is refused rather than quietly naming no rule.
+    #[test]
+    fn an_unknown_report_check_is_rejected_at_load() {
+        let error = Catalogue::load(
+            r#"version = 4
+               revision = 1
+               report_checks = ["not-a-rule"]
+               [[surface]]
+               glob = "x"
+               tool = "x"
+               kind = "skill"
+               last_verified = "2026-09-11"
+               source = "https://example.invalid"
+            "#,
+        )
+        .expect_err("an unknown report check must not load");
+        assert!(
+            matches!(error, CatalogueError::UnknownReportCheck { .. }),
+            "{error:?}"
+        );
+    }
+
+    /// A catalogue naming none is the ordinary case, and runs no report rule.
+    #[test]
+    fn a_catalogue_naming_no_report_check_loads() {
+        let held = Catalogue::load(
+            r#"version = 4
+               revision = 1
+               [[surface]]
+               glob = "x"
+               tool = "x"
+               kind = "skill"
+               last_verified = "2026-09-11"
+               source = "https://example.invalid"
+            "#,
+        )
+        .expect("a catalogue with no report checks");
+
+        assert!(held.report_checks().is_empty());
+    }
+
+    /// The shipped catalogue names the one rule that reads a whole scan, and
+    /// a scan that ran none of them would report a clean result rather than
+    /// an error, so nothing else would say so.
+    #[test]
+    fn the_shipped_catalogue_names_its_report_check() {
+        assert_eq!(
+            shipped().report_checks(),
+            &[RuleId::UnpromptedWriteAccess],
+            "{:?}",
+            shipped().report_checks()
+        );
+    }
+
+    /// A row offers a rule one file. A rule reading the whole scan is never
+    /// offered anything there, so naming it in a row runs nothing, and
+    /// running nothing is what this file exists to make impossible to do by
+    /// accident.
+    #[test]
+    fn a_row_naming_a_report_rule_is_rejected_at_load() {
+        let error = Catalogue::load(
+            r#"version = 4
+               revision = 1
+               [[surface]]
+               glob = "x"
+               tool = "x"
+               kind = "skill"
+               check = ["unprompted-write-access"]
+               last_verified = "2026-09-11"
+               source = "https://example.invalid"
+            "#,
+        )
+        .expect_err("a row naming a report rule must not load");
+        assert!(
+            matches!(error, CatalogueError::ReportCheckInRow { row: 0, .. }),
+            "{error:?}"
+        );
+    }
+
+    /// And the other way round: a rule reading a file is handed nothing by
+    /// the report, so naming it there runs nothing either.
+    #[test]
+    fn report_checks_naming_a_file_rule_is_rejected_at_load() {
+        let error = Catalogue::load(
+            r#"version = 4
+               revision = 1
+               report_checks = ["invisible-unicode"]
+               [[surface]]
+               glob = "x"
+               tool = "x"
+               kind = "skill"
+               last_verified = "2026-09-11"
+               source = "https://example.invalid"
+            "#,
+        )
+        .expect_err("report_checks naming a file rule must not load");
+        assert!(
+            matches!(error, CatalogueError::RowCheckInReport { .. }),
             "{error:?}"
         );
     }
@@ -1297,6 +1483,19 @@ mod tests {
             .collect();
 
         let mut held = vec![format!("revision {}", shipped().revision())];
+        held.push(format!(
+            "report_checks {}",
+            if shipped().report_checks().is_empty() {
+                "-".to_owned()
+            } else {
+                shipped()
+                    .report_checks()
+                    .iter()
+                    .map(|rule| rule.as_str())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            }
+        ));
         for (row, rule) in shipped().rules().iter().enumerate() {
             let list = |names: &[String]| {
                 if names.is_empty() {
@@ -1353,7 +1552,7 @@ mod tests {
                 error,
                 CatalogueError::UnknownSchema {
                     found: 1,
-                    expected: 3
+                    expected: 4
                 }
             ),
             "{error:?}"
@@ -1363,7 +1562,7 @@ mod tests {
     #[test]
     fn an_unknown_extraction_is_rejected_at_load() {
         let error = Catalogue::load(
-            r#"version = 3
+            r#"version = 4
                revision = 1
                [[surface]]
                glob = "x"
@@ -1533,7 +1732,7 @@ mod tests {
     fn a_row_outside_a_repository_cannot_walk_out_of_its_root() {
         for glob in ["../outside/**", "./**", ".", ".."] {
             let error = Catalogue::load(&format!(
-                r#"version = 3
+                r#"version = 4
                revision = 1
                    [[surface]]
                    scope = "home"
@@ -1665,7 +1864,7 @@ mod tests {
     fn a_row_outside_a_repository_cannot_reach_past_its_root() {
         for glob in ["foo/../../outside/**/*.md", "a/./b/**/*.md", "a/../b"] {
             let error = Catalogue::load(&format!(
-                r#"version = 3
+                r#"version = 4
                revision = 1
                    [[surface]]
                    scope = "home"
@@ -1879,7 +2078,7 @@ mod tests {
             "2026-13-01",
         ] {
             let toml = format!(
-                r#"version = 3
+                r#"version = 4
                revision = 1
                    [[surface]]
                    glob = "x"
@@ -1896,7 +2095,7 @@ mod tests {
             );
         }
 
-        let leap = r#"version = 3
+        let leap = r#"version = 4
                revision = 1
                       [[surface]]
                       glob = "x"
@@ -1911,7 +2110,7 @@ mod tests {
     #[test]
     fn a_row_missing_its_citation_is_rejected_at_load() {
         let error = Catalogue::load(
-            r#"version = 3
+            r#"version = 4
                revision = 1
                [[surface]]
                glob = "x"

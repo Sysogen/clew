@@ -10,7 +10,8 @@
 # The revision below is what a scan is cited against. Raise it when a line
 # changes, never when provenance does.
 
-revision 10
+revision 11
+report_checks unprompted-write-access
 
 repository **/.claude/settings.json claude-code json hooks,permissions,mcp-servers,autonomy bypass-permissions,unrestricted-shell,plaintext-transport -
 repository **/.claude/settings.local.json claude-code json hooks,permissions,mcp-servers,autonomy bypass-permissions,unrestricted-shell,plaintext-transport -

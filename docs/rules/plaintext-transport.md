@@ -1,6 +1,6 @@
 # plaintext-transport
 
-Severity **medium**, pack core 4.
+Severity **medium**, pack core 5.
 
 An MCP server reached over plain HTTP
 

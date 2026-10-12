@@ -43,6 +43,8 @@ pub enum RuleId {
     AutoRunTask,
     /// An agent invoked with the flag that removes its permission prompt.
     AgentRunsUnattended,
+    /// A configuration that both stops the asking and permits writes.
+    UnpromptedWriteAccess,
 }
 
 impl RuleId {

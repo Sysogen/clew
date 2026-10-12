@@ -1,0 +1,14 @@
+The sentence the conjunction rule exists to hold clew to: nobody is asked,
+and the sandbox is what keeps that bounded. Reporting this would contradict
+the reason `approval_policy` is left out of `bypass-permissions`.
+
+The second file is the other half on its own, in the profile spelling, with
+something still asking. Neither file is a finding and neither is the pair,
+because Codex reads one configuration rather than both.
+
+>>> .codex/config.toml
+approval_policy = "never"
+sandbox_mode = "read-only"
+>>> nested/.codex/config.toml
+approval_policy = "on-request"
+default_permissions = ":workspace"

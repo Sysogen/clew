@@ -1,0 +1,418 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Sysogen Lda
+
+//! The `unprompted-write-access` rule.
+
+use super::{after_key, said_at};
+use crate::autonomy::Autonomy;
+use crate::finding::{Finding, RuleId, Severity};
+use crate::repo_path::RepoPath;
+use crate::rule::{Examined, FoundMode, Rule, Subject};
+
+/// See [`Rule::detail`] for what this flags and why.
+pub struct UnpromptedWriteAccess;
+
+/// The value of `approval_policy` that stops Codex asking.
+///
+/// `on-request` asks, and a `{ granular = ... }` table keeps some prompts, so
+/// neither is this half. The reference gives `untrusted` as unsupported and
+/// `on-failure` as deprecated, so neither is named.
+const NEVER: (&str, &str) = ("approval_policy", "never");
+
+/// Whether a mode lets the agent write the working tree.
+///
+/// Both spellings of the same decision. `danger-full-access` is deliberately
+/// absent in either spelling: it is already `bypass-permissions` on its own,
+/// and a second finding over the same key would say the same thing twice.
+fn writes(mode: &Autonomy) -> bool {
+    matches!(
+        (mode.key.as_str(), mode.value.as_str()),
+        ("sandbox_mode", "workspace-write") | ("default_permissions", ":workspace")
+    )
+}
+
+impl Rule for UnpromptedWriteAccess {
+    fn id(&self) -> RuleId {
+        RuleId::UnpromptedWriteAccess
+    }
+
+    fn name(&self) -> &'static str {
+        "unprompted-write-access"
+    }
+
+    fn severity(&self) -> Severity {
+        Severity::Medium
+    }
+
+    fn description(&self) -> &'static str {
+        "A configuration that both stops the asking and lets the agent write"
+    }
+
+    fn detail(&self) -> &'static str {
+        "Codex's configuration reference gives two separate controls: \
+                approval_policy, which decides when Codex pauses for approval, and the \
+                sandbox, written either as sandbox_mode or as a default_permissions \
+                profile. Neither is a finding on its own, and clew says so elsewhere: \
+                approval_policy = \"never\" leaves the sandbox, which bounds what an \
+                unasked agent reaches, and a sandbox permitting writes leaves the prompt, \
+                which is someone deciding. This file sets both, so neither control is \
+                left. What the agent may then write without being asked includes the \
+                files deciding what the next run may do: a git hook, an instruction file, \
+                this configuration. The reference recommends \"never\" for non-interactive \
+                runs, which is also where nobody is watching. Running unattended is a \
+                legitimate thing to do, and what this reports is that both controls were \
+                turned off together, not that the run is wrong."
+    }
+
+    fn remediation(&self) -> &'static str {
+        "Keep one of the two. approval_policy = \"on-request\" is what the reference \
+                recommends for an interactive run, and a sandbox left at read-only is what \
+                makes \"never\" safe where nobody is asked. Where an unattended run really \
+                does need to write, approval_policy = { granular = ... } keeps some \
+                prompts rather than none, and sandbox_workspace_write.writable_roots \
+                narrows where the writes land. \
+                sandbox_workspace_write.network_access decides whether that sandbox can \
+                reach the network, which is what turns a write into an exfiltration, so \
+                leave it off."
+    }
+
+    fn reads(&self) -> &'static [Subject] {
+        &[Subject::Report]
+    }
+
+    fn check(&self, at: &Examined<'_>, width: usize) -> Vec<Finding> {
+        let Examined::Report { modes } = at else {
+            return Vec::new();
+        };
+        let mut found = Vec::new();
+        // One finding a file, so each file is answered once however many of
+        // these keys it writes. The files are visited in the order the scan
+        // found them, which is the order a report lists them in.
+        let mut answered: Vec<&RepoPath> = Vec::new();
+        for held in *modes {
+            if answered.contains(&held.path) {
+                continue;
+            }
+            answered.push(held.path);
+            let here = |m: &&FoundMode<'_>| m.path == held.path;
+            if !modes
+                .iter()
+                .filter(here)
+                .any(|m| (m.mode.key.as_str(), m.mode.value.as_str()) == NEVER)
+            {
+                continue;
+            }
+            let Some(writable) = modes.iter().filter(here).find(|m| writes(m.mode)) else {
+                continue;
+            };
+            // Placed at the sandbox, which is the half granting the writes,
+            // and quoting both: the sandbox line on its own is a value this
+            // rule's own prose calls harmless.
+            let said = format!(
+                "{} = {:?} with {} = {:?}",
+                NEVER.0, NEVER.1, writable.mode.key, writable.mode.value
+            );
+            found.extend(
+                after_key(writable.source, &writable.mode.key, &writable.mode.value, 0)
+                    .and_then(|at| {
+                        said_at(writable.path, self.id(), writable.source, at, &said, width)
+                    })
+                    .or_else(|| Some(super::about_file(writable.path, self.id(), &said, width))),
+            );
+        }
+        found
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::finding::DEFAULT_EVIDENCE_WIDTH;
+    use crate::rule::judge;
+
+    fn mode(key: &str, value: &str) -> Autonomy {
+        Autonomy {
+            key: key.to_owned(),
+            value: value.to_owned(),
+        }
+    }
+
+    /// A file as a test writes it: where it is, what it says, and the modes
+    /// a scan would have read out of it.
+    struct File<'a> {
+        path: &'a str,
+        source: &'a str,
+        modes: &'a [(&'a str, &'a str)],
+    }
+
+    /// Judged the way the scan judges it, one report over every file.
+    fn found_in(files: &[File<'_>]) -> Vec<Finding> {
+        let held: Vec<(RepoPath, String, Vec<Autonomy>)> = files
+            .iter()
+            .map(|file| {
+                (
+                    RepoPath::root().join(file.path),
+                    file.source.to_owned(),
+                    file.modes.iter().map(|(k, v)| mode(k, v)).collect(),
+                )
+            })
+            .collect();
+        let modes: Vec<FoundMode<'_>> = held
+            .iter()
+            .flat_map(|(path, source, modes)| {
+                modes
+                    .iter()
+                    .map(move |mode| FoundMode { path, source, mode })
+            })
+            .collect();
+        judge(
+            &Examined::Report { modes: &modes },
+            &[RuleId::UnpromptedWriteAccess],
+            DEFAULT_EVIDENCE_WIDTH,
+        )
+    }
+
+    fn codex(source: &str, modes: &[(&str, &str)]) -> Vec<Finding> {
+        found_in(&[File {
+            path: ".codex/config.toml",
+            source,
+            modes,
+        }])
+    }
+
+    /// Both halves, in the spelling the reference leads with.
+    #[test]
+    fn nothing_asking_and_a_sandbox_that_writes_is_a_finding() {
+        let found = codex(
+            "approval_policy = \"never\"\nsandbox_mode = \"workspace-write\"\n",
+            &[
+                ("approval_policy", "never"),
+                ("sandbox_mode", "workspace-write"),
+            ],
+        );
+
+        assert_eq!(found.len(), 1, "{found:?}");
+        // Placed at the sandbox, which is the half granting the writes.
+        assert_eq!(found[0].at.expect("a position").line, 2, "{found:?}");
+        assert_eq!(found[0].severity, Severity::Medium);
+    }
+
+    /// The same decision in the profile spelling.
+    #[test]
+    fn a_workspace_permission_profile_is_the_same_half() {
+        let found = codex(
+            "approval_policy = \"never\"\ndefault_permissions = \":workspace\"\n",
+            &[
+                ("approval_policy", "never"),
+                ("default_permissions", ":workspace"),
+            ],
+        );
+
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].at.expect("a position").line, 2, "{found:?}");
+    }
+
+    /// Each half alone leaves one control standing, which is why neither is a
+    /// finding anywhere in clew. A conjunction that fired on one of them
+    /// would be the two rules that already exist, reported a third time.
+    #[test]
+    fn either_half_alone_is_silent() {
+        assert!(
+            codex(
+                "approval_policy = \"never\"\n",
+                &[("approval_policy", "never")]
+            )
+            .is_empty()
+        );
+        assert!(
+            codex(
+                "sandbox_mode = \"workspace-write\"\n",
+                &[("sandbox_mode", "workspace-write")]
+            )
+            .is_empty()
+        );
+        assert!(
+            codex(
+                "default_permissions = \":workspace\"\n",
+                &[("default_permissions", ":workspace")]
+            )
+            .is_empty()
+        );
+    }
+
+    /// The reference gives `on-request` for an interactive run, and a
+    /// `granular` table keeps some prompts. Either way something asks, so the
+    /// sandbox is not the only control left.
+    #[test]
+    fn an_approval_policy_that_still_asks_is_silent() {
+        for policy in ["on-request", "granular"] {
+            assert!(
+                codex(
+                    &format!(
+                        "approval_policy = \"{policy}\"\nsandbox_mode = \"workspace-write\"\n"
+                    ),
+                    &[
+                        ("approval_policy", policy),
+                        ("sandbox_mode", "workspace-write"),
+                    ],
+                )
+                .is_empty(),
+                "{policy} asks"
+            );
+        }
+    }
+
+    /// `danger-full-access` is `bypass-permissions` on its own, in either
+    /// spelling. Reporting it here too would say the same thing twice about
+    /// one key.
+    #[test]
+    fn a_sandbox_that_bounds_nothing_is_left_to_the_rule_that_owns_it() {
+        for sandbox in [
+            ("sandbox_mode", "danger-full-access"),
+            ("default_permissions", ":danger-full-access"),
+        ] {
+            assert!(
+                codex(
+                    &format!(
+                        "approval_policy = \"never\"\n{} = \"{}\"\n",
+                        sandbox.0, sandbox.1
+                    ),
+                    &[("approval_policy", "never"), sandbox],
+                )
+                .is_empty(),
+                "{sandbox:?} is already a finding of its own"
+            );
+        }
+    }
+
+    /// A read-only sandbox is what makes `never` safe, which is the sentence
+    /// this rule exists to hold clew to.
+    #[test]
+    fn a_read_only_sandbox_with_nothing_asking_is_silent() {
+        assert!(
+            codex(
+                "approval_policy = \"never\"\nsandbox_mode = \"read-only\"\n",
+                &[("approval_policy", "never"), ("sandbox_mode", "read-only")],
+            )
+            .is_empty()
+        );
+    }
+
+    /// Codex reads one file, so two files are two configurations and neither
+    /// has both halves. Joining them would report a pair nothing ever applies
+    /// together.
+    #[test]
+    fn two_halves_in_two_files_are_not_a_pair() {
+        let found = found_in(&[
+            File {
+                path: ".codex/config.toml",
+                source: "approval_policy = \"never\"\n",
+                modes: &[("approval_policy", "never")],
+            },
+            File {
+                path: "nested/.codex/config.toml",
+                source: "sandbox_mode = \"workspace-write\"\n",
+                modes: &[("sandbox_mode", "workspace-write")],
+            },
+        ]);
+
+        assert!(found.is_empty(), "{found:?}");
+    }
+
+    /// The reference says not to combine the two sandbox spellings, and a
+    /// file that does is still one configuration and one answer.
+    #[test]
+    fn a_file_writing_both_sandbox_spellings_is_one_finding() {
+        let found = codex(
+            "approval_policy = \"never\"\ndefault_permissions = \":workspace\"\nsandbox_mode = \"workspace-write\"\n",
+            &[
+                ("approval_policy", "never"),
+                ("default_permissions", ":workspace"),
+                ("sandbox_mode", "workspace-write"),
+            ],
+        );
+
+        assert_eq!(found.len(), 1, "{found:?}");
+    }
+
+    /// Two configurations each setting both halves are two findings: a
+    /// repository with a nested Codex directory has two of them to fix.
+    #[test]
+    fn two_files_each_setting_both_are_two_findings() {
+        let source = "approval_policy = \"never\"\nsandbox_mode = \"workspace-write\"\n";
+        let modes: &[(&str, &str)] = &[
+            ("approval_policy", "never"),
+            ("sandbox_mode", "workspace-write"),
+        ];
+        let found = found_in(&[
+            File {
+                path: ".codex/config.toml",
+                source,
+                modes,
+            },
+            File {
+                path: "nested/.codex/config.toml",
+                source,
+                modes,
+            },
+        ]);
+
+        assert_eq!(found.len(), 2, "{found:?}");
+    }
+
+    /// The evidence names both halves. The line it is placed at says
+    /// `sandbox_mode = "workspace-write"`, which this rule's own prose calls
+    /// harmless, so quoting that line would read as a finding against a value
+    /// clew says is fine.
+    #[test]
+    fn the_evidence_names_both_halves() {
+        let found = codex(
+            "approval_policy = \"never\"\nsandbox_mode = \"workspace-write\"\n",
+            &[
+                ("approval_policy", "never"),
+                ("sandbox_mode", "workspace-write"),
+            ],
+        );
+
+        let said = found[0].evidence.as_str();
+        assert!(said.contains("approval_policy"), "{said:?}");
+        assert!(said.contains("sandbox_mode"), "{said:?}");
+        assert!(said.contains("never"), "{said:?}");
+        assert!(said.contains("workspace-write"), "{said:?}");
+    }
+
+    /// A scan that found no mode at all, which is most of them.
+    #[test]
+    fn a_report_with_nothing_in_it_is_silent() {
+        assert!(found_in(&[]).is_empty());
+    }
+
+    /// A rule the catalogue does not name never runs, which is the invariant
+    /// `report_checks` exists to keep.
+    #[test]
+    fn a_rule_the_catalogue_does_not_name_does_not_run() {
+        let path = RepoPath::root().join(".codex/config.toml");
+        let source = "approval_policy = \"never\"\nsandbox_mode = \"workspace-write\"\n";
+        let modes = [
+            mode("approval_policy", "never"),
+            mode("sandbox_mode", "workspace-write"),
+        ];
+        let held: Vec<FoundMode<'_>> = modes
+            .iter()
+            .map(|mode| FoundMode {
+                path: &path,
+                source,
+                mode,
+            })
+            .collect();
+
+        assert!(
+            judge(
+                &Examined::Report { modes: &held },
+                &[],
+                DEFAULT_EVIDENCE_WIDTH
+            )
+            .is_empty()
+        );
+    }
+}
