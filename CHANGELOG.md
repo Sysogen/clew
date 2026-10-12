@@ -25,10 +25,11 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the rule placing a finding is given, because it is the one thing that cannot
   be decided without it: `//` opens a comment in JSONC and sits inside a url
   in YAML. So JSON has no comment to skip, JSONC ends a line at `//` wherever
-  it appears and runs a block to `*/`, TOML and YAML end one at a `#` with
-  whitespace before it, TOML takes a single-quoted string literally and runs
-  a long one between three quotes, and a `crushrc` is Bash. A key written in
-  any of those is text, not a declaration.
+  it appears and runs a block to `*/`, TOML ends one at a `#` wherever it sits
+  while YAML and Bash need whitespace or a line start before it, since `a#b`
+  is a scalar holding a hash in one and a word in the other, and TOML takes a
+  single-quoted string literally and runs a long one between three quotes. A
+  key written in any of those is text, not a declaration.
 
   One pass also means a file holding many copies of a key costs its length
   rather than its square. Measured on a 760 KB file with twenty thousand
@@ -88,6 +89,19 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   it, so the chain is walked: a profile granting nothing of its own still
   writes where its parent does. A file is free to write a cycle, and the
   answer there is no rather than a scan that does not finish.
+
+  A profile extending `:danger-full-access` is read as the write it is. The
+  reference does not list that built-in among the values `extends` takes, so a
+  profile naming it names something undocumented; the two answers available
+  are a finding on a configuration that may be unbounded and silence on one
+  that is, and silence is the worse of them. It is also the one case
+  `bypass-permissions` cannot see, because that rule reads the key selecting
+  the profile, which says `ours` rather than its parent.
+
+  A directory holding only a profile is a run location too. A file defining
+  the profile a file above it selects declares no mode of its own, and leaving
+  it out of the candidate layers meant never asking about the one place that
+  selection resolves to a write.
 
   A report is gathered in one pass over the modes, so a repository with many
   nested configurations is read once rather than once for each of them.
