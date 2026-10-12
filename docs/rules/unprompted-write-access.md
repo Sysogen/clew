@@ -22,7 +22,11 @@ both halves have to be in the same file. The reference puts project-scoped
 overrides in .codex/config.toml files, plural, and does not say in what order
 they merge, so a pair split across two of them is not reported. Joining them in
 the wrong order would report a configuration that never applied, which is the
-worse of the two errors here.
+worse of the two errors here. A second: the sandbox half is read in its two
+built-in spellings, and a default_permissions naming a [permissions.<name>]
+table of its own is not, although such a table grants writes with
+filesystem.<path> set to write or by extending :workspace. Reading those tables
+is an extraction this rule does not have.
 
 ## What to do
 

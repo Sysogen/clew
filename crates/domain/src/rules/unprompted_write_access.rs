@@ -68,7 +68,12 @@ impl Rule for UnpromptedWriteAccess {
                 overrides in .codex/config.toml files, plural, and does not say in what \
                 order they merge, so a pair split across two of them is not reported. \
                 Joining them in the wrong order would report a configuration that never \
-                applied, which is the worse of the two errors here."
+                applied, which is the worse of the two errors here. A second: the \
+                sandbox half is read in its two built-in spellings, and a \
+                default_permissions naming a [permissions.<name>] table of its own is \
+                not, although such a table grants writes with filesystem.<path> set to \
+                write or by extending :workspace. Reading those tables is an extraction \
+                this rule does not have."
     }
 
     fn remediation(&self) -> &'static str {
@@ -301,9 +306,28 @@ mod tests {
         );
     }
 
-    /// Codex reads one file, so two files are two configurations and neither
-    /// has both halves. Joining them would report a pair nothing ever applies
-    /// together.
+    /// A profile of its own is a hole, stated rather than guessed at. Such a
+    /// table grants writes with `filesystem.<path>` set to write or by
+    /// extending `:workspace`, and reading it is an extraction this rule does
+    /// not have, so a configuration using one is silent. Pinned, so closing
+    /// the hole is a visible change rather than a number moving.
+    #[test]
+    fn a_permission_profile_of_its_own_is_not_read() {
+        assert!(
+            codex(
+                "approval_policy = \"never\"\ndefault_permissions = \"ours\"\n\n[permissions.ours]\nextends = \":workspace\"\n",
+                &[("approval_policy", "never"), ("default_permissions", "ours")],
+            )
+            .is_empty()
+        );
+    }
+
+    /// One file at a time, which is a stated limit rather than a claim about
+    /// Codex. The reference puts project-scoped overrides in
+    /// `.codex/config.toml` files, plural, and does not say in what order they
+    /// merge, so a pair split across two of them is left unreported: joining
+    /// them in an order the documentation does not give would be a finding
+    /// against a configuration that never applied.
     #[test]
     fn two_halves_in_two_files_are_not_a_pair() {
         let found = said_about(&[

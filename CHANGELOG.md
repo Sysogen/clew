@@ -65,13 +65,17 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   a reader shown `sandbox_mode = "workspace-write"` on its own, which this
   rule's own page calls harmless, would be right to think the finding wrong.
 
-  One limit belongs on the rule: both halves have to be in the same file.
-  Codex puts project-scoped overrides in `.codex/config.toml` files, plural,
-  and its reference does not say in what order they merge, so a pair split
-  across two of them is not reported. Joining them in an order the
-  documentation does not give would report a configuration that never applied.
-  Closing it needs the merge order, the way `core.hooksPath` needs
-  `.git/config`.
+  Two limits belong on the rule, stated in it, the README and here. Both
+  halves have to be in the same file: Codex puts project-scoped overrides in
+  `.codex/config.toml` files, plural, and its reference does not say in what
+  order they merge, so a pair split across two of them is not reported, since
+  joining them in an order the documentation does not give would report a
+  configuration that never applied. And the sandbox half is read in its two
+  built-in spellings only: a `default_permissions` naming a
+  `[permissions.<name>]` table of its own is not read, although such a table
+  grants writes with `filesystem.<path>` set to write or by extending
+  `:workspace`. Both are pinned by a test, so closing either is a visible
+  change rather than a number moving.
 
   A report is gathered in one pass over the modes, so a repository with many
   nested configurations is read once rather than once for each of them.
