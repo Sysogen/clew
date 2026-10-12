@@ -187,7 +187,7 @@ than one that reads less:
   executable; the tree a scan reads exposes no file mode, so one that git
   would ignore is still reported.
 
-`.git/hooks` is the one git reads without being told to, so a scan that
+`.git/hooks` is the only one git reads without being told to, so a scan that
 cannot enter it says so and exits non-zero: the usual reason is a `.git` that
 is a link, which git follows and clew does not. The other three hold
 candidate hooks, files git would run if `core.hooksPath` pointed at them, and

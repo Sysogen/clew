@@ -27,8 +27,8 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `.git/hooks` is reached by naming it on the row, which the scan seeds, and
   not by relaxing the prune. The one type whose whole job is what not to enter
   stays one rule rather than a rule with exceptions inside it. It is also the
-  one of the four git reads without being told to, so a scan that cannot enter
-  it says so: a `.git` that is a link, which git follows and clew does not, is
+  only one of the four git reads without being told to, so a scan that cannot
+  enter it says so: a `.git` that is a link, which git follows and clew does not, is
   a gap rather than an absence. A directory that is simply not there stays an
   answer, as does the `.git` file a linked worktree carries, and so does a
   link at one of the other three, which hold candidate hooks rather than
