@@ -89,43 +89,49 @@ impl Rule for UnpromptedWriteAccess {
         let Examined::Report { modes } = at else {
             return Vec::new();
         };
-        let mut found = Vec::new();
-        // One finding a file, so each file is answered once however many of
-        // these keys it writes. The files are visited in the order the scan
-        // found them, which is the order a report lists them in.
-        let mut answered: Vec<&RepoPath> = Vec::new();
+        // Gathered in one pass, so a repository with many nested
+        // configurations is read once rather than once per configuration.
+        // One entry a file, in the order the scan found them, which is the
+        // order a report lists them in: each file is answered once however
+        // many of these keys it writes.
+        let mut per_file: Vec<(&RepoPath, bool, Option<&FoundMode>)> = Vec::new();
         for held in *modes {
-            if answered.contains(&&held.path) {
-                continue;
-            }
-            answered.push(&held.path);
-            let here = |m: &&FoundMode| m.path == held.path;
-            if !modes
+            let at = per_file
                 .iter()
-                .filter(here)
-                .any(|m| (m.mode.key.as_str(), m.mode.value.as_str()) == NEVER)
-            {
-                continue;
+                .position(|(path, _, _)| *path == &held.path)
+                .unwrap_or_else(|| {
+                    per_file.push((&held.path, false, None));
+                    per_file.len() - 1
+                });
+            let (_, unprompted, writable) = &mut per_file[at];
+            if (held.mode.key.as_str(), held.mode.value.as_str()) == NEVER {
+                *unprompted = true;
             }
-            let Some(writable) = modes.iter().filter(here).find(|m| writes(&m.mode)) else {
-                continue;
-            };
-            // Placed at the sandbox, which is the half granting the writes,
-            // and quoting both: the sandbox line on its own is a value this
-            // rule's own prose calls harmless.
-            let said = format!(
-                "{} = {:?} with {} = {:?}",
-                NEVER.0, NEVER.1, writable.mode.key, writable.mode.value
-            );
-            found.push(said_at(
-                &writable.path,
-                self.id(),
-                writable.at,
-                &said,
-                width,
-            ));
+            if writable.is_none() && writes(&held.mode) {
+                *writable = Some(held);
+            }
         }
-        found
+
+        per_file
+            .into_iter()
+            .filter_map(|(_, unprompted, writable)| {
+                let writable = writable.filter(|_| unprompted)?;
+                // Placed at the sandbox, which is the half granting the
+                // writes, and quoting both: the sandbox line on its own is a
+                // value this rule's own prose calls harmless.
+                let said = format!(
+                    "{} = {:?} with {} = {:?}",
+                    NEVER.0, NEVER.1, writable.mode.key, writable.mode.value
+                );
+                Some(said_at(
+                    &writable.path,
+                    self.id(),
+                    writable.at,
+                    &said,
+                    width,
+                ))
+            })
+            .collect()
     }
 }
 
@@ -335,6 +341,13 @@ mod tests {
         );
 
         assert_eq!(found.len(), 1, "{found:?}");
+        // Which of the two it names is a coin toss the reference does not
+        // settle, so it is settled here: the first the scan read, which for a
+        // sorted set of modes is the same one every run.
+        assert!(
+            found[0].evidence.as_str().contains("default_permissions"),
+            "{found:?}"
+        );
     }
 
     /// Two configurations each setting both halves are two findings: a

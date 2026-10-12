@@ -215,9 +215,16 @@ pub(crate) fn after_words(
 
 /// Just past `key` where `source` writes it as a key: quoted, as JSON does, or
 /// bare before its separator, as TOML and YAML do.
+///
+/// A key inside a comment is not where the setting was written, and placing a
+/// finding there quotes the commented line as its evidence, which reads as a
+/// finding against something somebody had already turned off.
 fn key_end(source: &str, key: &str) -> Option<usize> {
     let quoted = format!("\"{key}\"");
-    if let Some(at) = source.find(&quoted) {
+    if let Some((at, _)) = source
+        .match_indices(&quoted)
+        .find(|(at, _)| !commented(source, *at))
+    {
         return Some(at + quoted.len());
     }
     source
@@ -228,9 +235,22 @@ fn key_end(source: &str, key: &str) -> Option<usize> {
                 .next_back()
                 .is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '-');
             let after = source[at + key.len()..].trim_start();
-            !before_is_word && (after.starts_with('=') || after.starts_with(':'))
+            !before_is_word
+                && (after.starts_with('=') || after.starts_with(':'))
+                && !commented(source, *at)
         })
         .map(|(at, _)| at + key.len())
+}
+
+/// Whether byte `at` of `source` sits on a line a comment opened.
+///
+/// Only a marker that opens the line counts. A `#` or a `//` later on is
+/// routinely inside a value: a line of JSON holding one would otherwise lose
+/// every key written after it, which trades one misplacement for another.
+fn commented(source: &str, at: usize) -> bool {
+    let start = source[..at].rfind('\n').map_or(0, |newline| newline + 1);
+    let opens = source[start..at].trim_start();
+    opens.starts_with('#') || opens.starts_with("//")
 }
 
 /// Where `text` holds `word` whole: no identifier character runs into it, and
@@ -398,6 +418,56 @@ mod tests {
     use crate::mcp_server::McpServer;
     use crate::permission::Permission;
     use crate::rule::judge;
+
+    /// A key written in a comment is not a declaration, and a finding placed
+    /// at one quotes the commented line as its evidence, which reads as a
+    /// finding against a setting somebody had already turned off.
+    #[test]
+    fn a_commented_key_is_not_where_a_setting_was_written() {
+        let toml =
+            "# sandbox_mode = \"danger-full-access\"\nsandbox_mode = \"danger-full-access\"\n";
+
+        let at = after_key(toml, "sandbox_mode", "danger-full-access", 0).expect("placed");
+
+        let (position, line) = placed(toml, at).expect("a position");
+        assert_eq!(position.line, 2, "{line:?}");
+        assert!(!line.starts_with('#'), "{line:?}");
+    }
+
+    /// The same in a format whose comments open with two slashes.
+    #[test]
+    fn a_key_behind_two_slashes_is_a_comment_too() {
+        let jsonc = "{\n  // \"chat.tools.global.autoApprove\": true,\n  \"chat.tools.global.autoApprove\": true\n}\n";
+
+        let at = after_key(jsonc, "chat.tools.global.autoApprove", "true", 0).expect("placed");
+
+        let (position, line) = placed(jsonc, at).expect("a position");
+        assert_eq!(position.line, 3, "{line:?}");
+    }
+
+    /// A marker inside a value is not a comment, and a line of JSON holding
+    /// one would otherwise lose the key that follows it on the same line.
+    #[test]
+    fn a_marker_inside_a_value_does_not_hide_the_key_after_it() {
+        let json =
+            "{\"note\": \"# or // are literal here\", \"sandbox_mode\": \"danger-full-access\"}\n";
+
+        let at = after_key(json, "sandbox_mode", "danger-full-access", 0).expect("placed");
+
+        let (position, _) = placed(json, at).expect("a position");
+        assert_eq!(position.line, 1);
+    }
+
+    /// Only a comment is skipped. A file that writes the key once, plainly,
+    /// is still placed at it.
+    #[test]
+    fn a_key_written_once_is_placed_where_it_is() {
+        let toml = "approval_policy = \"never\"\nsandbox_mode = \"workspace-write\"\n";
+
+        let at = after_key(toml, "sandbox_mode", "workspace-write", 0).expect("placed");
+
+        assert_eq!(placed(toml, at).expect("a position").0.line, 2);
+    }
 
     /// A `crushrc` is Bash that Crush sources at startup, and it carries
     /// neither a shell extension nor a `#!` line. Nothing but its name says it
