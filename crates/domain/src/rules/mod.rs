@@ -289,14 +289,12 @@ impl Scan {
     /// `None` where none does.
     fn opens(&mut self, text: &[u8], i: usize, syntax: Syntax) -> Option<usize> {
         let c = text[i];
-        // A hash carries one rule of its own, written on `Syntax::line`: it
-        // needs whitespace or a line start before it, or an unquoted scalar
-        // holding one would read as a comment.
+        let spaced = i == 0 || text[i - 1].is_ascii_whitespace();
         if let Some(marker) = syntax
             .line
             .iter()
+            .chain(syntax.spaced.iter().filter(|_| spaced))
             .find(|marker| text[i..].starts_with(marker.as_bytes()))
-            .filter(|marker| **marker != "#" || i == 0 || text[i - 1].is_ascii_whitespace())
         {
             self.at = At::Line;
             return Some(i + marker.len());
@@ -711,6 +709,20 @@ mod tests {
         let at = after_key(yaml, Format::Yaml, "runOn", "fileCreate", 0).expect("placed");
 
         assert_eq!(placed(yaml, at).expect("a position").0.line, 1);
+    }
+
+    /// TOML does not need the whitespace: a `#` outside a string ends the
+    /// line wherever it sits, so a note written tight against a value is
+    /// still a note.
+    #[test]
+    fn a_hash_against_a_value_ends_a_toml_line() {
+        let toml =
+            "x = 1# sandbox_mode = \"danger-full-access\"\nsandbox_mode = \"danger-full-access\"\n";
+
+        let at =
+            after_key(toml, Format::Toml, "sandbox_mode", "danger-full-access", 0).expect("placed");
+
+        assert_eq!(placed(toml, at).expect("a position").0.line, 2);
     }
 
     /// A key and a value look the same in JSON, both inside quotes, so what

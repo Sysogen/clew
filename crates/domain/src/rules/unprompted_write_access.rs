@@ -9,7 +9,7 @@ use crate::finding::{Finding, RuleId, Severity};
 use crate::hook::project_of;
 use crate::profile::Profile;
 use crate::repo_path::RepoPath;
-use crate::rule::{Examined, FoundMode, Rule, Subject};
+use crate::rule::{Examined, FoundMode, FoundProfile, Rule, Subject};
 
 /// See [`Rule::detail`] for what this flags and why.
 pub struct UnpromptedWriteAccess;
@@ -26,13 +26,22 @@ const SANDBOX: &str = "sandbox_mode";
 const PROFILE: &str = "default_permissions";
 
 /// The project directories a run could start under, one for each directory
-/// holding a file that declared a mode, in path order.
+/// holding a file the scan read something from, in path order.
 ///
 /// A run deeper than the deepest such directory sees the layers that
 /// directory sees, so there is nothing further to ask about, and two files in
 /// one directory are one configuration rather than two.
-fn layers(modes: &[FoundMode]) -> Vec<RepoPath> {
-    let mut held: Vec<RepoPath> = modes.iter().map(|m| project_of(&m.path)).collect();
+///
+/// The profiles count as well as the modes. A file defining the profile a
+/// file above it selects declares no mode of its own, and leaving it out
+/// would mean never asking about the one place that selection resolves to a
+/// write.
+fn layers(modes: &[FoundMode], profiles: &[FoundProfile]) -> Vec<RepoPath> {
+    let mut held: Vec<RepoPath> = modes
+        .iter()
+        .map(|m| project_of(&m.path))
+        .chain(profiles.iter().map(|p| project_of(&p.path)))
+        .collect();
     held.sort();
     held.dedup();
     held
@@ -140,7 +149,7 @@ impl Rule for UnpromptedWriteAccess {
         // sees the same layers as that file does, so there is nothing further
         // to ask about.
         let mut answers: Vec<Finding> = Vec::new();
-        for under in layers(modes) {
+        for under in layers(modes, profiles) {
             let under = &under;
             // What the layers from the root down to `under` settle on. The
             // closest file to the run wins, so the deepest layer naming a key
@@ -577,10 +586,12 @@ mod tests {
         assert_eq!(found[0].path.as_str(), "nested/.codex/config.toml");
     }
 
-    /// A profile defined only below where it is selected is not in force
-    /// there: Codex loads the layers above a run, not the ones under it.
+    /// A file defining the profile a file above it selects declares no mode
+    /// of its own, so the directory it sits in is a run location nothing else
+    /// would ask about. A run there loads both layers and resolves the
+    /// selection to a write.
     #[test]
-    fn a_profile_defined_below_where_it_is_selected_is_not_in_force() {
+    fn a_profile_defined_below_a_selection_applies_to_a_run_there() {
         let found = said_about(&[
             File {
                 path: ".codex/config.toml",
@@ -592,7 +603,53 @@ mod tests {
                 profiles: &[],
             },
             File {
-                path: "nested/.codex/config.toml",
+                path: "service/.codex/config.toml",
+                source: "[permissions.ours.filesystem]\n\"/srv\" = \"write\"\n",
+                modes: &[],
+                profiles: &[("ours", None, true)],
+            },
+        ]);
+
+        assert_eq!(found.len(), 1, "{found:?}");
+        // Placed where the selection is, which is the line to change.
+        assert_eq!(found[0].path.as_str(), ".codex/config.toml");
+    }
+
+    /// A profile extending the built-in that bounds nothing is a write, and
+    /// the rule that owns that value cannot see it: it reads the key that
+    /// selected the profile, which names `ours` rather than its parent.
+    #[test]
+    fn a_profile_extending_the_unbounded_built_in_is_the_sandbox_half() {
+        let found = said_about(&[File {
+            path: ".codex/config.toml",
+            source: "approval_policy = \"never\"\ndefault_permissions = \"ours\"\n\n[permissions.ours]\nextends = \":danger-full-access\"\n",
+            modes: &[
+                ("approval_policy", "never"),
+                ("default_permissions", "ours"),
+            ],
+            profiles: &[("ours", Some(":danger-full-access"), false)],
+        }]);
+
+        assert_eq!(found.len(), 1, "{found:?}");
+    }
+
+    /// Only the chain from the root down. A profile defined beside the file
+    /// selecting it is in no layer that selection reaches, so no run resolves
+    /// the one to the other and there is nothing to report.
+    #[test]
+    fn a_profile_defined_beside_a_selection_is_not_in_force() {
+        let found = said_about(&[
+            File {
+                path: "a/.codex/config.toml",
+                source: "approval_policy = \"never\"\ndefault_permissions = \"ours\"\n",
+                modes: &[
+                    ("approval_policy", "never"),
+                    ("default_permissions", "ours"),
+                ],
+                profiles: &[],
+            },
+            File {
+                path: "b/.codex/config.toml",
                 source: "[permissions.ours.filesystem]\n\"/srv\" = \"write\"\n",
                 modes: &[],
                 profiles: &[("ours", None, true)],

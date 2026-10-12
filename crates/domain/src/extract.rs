@@ -66,14 +66,14 @@ pub enum Format {
 /// `//` opens a comment in JSONC and sits inside a url in YAML.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Syntax {
-    /// What opens a comment that ends with the line.
-    ///
-    /// A `#` needs whitespace or a line start before it as well, which is
-    /// YAML's rule, where `a#b` is a scalar holding a hash. TOML ends a line
-    /// at a `#` either way, so requiring it misses a comment written tight
-    /// against a value. That is the safer of the two mistakes: reading a
-    /// scalar as a comment loses every key written after it.
+    /// What opens a comment that ends with the line, wherever it appears.
     pub line: &'static [&'static str],
+    /// What opens one only where whitespace or a line start precedes it.
+    ///
+    /// YAML's rule for `#`, where `a#b` is a scalar holding a hash, and
+    /// Bash's, where it is a word. TOML ends a line at a `#` either way, so
+    /// its hash belongs in `line` instead.
+    pub spaced: &'static [&'static str],
     /// What opens a string, each closing on the character that opened it.
     pub quotes: &'static [u8],
     /// Whether `/*` opens a comment that runs to `*/`.
@@ -90,27 +90,32 @@ impl Format {
             // JSON has neither comment, and no string but a double-quoted one.
             Self::Json => Syntax {
                 line: &[],
+                spaced: &[],
                 quotes: b"\"",
                 block: false,
                 long: false,
             },
             Self::Jsonc => Syntax {
                 line: &["//"],
+                spaced: &[],
                 quotes: b"\"",
                 block: true,
                 long: false,
             },
             Self::Toml => Syntax {
                 line: &["#"],
+                spaced: &[],
                 quotes: b"\"'",
                 block: false,
                 long: true,
             },
             // One arm for three formats that agree. A Markdown file declares
             // in a leading YAML block, so YAML's answer is its answer, and a
-            // `crushrc` is Bash, which comments and quotes the same way.
+            // `crushrc` is Bash, which comments and quotes the same way, a
+            // hash needing whitespace in both.
             Self::Yaml | Self::Markdown | Self::Crushrc => Syntax {
-                line: &["#"],
+                line: &[],
+                spaced: &["#"],
                 quotes: b"\"'",
                 block: false,
                 long: false,

@@ -22,6 +22,15 @@ pub struct Profile {
 /// `default_permissions` both spell it.
 pub const WORKSPACE: &str = ":workspace";
 
+/// The built-in that bounds nothing.
+///
+/// The reference gives `extends` three values and this is not among them, so
+/// a profile naming it here is naming something the documentation does not
+/// describe. It is read as what it says rather than passed over: the two
+/// answers are a finding on a configuration that may be unbounded, and
+/// silence on one that is, and silence is the worse of them.
+pub const FULL_ACCESS: &str = ":danger-full-access";
+
 impl Profile {
     /// Whether the profile `selected` names permits a write.
     ///
@@ -35,7 +44,7 @@ impl Profile {
         let mut name = selected.to_owned();
         let mut seen: Vec<String> = Vec::new();
         loop {
-            if name == WORKSPACE {
+            if name == WORKSPACE || name == FULL_ACCESS {
                 return true;
             }
             if seen.contains(&name) {
@@ -105,6 +114,27 @@ mod tests {
         let ours = profile("ours", Some("middle"), false);
 
         assert!(Profile::selected(&[&ours, &middle, &base], "ours"));
+    }
+
+    /// A profile extending the built-in that bounds nothing writes, and
+    /// nothing else would say so: `bypass-permissions` reads the key that
+    /// selected the profile, which says `ours` rather than the parent, so a
+    /// profile is where that rule stops being able to see.
+    #[test]
+    fn a_profile_extending_the_unbounded_built_in_writes() {
+        let ours = profile("ours", Some(FULL_ACCESS), false);
+
+        assert!(Profile::selected(&[&ours], "ours"));
+    }
+
+    /// And through a chain, since a parent is applied before its child
+    /// whatever sits between them.
+    #[test]
+    fn a_chain_reaching_the_unbounded_built_in_writes() {
+        let base = profile("base", Some(FULL_ACCESS), false);
+        let ours = profile("ours", Some("base"), false);
+
+        assert!(Profile::selected(&[&ours, &base], "ours"));
     }
 
     /// A chain that bottoms out at the read-only built-in writes nothing.
