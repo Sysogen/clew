@@ -458,6 +458,12 @@ const MODES: &[(Format, &str, &[&str])] = &[
         &["permissions", "defaultMode"],
     ),
     (Format::Toml, "sandbox_mode", &["sandbox_mode"]),
+    (Format::Toml, "approval_policy", &["approval_policy"]),
+    (
+        Format::Toml,
+        "default_permissions",
+        &["default_permissions"],
+    ),
     (
         Format::Json,
         "chat.tools.global.autoApprove",
@@ -1334,6 +1340,44 @@ env = { DATABASE_URL = "postgres://u:hunter2@h/d", PGPORT = "5432" }
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].key, "sandbox_mode");
         assert_eq!(found[0].value, "danger-full-access");
+    }
+
+    /// Codex's two axes. The reference gives `approval_policy` as
+    /// `on-request | never | { granular = ... }`, and the sandbox in two
+    /// spellings: `sandbox_mode`, or a `default_permissions` profile.
+    #[test]
+    fn codex_approval_and_permission_profile_are_read() {
+        let found = modes_of(
+            Format::Toml,
+            "approval_policy = \"never\"\ndefault_permissions = \":workspace\"\n",
+        );
+
+        assert_eq!(
+            found
+                .iter()
+                .map(|m| (m.key.as_str(), m.value.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("approval_policy", "never"),
+                ("default_permissions", ":workspace"),
+            ],
+            "{found:?}"
+        );
+    }
+
+    /// `approval_policy` also takes a table, which selects categories rather
+    /// than a mode. A mode is a value, so there is nothing here to record,
+    /// and recording the table's debug spelling would put a Rust shape in a
+    /// report about a TOML file.
+    #[test]
+    fn a_granular_approval_policy_is_not_a_mode() {
+        assert!(
+            modes_of(
+                Format::Toml,
+                "[approval_policy.granular]\nrules = true\nmcp_elicitations = false\n",
+            )
+            .is_empty()
+        );
     }
 
     /// At the root it is a different key, and not one Claude Code honours.
