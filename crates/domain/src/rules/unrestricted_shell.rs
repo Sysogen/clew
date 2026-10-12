@@ -56,6 +56,7 @@ impl Rule for UnrestrictedShell {
             grant,
             source,
             occurrence,
+            format,
         } = at
         else {
             return Vec::new();
@@ -67,7 +68,7 @@ impl Rule for UnrestrictedShell {
         vec![
             GRANT_LISTS
                 .iter()
-                .find_map(|key| after_key(source, key, &entry, *occurrence))
+                .find_map(|key| after_key(source, *format, key, &entry, *occurrence))
                 // A `crushrc` grants by calling a builtin, with no key to find.
                 .or_else(|| after_words(source, GRANT_BUILTIN, &entry, *occurrence))
                 .and_then(|at| found_at(path, self.id(), source, at, width))

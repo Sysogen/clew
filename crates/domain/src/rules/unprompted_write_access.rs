@@ -138,6 +138,7 @@ impl Rule for UnpromptedWriteAccess {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::extract::Format;
     use crate::finding::DEFAULT_EVIDENCE_WIDTH;
     use crate::rule::judge;
 
@@ -163,9 +164,9 @@ mod tests {
             .iter()
             .flat_map(|file| {
                 let path = RepoPath::root().join(file.path);
-                file.modes
-                    .iter()
-                    .map(move |(k, v)| FoundMode::new(&path, &mode(k, v), file.source))
+                file.modes.iter().map(move |(k, v)| {
+                    FoundMode::new(&path, &mode(k, v), file.source, Format::Toml)
+                })
             })
             .collect()
     }
@@ -432,7 +433,7 @@ mod tests {
             mode("sandbox_mode", "workspace-write"),
         ]
         .iter()
-        .map(|mode| FoundMode::new(&path, mode, source))
+        .map(|mode| FoundMode::new(&path, mode, source, Format::Toml))
         .collect();
 
         assert!(

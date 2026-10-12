@@ -60,14 +60,20 @@ impl Rule for BypassPermissions {
     }
 
     fn check(&self, at: &Examined<'_>, width: usize) -> Vec<Finding> {
-        let Examined::Mode { path, mode, source } = at else {
+        let Examined::Mode {
+            path,
+            mode,
+            source,
+            format,
+        } = at
+        else {
             return Vec::new();
         };
         if !mode.is_unchecked() {
             return Vec::new();
         }
         vec![
-            after_key(source, &mode.key, &mode.value, 0)
+            after_key(source, *format, &mode.key, &mode.value, 0)
                 .and_then(|at| found_at(path, self.id(), source, at, width))
                 .unwrap_or_else(|| about_file(path, self.id(), &mode.value, width)),
         ]

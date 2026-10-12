@@ -60,6 +60,7 @@ impl Rule for PlaintextTransport {
             path,
             server,
             source,
+            format,
         } = at
         else {
             return Vec::new();
@@ -73,7 +74,7 @@ impl Rule for PlaintextTransport {
         vec![
             SERVER_BLOCKS
                 .iter()
-                .find_map(|key| after_key(source, key, &server.name, 0))
+                .find_map(|key| after_key(source, *format, key, &server.name, 0))
                 // A `crushrc` declares by calling a builtin, with no key.
                 .or_else(|| after_words(source, SERVER_BUILTIN, &server.name, 0))
                 .and_then(|at| found_at(path, self.id(), source, at, width))

@@ -61,6 +61,7 @@ impl Rule for AutoRunTask {
             task,
             source,
             occurrence,
+            format,
         } = at
         else {
             return Vec::new();
@@ -72,7 +73,7 @@ impl Rule for AutoRunTask {
         // written the same way, so the copy is what tells them apart.
         let trigger = task.runs_on.as_deref().unwrap_or_default();
         vec![
-            after_key(source, "runOn", trigger, *occurrence)
+            after_key(source, *format, "runOn", trigger, *occurrence)
                 .and_then(|at| found_at(path, self.id(), source, at, width))
                 .unwrap_or_else(|| about_file(path, self.id(), &task.label, width)),
         ]

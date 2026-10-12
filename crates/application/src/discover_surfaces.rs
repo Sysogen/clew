@@ -6,6 +6,7 @@
 use std::collections::BTreeSet;
 
 use clew_domain::extract;
+use clew_domain::extract::Format;
 use clew_domain::finding::{Finding, RuleId, Severity};
 use clew_domain::hook::{Action, project_of};
 use clew_domain::ports::file_contents::{FileContents, FileContentsError};
@@ -184,6 +185,7 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
         &self,
         at: &RepoPath,
         text: &str,
+        format: Format,
         checks: &[RuleId],
         permissions: Vec<Permission>,
         report: &mut DiscoveryReport,
@@ -199,6 +201,7 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
                     grant: &permission,
                     source: text,
                     occurrence,
+                    format,
                 },
                 checks,
                 self.policy.evidence_width(),
@@ -245,13 +248,21 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
             };
 
             self.read_hooks(&path, &text, found.hooks, report);
-            self.read_grants(&path, &text, matched.check, found.permissions, report);
+            self.read_grants(
+                &path,
+                &text,
+                matched.format,
+                matched.check,
+                found.permissions,
+                report,
+            );
             for server in found.servers {
                 report.findings.extend(rule::judge(
                     &Examined::Server {
                         path: &path,
                         server: &server,
                         source: &text,
+                        format: matched.format,
                     },
                     matched.check,
                     self.policy.evidence_width(),
@@ -273,6 +284,7 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
                         task: &task,
                         source: &text,
                         occurrence,
+                        format: matched.format,
                     },
                     matched.check,
                     self.policy.evidence_width(),
@@ -282,52 +294,70 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
                     task,
                 });
             }
-            // A `run:` block is shell, so it is judged the way a hook's
-            // command is: one file may run the same block twice, and the copy
-            // is what places the finding.
-            //
-            // Counted by the block's first line, which is what placement
-            // looks for in a file that writes a command bare: two blocks
-            // opening on the same line would otherwise both ask for the first
-            // and the second would be placed at the first.
-            let mut ran: Vec<&str> = Vec::new();
-            for step in &found.steps {
-                let opens = step.run.lines().next().unwrap_or_default();
-                let occurrence = ran.iter().filter(|r| **r == opens).count();
-                ran.push(opens);
-                // A step that is not a POSIX shell is reported and not read as
-                // one: judging PowerShell or Python by Bash's syntax would
-                // answer a question nobody asked.
-                if step.is_posix_shell() {
-                    report.findings.extend(rule::judge(
-                        &Examined::HookCommand {
-                            path: &path,
-                            command: &step.run,
-                            source: &text,
-                            occurrence,
-                            at: step.at,
-                        },
-                        matched.check,
-                        self.policy.evidence_width(),
-                    ));
-                }
-                // Judged raw above, and redacted here, as a hook's command
-                // is: masking first destroys the text the rules read.
-                report.steps.push(WorkflowStep {
-                    source: path.clone(),
-                    step: step.redacted(),
-                });
-            }
-            self.read_modes(&path, &text, &found.autonomy, matched.check, report);
+            self.read_steps(&path, &text, &found.steps, matched.check, report);
+            self.read_modes(
+                &path,
+                &text,
+                matched.format,
+                &found.autonomy,
+                matched.check,
+                report,
+            );
             declared.extend(
                 found
                     .autonomy
                     .iter()
-                    .map(|mode| FoundMode::new(&path, mode, &text)),
+                    .map(|mode| FoundMode::new(&path, mode, &text, matched.format)),
             );
         }
 
         self.read_report(&declared, report);
+    }
+
+    /// Judge each step a workflow runs, and record it.
+    ///
+    /// A `run:` block is shell, so it is judged the way a hook's command is:
+    /// one file may run the same block twice, and the copy is what places the
+    /// finding. Counted by the block's first line, which is what placement
+    /// looks for in a file that writes a command bare: two blocks opening on
+    /// the same line would otherwise both ask for the first, and the second
+    /// would be placed at the first.
+    fn read_steps(
+        &self,
+        path: &RepoPath,
+        text: &str,
+        steps: &[Step],
+        checks: &[RuleId],
+        report: &mut DiscoveryReport,
+    ) {
+        let mut ran: Vec<&str> = Vec::new();
+        for step in steps {
+            let opens = step.run.lines().next().unwrap_or_default();
+            let occurrence = ran.iter().filter(|r| **r == opens).count();
+            ran.push(opens);
+            // A step that is not a POSIX shell is reported and not read as
+            // one: judging PowerShell or Python by Bash's syntax would answer
+            // a question nobody asked.
+            if step.is_posix_shell() {
+                report.findings.extend(rule::judge(
+                    &Examined::HookCommand {
+                        path,
+                        command: &step.run,
+                        source: text,
+                        occurrence,
+                        at: step.at,
+                    },
+                    checks,
+                    self.policy.evidence_width(),
+                ));
+            }
+            // Judged raw above, and redacted here, as a hook's command is:
+            // masking first destroys the text the rules read.
+            report.steps.push(WorkflowStep {
+                source: path.clone(),
+                step: step.redacted(),
+            });
+        }
     }
 
     /// Judge each mode a file declares, and record it.
@@ -335,6 +365,7 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
         &self,
         path: &RepoPath,
         text: &str,
+        format: Format,
         modes: &[Autonomy],
         checks: &[RuleId],
         report: &mut DiscoveryReport,
@@ -345,6 +376,7 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
                     path,
                     mode,
                     source: text,
+                    format,
                 },
                 checks,
                 self.policy.evidence_width(),

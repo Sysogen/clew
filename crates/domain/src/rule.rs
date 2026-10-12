@@ -10,6 +10,7 @@
 use std::sync::OnceLock;
 
 use crate::autonomy::Autonomy;
+use crate::extract::Format;
 use crate::finding::{Finding, Position, RuleId, Severity};
 use crate::mcp_server::McpServer;
 use crate::permission::Permission;
@@ -67,11 +68,11 @@ pub struct FoundMode {
 impl FoundMode {
     /// A mode found in `source`, placed while that text is still in hand.
     #[must_use]
-    pub fn new(path: &RepoPath, mode: &Autonomy, source: &str) -> Self {
+    pub fn new(path: &RepoPath, mode: &Autonomy, source: &str, format: Format) -> Self {
         Self {
             path: path.clone(),
             mode: mode.clone(),
-            at: crate::rules::placed_value(source, &mode.key, &mode.value),
+            at: crate::rules::placed_value(source, format, &mode.key, &mode.value),
         }
     }
 }
@@ -110,6 +111,8 @@ pub enum Examined<'a> {
         mode: &'a Autonomy,
         /// The file's text, for placing the finding.
         source: &'a str,
+        /// What the file is written in, for reading that text.
+        format: Format,
     },
     /// One operation a file pre-approves, where `source` holds its
     /// `occurrence`th copy.
@@ -122,6 +125,8 @@ pub enum Examined<'a> {
         source: &'a str,
         /// Which copy of the grant this is.
         occurrence: usize,
+        /// What the file is written in, for reading that text.
+        format: Format,
     },
     /// One MCP server a file declares.
     Server {
@@ -131,6 +136,8 @@ pub enum Examined<'a> {
         server: &'a McpServer,
         /// The file's text, for placing the finding.
         source: &'a str,
+        /// What the file is written in, for reading that text.
+        format: Format,
     },
     /// One task a workspace declares, where `source` holds the
     /// `occurrence`th task carrying the same trigger.
@@ -143,6 +150,8 @@ pub enum Examined<'a> {
         source: &'a str,
         /// Which task carrying this trigger it is, counted in file order.
         occurrence: usize,
+        /// What the file is written in, for reading that text.
+        format: Format,
     },
     /// A file that is there and cannot be read, and why.
     Unreadable {

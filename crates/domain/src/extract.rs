@@ -57,7 +57,66 @@ pub enum Format {
     Crushrc,
 }
 
+/// How a format writes a comment and a string.
+///
+/// Placement finds a key by searching the text, and a key is only a key where
+/// the file is writing one. What counts as a comment or a string is the one
+/// thing that cannot be decided without knowing which format is being read:
+/// `//` opens a comment in JSONC and sits inside a url in YAML.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Syntax {
+    /// What opens a comment that ends with the line.
+    ///
+    /// A `#` needs whitespace or a line start before it as well, which is
+    /// YAML's rule, where `a#b` is a scalar holding a hash. TOML ends a line
+    /// at a `#` either way, so requiring it misses a comment written tight
+    /// against a value. That is the safer of the two mistakes: reading a
+    /// scalar as a comment loses every key written after it.
+    pub line: &'static [&'static str],
+    /// What opens a string, each closing on the character that opened it.
+    pub quotes: &'static [u8],
+    /// Whether `/*` opens a comment that runs to `*/`.
+    pub block: bool,
+    /// Whether three quotes open a string that runs to the next three.
+    pub long: bool,
+}
+
 impl Format {
+    /// How this format writes a comment and a string.
+    #[must_use]
+    pub fn syntax(self) -> Syntax {
+        match self {
+            // JSON has neither comment, and no string but a double-quoted one.
+            Self::Json => Syntax {
+                line: &[],
+                quotes: b"\"",
+                block: false,
+                long: false,
+            },
+            Self::Jsonc => Syntax {
+                line: &["//"],
+                quotes: b"\"",
+                block: true,
+                long: false,
+            },
+            Self::Toml => Syntax {
+                line: &["#"],
+                quotes: b"\"'",
+                block: false,
+                long: true,
+            },
+            // One arm for three formats that agree. A Markdown file declares
+            // in a leading YAML block, so YAML's answer is its answer, and a
+            // `crushrc` is Bash, which comments and quotes the same way.
+            Self::Yaml | Self::Markdown | Self::Crushrc => Syntax {
+                line: &["#"],
+                quotes: b"\"'",
+                block: false,
+                long: false,
+            },
+        }
+    }
+
     /// The format a catalogue row names, if it names one that exists.
     #[must_use]
     pub fn from_catalogue(name: &str) -> Option<Self> {

@@ -21,14 +21,14 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   file naming the setting in a note had the finding land on the next thing
   that looked like the value, which was a different setting.
 
-  A `#` outside a string ends the line, which is TOML's comment and YAML's,
-  and a JSON file cannot hold one outside a string at all. Two slashes and a
-  block are read only where they open the line, because neither can be told
-  from a value without the file's format, which placement is not given: a url
-  carries `//` mid-line, YAML writes one unquoted, and `/*` is how a glob
-  starts. So a key commented out with a trailing `//`, inside a block opened
-  mid-line, or inside a single-quoted string, is still read as a key; closing
-  those needs the format carried to the rule that places the finding.
+  What counts as a comment and as a string is now the file's format, which
+  the rule placing a finding is given, because it is the one thing that cannot
+  be decided without it: `//` opens a comment in JSONC and sits inside a url
+  in YAML. So JSON has no comment to skip, JSONC ends a line at `//` wherever
+  it appears and runs a block to `*/`, TOML and YAML end one at a `#` with
+  whitespace before it, TOML takes a single-quoted string literally and runs
+  a long one between three quotes, and a `crushrc` is Bash. A key written in
+  any of those is text, not a declaration.
 
   One pass also means a file holding many copies of a key costs its length
   rather than its square. Measured on a 760 KB file with twenty thousand

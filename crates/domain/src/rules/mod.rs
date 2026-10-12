@@ -24,6 +24,7 @@ pub(crate) mod unverified_download;
 use icu_properties::CodePointSetData;
 use icu_properties::props::{DefaultIgnorableCodePoint, VariationSelector};
 
+use crate::extract::{Format, Syntax};
 use crate::finding::{Evidence, Finding, Line, Position, RuleId};
 use crate::repo_path::RepoPath;
 use crate::rule::{Examined, Subject};
@@ -146,11 +147,17 @@ pub fn is_hidden(c: char) -> bool {
 /// finding there would name a line nothing is wrong with. `None` when either
 /// is written in a form the text does not hold, which leaves the finding about
 /// the file rather than at a wrong place.
-pub(crate) fn after_key(source: &str, key: &str, value: &str, occurrence: usize) -> Option<usize> {
+pub(crate) fn after_key(
+    source: &str,
+    format: Format,
+    key: &str,
+    value: &str,
+    occurrence: usize,
+) -> Option<usize> {
     // A file writes the whole key, as VS Code does, or only its last segment,
     // as one nesting `defaultMode` under `permissions` does.
     let leaf = key.rsplit('.').next().unwrap_or(key);
-    let from = key_end(source, key).or_else(|| key_end(source, leaf))?;
+    let from = key_end(source, format, key).or_else(|| key_end(source, format, leaf))?;
     let rest = source.get(from..)?;
     let quoted = format!("\"{value}\"");
     let at = match rest.match_indices(&quoted).nth(occurrence) {
@@ -213,6 +220,110 @@ pub(crate) fn after_words(
     None
 }
 
+/// Where a scan of a file's text is, reading left to right.
+#[derive(Default, PartialEq)]
+enum At {
+    /// Writing a key or a value.
+    #[default]
+    Code,
+    /// Inside a string the next matching quote closes.
+    Str(u8),
+    /// Inside a string the next three quotes close.
+    Long(u8),
+    /// Inside a comment that ends with the line.
+    Line,
+    /// Inside a comment that ends with `*/`.
+    Block,
+}
+
+/// A scan of a file's text, reading what is a comment and what is a string.
+#[derive(Default)]
+struct Scan {
+    at: At,
+    escaped: bool,
+}
+
+impl Scan {
+    /// Where to carry on from, when byte `i` is inside a string or a comment.
+    ///
+    /// `None` where it is not, which is the caller's cue to read the byte.
+    fn inside(&mut self, text: &[u8], i: usize) -> Option<usize> {
+        let c = text[i];
+        let next = text.get(i + 1).copied();
+        match self.at {
+            At::Code => return None,
+            At::Str(quote) => {
+                if self.escaped {
+                    self.escaped = false;
+                // A literal string holds no escapes, so a backslash in one
+                // is a backslash.
+                } else if c == b'\\' && quote == b'"' {
+                    self.escaped = true;
+                } else if c == quote {
+                    self.at = At::Code;
+                }
+            }
+            At::Long(quote) => {
+                if c == quote && next == Some(quote) && text.get(i + 2) == Some(&quote) {
+                    self.at = At::Code;
+                    return Some(i + 3);
+                }
+            }
+            At::Line => {
+                if c == b'\n' {
+                    self.at = At::Code;
+                }
+            }
+            At::Block => {
+                if c == b'*' && next == Some(b'/') {
+                    self.at = At::Code;
+                    return Some(i + 2);
+                }
+            }
+        }
+        Some(i + 1)
+    }
+
+    /// Where to carry on from, when a string or a comment opens at byte `i`.
+    ///
+    /// `None` where none does.
+    fn opens(&mut self, text: &[u8], i: usize, syntax: Syntax) -> Option<usize> {
+        let c = text[i];
+        // A hash carries one rule of its own, written on `Syntax::line`: it
+        // needs whitespace or a line start before it, or an unquoted scalar
+        // holding one would read as a comment.
+        if let Some(marker) = syntax
+            .line
+            .iter()
+            .find(|marker| text[i..].starts_with(marker.as_bytes()))
+            .filter(|marker| **marker != "#" || i == 0 || text[i - 1].is_ascii_whitespace())
+        {
+            self.at = At::Line;
+            return Some(i + marker.len());
+        }
+        if syntax.block && c == b'/' && text.get(i + 1) == Some(&b'*') {
+            self.at = At::Block;
+            return Some(i + 2);
+        }
+        if syntax.quotes.contains(&c) {
+            if syntax.long && text.get(i + 1) == Some(&c) && text.get(i + 2) == Some(&c) {
+                self.at = At::Long(c);
+                return Some(i + 3);
+            }
+            self.at = At::Str(c);
+            return Some(i + 1);
+        }
+        None
+    }
+}
+
+/// Whether a separator follows byte `at`, which is what makes the text before
+/// it a key rather than something that reads like one.
+fn separated(source: &str, at: usize) -> bool {
+    let after = source.get(at..).unwrap_or_default().trim_start();
+    after.starts_with('=') || after.starts_with(':')
+}
+
 /// Just past `key` where `source` writes it as a key: quoted, as JSON does,
 /// or bare before its separator, as TOML and YAML do.
 ///
@@ -228,117 +339,35 @@ pub(crate) fn after_words(
 /// One pass rather than a scan for each candidate, so a file with many copies
 /// of the key costs its length rather than its square.
 ///
-/// A `#` outside a string ends the line, which is TOML's comment and YAML's,
-/// and a JSON file cannot hold one outside a string at all. Two slashes and a
-/// block are read only where they open the line: both are JSONC's and neither
-/// can be told from a value without knowing the file's format, which
-/// placement is not given, since a url carries `//` mid-line, YAML writes one
-/// unquoted, and `/*` is how a glob starts. So a key commented out with a
-/// trailing `//`, or inside a block opened mid-line, or inside a
-/// single-quoted string, is still read as a key. Closing those needs the
-/// format carried to the rule that places the finding.
-fn key_end(source: &str, key: &str) -> Option<usize> {
-    /// Where the scan is, reading left to right.
-    #[derive(PartialEq)]
-    enum At {
-        /// Writing a key or a value.
-        Code,
-        /// Inside a double-quoted string.
-        Str,
-        /// Inside a comment that ends with the line.
-        Line,
-        /// Inside a comment that ends with `*/`.
-        Block,
-    }
-
-    /// Whether a separator follows, which is what makes the text before it a
-    /// key rather than something that reads like one.
-    fn separated(source: &str, at: usize) -> bool {
-        let after = source.get(at..).unwrap_or_default().trim_start();
-        after.starts_with('=') || after.starts_with(':')
-    }
-
+/// What counts as a comment and as a string is [`Format::syntax`], because
+/// the same two characters mean different things in different files: `//`
+/// opens a comment in JSONC and sits inside a url in YAML.
+fn key_end(source: &str, format: Format, key: &str) -> Option<usize> {
+    let syntax = format.syntax();
     let text = source.as_bytes();
     let wanted = key.as_bytes();
-    let mut state = At::Code;
-    let mut escaped = false;
-    // Whether this line has held nothing but whitespace so far, which is what
-    // makes a `//` or a `/*` on it a comment rather than a value.
-    let mut bare = true;
+    let mut scan = Scan::default();
     let mut i = 0;
 
     while i < text.len() {
-        let c = text[i];
-        let next = text.get(i + 1).copied();
-        match state {
-            At::Str => {
-                if escaped {
-                    escaped = false;
-                } else if c == b'\\' {
-                    escaped = true;
-                } else if c == b'"' {
-                    state = At::Code;
-                }
-                i += 1;
-                continue;
-            }
-            At::Line => {
-                if c == b'\n' {
-                    state = At::Code;
-                    bare = true;
-                }
-                i += 1;
-                continue;
-            }
-            At::Block => {
-                if c == b'*' && next == Some(b'/') {
-                    state = At::Code;
-                    i += 2;
-                } else {
-                    i += 1;
-                }
-                continue;
-            }
-            At::Code => {}
-        }
-
-        if c == b'\n' {
-            bare = true;
-            i += 1;
+        if let Some(on) = scan.inside(text, i) {
+            i = on;
             continue;
         }
-        if c == b'#' {
-            state = At::Line;
-            i += 1;
+        // The string about to open, when it holds the key and a separator
+        // follows the closing quote. Anything else it opens is a value.
+        let closes = i + 1 + wanted.len();
+        if text[i] == b'"'
+            && text.get(i + 1..closes) == Some(wanted)
+            && text.get(closes) == Some(&b'"')
+            && separated(source, closes + 1)
+        {
+            return Some(closes + 1);
+        }
+        if let Some(on) = scan.opens(text, i, syntax) {
+            i = on;
             continue;
         }
-        if c == b'/' && bare && next == Some(b'/') {
-            state = At::Line;
-            i += 2;
-            continue;
-        }
-        if c == b'/' && bare && next == Some(b'*') {
-            state = At::Block;
-            i += 2;
-            continue;
-        }
-
-        // The string this quote opens, when it holds the key and a separator
-        // follows it. Anything else it opens is a value, and skipped as one.
-        if c == b'"' {
-            let closes = i + 1 + wanted.len();
-            if text.get(i + 1..closes) == Some(wanted)
-                && text.get(closes) == Some(&b'"')
-                && separated(source, closes + 1)
-            {
-                return Some(closes + 1);
-            }
-            state = At::Str;
-            bare = false;
-            i += 1;
-            continue;
-        }
-
         if text[i..].starts_with(wanted) {
             let runs_on = i > 0
                 && (text[i - 1].is_ascii_alphanumeric()
@@ -348,8 +377,6 @@ fn key_end(source: &str, key: &str) -> Option<usize> {
                 return Some(i + wanted.len());
             }
         }
-
-        bare = bare && c.is_ascii_whitespace();
         i += 1;
     }
 
@@ -450,8 +477,8 @@ pub(crate) fn found_at(
 /// Resolved while the file's text is in hand rather than kept with it: a rule
 /// reading a whole scan would otherwise need every file it read held open
 /// until the scan ends.
-pub(crate) fn placed_value(text: &str, key: &str, value: &str) -> Option<Position> {
-    let at = after_key(text, key, value, 0)?;
+pub(crate) fn placed_value(text: &str, format: Format, key: &str, value: &str) -> Option<Position> {
+    let at = after_key(text, format, key, value, 0)?;
     placed(text, at).map(|(position, _)| position)
 }
 
@@ -530,7 +557,8 @@ mod tests {
         let toml =
             "# sandbox_mode = \"danger-full-access\"\nsandbox_mode = \"danger-full-access\"\n";
 
-        let at = after_key(toml, "sandbox_mode", "danger-full-access", 0).expect("placed");
+        let at =
+            after_key(toml, Format::Toml, "sandbox_mode", "danger-full-access", 0).expect("placed");
 
         let (position, line) = placed(toml, at).expect("a position");
         assert_eq!(position.line, 2, "{line:?}");
@@ -542,7 +570,14 @@ mod tests {
     fn a_key_behind_two_slashes_is_a_comment_too() {
         let jsonc = "{\n  // \"chat.tools.global.autoApprove\": true,\n  \"chat.tools.global.autoApprove\": true\n}\n";
 
-        let at = after_key(jsonc, "chat.tools.global.autoApprove", "true", 0).expect("placed");
+        let at = after_key(
+            jsonc,
+            Format::Jsonc,
+            "chat.tools.global.autoApprove",
+            "true",
+            0,
+        )
+        .expect("placed");
 
         let (position, line) = placed(jsonc, at).expect("a position");
         assert_eq!(position.line, 3, "{line:?}");
@@ -554,7 +589,8 @@ mod tests {
     fn a_key_in_a_trailing_comment_is_not_a_declaration() {
         let toml = "approval_policy = \"never\"  # sandbox_mode = \"workspace-write\" was here\nsandbox_mode = \"workspace-write\"\n";
 
-        let at = after_key(toml, "sandbox_mode", "workspace-write", 0).expect("placed");
+        let at =
+            after_key(toml, Format::Toml, "sandbox_mode", "workspace-write", 0).expect("placed");
 
         assert_eq!(placed(toml, at).expect("a position").0.line, 2);
     }
@@ -564,9 +600,117 @@ mod tests {
     fn a_key_inside_an_opening_block_comment_is_not_a_declaration() {
         let jsonc = "{\n/* \"chat.tools.global.autoApprove\": true, */\n  \"chat.tools.global.autoApprove\": true\n}\n";
 
-        let at = after_key(jsonc, "chat.tools.global.autoApprove", "true", 0).expect("placed");
+        let at = after_key(
+            jsonc,
+            Format::Jsonc,
+            "chat.tools.global.autoApprove",
+            "true",
+            0,
+        )
+        .expect("placed");
 
         assert_eq!(placed(jsonc, at).expect("a position").0.line, 3);
+    }
+
+    /// JSONC ends a line at `//` wherever it appears, which the extractor
+    /// already strips, so a key behind one is a setting somebody turned off.
+    #[test]
+    fn a_key_behind_a_trailing_slash_comment_is_not_a_declaration() {
+        let jsonc = "{\n  \"x\": 0, // \"chat.tools.global.autoApprove\": true,\n  \"chat.tools.global.autoApprove\": true\n}\n";
+
+        let at = after_key(
+            jsonc,
+            Format::Jsonc,
+            "chat.tools.global.autoApprove",
+            "true",
+            0,
+        )
+        .expect("placed");
+
+        assert_eq!(placed(jsonc, at).expect("a position").0.line, 3);
+    }
+
+    /// A block JSONC opens mid-line ends the same way.
+    #[test]
+    fn a_key_inside_a_block_opened_mid_line_is_not_a_declaration() {
+        let jsonc = "{\"x\": 0, /* \"chat.tools.global.autoApprove\": true, */ \"chat.tools.global.autoApprove\": true}\n";
+
+        let at = after_key(
+            jsonc,
+            Format::Jsonc,
+            "chat.tools.global.autoApprove",
+            "true",
+            0,
+        )
+        .expect("placed");
+
+        // Past the block, which is where the declaration is.
+        let (position, _) = placed(jsonc, at).expect("a position");
+        assert!(position.column > 60, "{position:?}");
+    }
+
+    /// JSON has no comments, so neither marker means anything in one and a
+    /// key after either is still a key.
+    #[test]
+    fn json_has_no_comments_to_skip() {
+        let json =
+            "{\"note\": \"// and # and /* are text\", \"sandbox_mode\": \"danger-full-access\"}\n";
+
+        let at =
+            after_key(json, Format::Json, "sandbox_mode", "danger-full-access", 0).expect("placed");
+
+        assert_eq!(placed(json, at).expect("a position").0.line, 1);
+    }
+
+    /// TOML takes a single-quoted string literally, so a key inside one is
+    /// text. YAML quotes the same way.
+    #[test]
+    fn a_key_inside_a_literal_string_is_not_a_declaration() {
+        for (format, source) in [
+            (
+                Format::Toml,
+                "note = 'sandbox_mode = \"danger-full-access\" is the one to avoid'\nsandbox_mode = \"danger-full-access\"\n",
+            ),
+            (
+                Format::Yaml,
+                "note: 'sandbox_mode = \"danger-full-access\"'\nsandbox_mode: \"danger-full-access\"\n",
+            ),
+        ] {
+            let at =
+                after_key(source, format, "sandbox_mode", "danger-full-access", 0).expect("placed");
+
+            assert_eq!(
+                placed(source, at).expect("a position").0.line,
+                2,
+                "{format:?}"
+            );
+        }
+    }
+
+    /// TOML writes a long value between three quotes, and a key inside one is
+    /// text too. Counting those quotes one at a time leaves the scan on the
+    /// wrong side of the string: three of them open one, close it and open it
+    /// again, so a quote anywhere in the block puts the scan back in code and
+    /// the note starts declaring things.
+    #[test]
+    fn a_key_inside_a_multi_line_string_is_not_a_declaration() {
+        let toml = "note = \"\"\"\na \" then sandbox_mode = \"danger-full-access\"\n\"\"\"\nsandbox_mode = \"danger-full-access\"\n";
+
+        let at =
+            after_key(toml, Format::Toml, "sandbox_mode", "danger-full-access", 0).expect("placed");
+
+        assert_eq!(placed(toml, at).expect("a position").0.line, 4);
+    }
+
+    /// YAML needs whitespace before a `#` for it to be a comment, so a hash
+    /// inside an unquoted scalar is part of the value.
+    #[test]
+    fn a_hash_inside_an_unquoted_scalar_is_not_a_comment() {
+        let yaml = "{tag: a#b, runOn: fileCreate}\n";
+
+        let at = after_key(yaml, Format::Yaml, "runOn", "fileCreate", 0).expect("placed");
+
+        assert_eq!(placed(yaml, at).expect("a position").0.line, 1);
     }
 
     /// A key and a value look the same in JSON, both inside quotes, so what
@@ -578,7 +722,8 @@ mod tests {
     fn a_quoted_key_that_is_really_a_value_is_not_a_declaration() {
         let json = "{\"note\": \"sandbox_mode\", \"other\": \"danger-full-access\", \"sandbox_mode\": \"danger-full-access\"}\n";
 
-        let at = after_key(json, "sandbox_mode", "danger-full-access", 0).expect("placed");
+        let at =
+            after_key(json, Format::Json, "sandbox_mode", "danger-full-access", 0).expect("placed");
 
         // Past the real declaration, rather than at the `other` holding the
         // same value, which is where anchoring on the note landed.
@@ -592,7 +737,8 @@ mod tests {
     fn a_hash_inside_a_string_does_not_open_a_comment() {
         let json = "{\"note\": \"a #tag\", \"sandbox_mode\": \"danger-full-access\"}\n";
 
-        let at = after_key(json, "sandbox_mode", "danger-full-access", 0).expect("placed");
+        let at =
+            after_key(json, Format::Json, "sandbox_mode", "danger-full-access", 0).expect("placed");
 
         assert_eq!(placed(json, at).expect("a position").0.line, 1);
     }
@@ -604,7 +750,7 @@ mod tests {
     fn two_slashes_in_a_url_do_not_open_a_comment() {
         let yaml = "{server: https://example.invalid/x, runOn: fileCreate}\n";
 
-        let at = after_key(yaml, "runOn", "fileCreate", 0).expect("placed");
+        let at = after_key(yaml, Format::Yaml, "runOn", "fileCreate", 0).expect("placed");
 
         let (position, _) = placed(yaml, at).expect("a position");
         assert_eq!(position.line, 1);
@@ -619,7 +765,8 @@ mod tests {
         let json =
             "{\"note\": \"# or // are literal here\", \"sandbox_mode\": \"danger-full-access\"}\n";
 
-        let at = after_key(json, "sandbox_mode", "danger-full-access", 0).expect("placed");
+        let at =
+            after_key(json, Format::Json, "sandbox_mode", "danger-full-access", 0).expect("placed");
 
         let (position, _) = placed(json, at).expect("a position");
         assert_eq!(position.line, 1);
@@ -631,7 +778,8 @@ mod tests {
     fn a_key_written_once_is_placed_where_it_is() {
         let toml = "approval_policy = \"never\"\nsandbox_mode = \"workspace-write\"\n";
 
-        let at = after_key(toml, "sandbox_mode", "workspace-write", 0).expect("placed");
+        let at =
+            after_key(toml, Format::Toml, "sandbox_mode", "workspace-write", 0).expect("placed");
 
         assert_eq!(placed(toml, at).expect("a position").0.line, 2);
     }
@@ -676,6 +824,7 @@ mod tests {
                 path: &RepoPath::root().join(".gemini/settings.json"),
                 server,
                 source,
+                format: Format::Json,
             },
             &[RuleId::TrustedServer],
             DEFAULT_EVIDENCE_WIDTH,
@@ -721,6 +870,7 @@ mod tests {
                 task,
                 source,
                 occurrence,
+                format: Format::Json,
             },
             &[RuleId::AutoRunTask],
             DEFAULT_EVIDENCE_WIDTH,
@@ -782,6 +932,7 @@ mod tests {
                 path: &RepoPath::root().join(".mcp.json"),
                 server,
                 source,
+                format: Format::Json,
             },
             &[RuleId::PlaintextTransport],
             DEFAULT_EVIDENCE_WIDTH,
@@ -979,7 +1130,8 @@ mod tests {
                 &Examined::Server {
                     path: &RepoPath::root().join(".mcp.json"),
                     server: &declared("pg", true),
-                    source
+                    source,
+                    format: Format::Json,
                 },
                 &[RuleId::InvisibleUnicode],
                 DEFAULT_EVIDENCE_WIDTH
@@ -1086,6 +1238,7 @@ mod tests {
                 grant: &grant(entry),
                 source,
                 occurrence,
+                format: Format::Json,
             },
             &[RuleId::UnrestrictedShell],
             DEFAULT_EVIDENCE_WIDTH,
@@ -1198,7 +1351,8 @@ mod tests {
                     path: &RepoPath::root().join(".claude/settings.json"),
                     grant: &grant("Bash(*)"),
                     source,
-                    occurrence: 0
+                    occurrence: 0,
+                    format: Format::Json,
                 },
                 &[RuleId::InvisibleUnicode],
                 DEFAULT_EVIDENCE_WIDTH
@@ -1317,6 +1471,7 @@ mod tests {
                 path: &RepoPath::root().join(file),
                 mode,
                 source,
+                format: Format::Json,
             },
             &[RuleId::BypassPermissions],
             DEFAULT_EVIDENCE_WIDTH,
@@ -1385,6 +1540,7 @@ mod tests {
                     path: &RepoPath::root().join(".claude/settings.json"),
                     mode: &mode("permissions.defaultMode", "bypassPermissions"),
                     source,
+                    format: Format::Json,
                 },
                 &[RuleId::InvisibleUnicode],
                 DEFAULT_EVIDENCE_WIDTH,
