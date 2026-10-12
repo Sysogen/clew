@@ -162,18 +162,24 @@ fn laid_out(name: &str, source: &str) -> Scratch {
     // restarts at zero in every process, so the same names come round again.
     // `create_dir` fails when one is taken, which steps over a leftover
     // instead of laying this fixture out over it.
-    let at = (0..4096)
-        .map(|n| {
-            std::env::temp_dir().join(format!("clew-corpus-{name}-{}-{n}", std::process::id()))
-        })
-        .find(|at| match fs::create_dir(at) {
-            Ok(()) => true,
-            // Only a taken name advances: a temp directory that cannot be
-            // written to would otherwise be reported as 4096 collisions.
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => false,
-            Err(error) => panic!("create {}: {error}", at.display()),
-        })
-        .expect("a free temporary directory");
+    //
+    // Guarded as it is reserved, not once it is laid out: every write below
+    // panics on failure, and a guard built after them would not exist to run
+    // while the panic unwinds.
+    let at = Scratch(
+        (0..4096)
+            .map(|n| {
+                std::env::temp_dir().join(format!("clew-corpus-{name}-{}-{n}", std::process::id()))
+            })
+            .find(|at| match fs::create_dir(at) {
+                Ok(()) => true,
+                // Only a taken name advances: a temp directory that cannot be
+                // written to would otherwise be reported as 4096 collisions.
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => false,
+                Err(error) => panic!("create {}: {error}", at.display()),
+            })
+            .expect("a free temporary directory"),
+    );
 
     let mut writing: Option<(PathBuf, String, bool)> = None;
     let write = |held: Option<(PathBuf, String, bool)>| {
@@ -200,7 +206,7 @@ fn laid_out(name: &str, source: &str) -> Scratch {
         }
     }
     write(writing.take());
-    Scratch(at)
+    at
 }
 
 /// Hex, whitespace ignored, as the bytes it names.

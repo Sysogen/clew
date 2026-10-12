@@ -459,22 +459,30 @@ mod tests {
     }
 
     fn tree(name: &str, files: &[(&str, &[u8])]) -> Scratch {
-        let root = (0..4096)
-            .map(|n| env::temp_dir().join(format!("clew-run-{}-{n}-{name}", std::process::id())))
-            .find(|at| match fs::create_dir(at) {
-                Ok(()) => true,
-                // Only a taken name advances, so a temp directory that cannot
-                // be written to says so rather than looking like collisions.
-                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => false,
-                Err(error) => panic!("create {}: {error}", at.display()),
-            })
-            .expect("a free scratch directory");
+        // Guarded as it is reserved, not once it is laid out: writing a file
+        // below panics on failure, and a guard built after that point would
+        // not exist to run while the panic unwinds.
+        let root = Scratch(
+            (0..4096)
+                .map(|n| {
+                    env::temp_dir().join(format!("clew-run-{}-{n}-{name}", std::process::id()))
+                })
+                .find(|at| match fs::create_dir(at) {
+                    Ok(()) => true,
+                    // Only a taken name advances, so a temp directory that
+                    // cannot be written to says so rather than looking like
+                    // collisions.
+                    Err(error) if error.kind() == io::ErrorKind::AlreadyExists => false,
+                    Err(error) => panic!("create {}: {error}", at.display()),
+                })
+                .expect("a free scratch directory"),
+        );
         for (path, bytes) in files {
             let file = root.join(path);
             fs::create_dir_all(file.parent().expect("a parent")).expect("mkdir");
             fs::write(file, bytes).expect("write");
         }
-        Scratch(root)
+        root
     }
 
     /// The exit status, stdout and stderr of `clew path` on `root`.
