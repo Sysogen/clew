@@ -5,6 +5,18 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- A finding is no longer placed on a key written inside a comment. Placement
+  finds a key by searching the text and took the first match, so a
+  `# sandbox_mode = "danger-full-access"` left in a file as a note had
+  `bypass-permissions` pointing at it and quoting the commented line as its
+  evidence: a finding that reads as an accusation about a setting somebody had
+  already turned off. Every rule placing by key had this. Only a marker
+  opening the line counts, since a `#` or a `//` further along is routinely
+  inside a value, and a line of JSON holding one would otherwise lose every
+  key written after it.
+
 ### Added
 
 - `unprompted-write-access`, the first rule that reads a whole scan rather
@@ -42,6 +54,9 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   documentation does not give would report a configuration that never applied.
   Closing it needs the merge order, the way `core.hooksPath` needs
   `.git/config`.
+
+  A report is gathered in one pass over the modes, so a repository with many
+  nested configurations is read once rather than once for each of them.
 
   Each mode is placed where its file wrote it as the scan reads that file, so
   the report carries a position rather than the text it came from. Holding the
