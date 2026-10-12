@@ -213,8 +213,10 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
     fn read_surfaces(&self, report: &mut DiscoveryReport) {
         // Kept for the report rules, which read the set of modes rather than
         // one of them, and read them raw: the copy in the report is masked,
-        // and masking first destroys the values a rule compares.
-        let mut declared: Vec<(RepoPath, String, Vec<Autonomy>)> = Vec::new();
+        // and masking first destroys the values a rule compares. Each is
+        // placed here, while its file's text is in hand, so the scan does not
+        // hold every such file open until it ends.
+        let mut declared: Vec<FoundMode> = Vec::new();
 
         let paths: Vec<RepoPath> = report.surfaces.iter().map(|s| s.path.clone()).collect();
         for path in paths {
@@ -317,9 +319,12 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
                 });
             }
             self.read_modes(&path, &text, &found.autonomy, matched.check, report);
-            if !found.autonomy.is_empty() {
-                declared.push((path, text, found.autonomy));
-            }
+            declared.extend(
+                found
+                    .autonomy
+                    .iter()
+                    .map(|mode| FoundMode::new(&path, mode, &text)),
+            );
         }
 
         self.read_report(&declared, report);
@@ -356,22 +361,9 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
     /// Enabled by `report_checks` rather than by a row, because a rule reading
     /// the whole scan belongs to no row. The catalogue stays the one place
     /// deciding whether a rule runs.
-    fn read_report(
-        &self,
-        declared: &[(RepoPath, String, Vec<Autonomy>)],
-        report: &mut DiscoveryReport,
-    ) {
-        let modes: Vec<FoundMode<'_>> = declared
-            .iter()
-            .flat_map(|(path, source, modes)| {
-                modes
-                    .iter()
-                    .map(move |mode| FoundMode { path, source, mode })
-            })
-            .collect();
-
+    fn read_report(&self, declared: &[FoundMode], report: &mut DiscoveryReport) {
         report.findings.extend(rule::judge(
-            &Examined::Report { modes: &modes },
+            &Examined::Report { modes: declared },
             catalogue().report_checks(),
             self.policy.evidence_width(),
         ));

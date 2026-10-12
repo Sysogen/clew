@@ -10,7 +10,7 @@
 use std::sync::OnceLock;
 
 use crate::autonomy::Autonomy;
-use crate::finding::{Finding, RuleId, Severity};
+use crate::finding::{Finding, Position, RuleId, Severity};
 use crate::mcp_server::McpServer;
 use crate::permission::Permission;
 use crate::repo_path::RepoPath;
@@ -46,17 +46,34 @@ pub enum Subject {
 
 /// One mode a scan found, and what is needed to place a finding in its file.
 ///
-/// A report rule is handed these rather than a [`Examined::Mode`] at a time,
+/// A report rule is handed these rather than an [`Examined::Mode`] at a time,
 /// because what it reads is the set: two keys that each leave one control
 /// standing, and together leave none.
-#[derive(Debug, Clone, Copy)]
-pub struct FoundMode<'a> {
+///
+/// Owned, and holding a position rather than the text it came from. A scan
+/// that kept every file declaring a mode open until it ended would hold as
+/// many megabytes as it found such files, and the only thing a report rule
+/// wanted from the text was where to point.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FoundMode {
     /// The file that set it.
-    pub path: &'a RepoPath,
-    /// The file's text, for placing the finding.
-    pub source: &'a str,
+    pub path: RepoPath,
     /// The mode, as the file wrote it and before anything was masked.
-    pub mode: &'a Autonomy,
+    pub mode: Autonomy,
+    /// Where that file wrote the mode's value, when it could be found.
+    pub at: Option<Position>,
+}
+
+impl FoundMode {
+    /// A mode found in `source`, placed while that text is still in hand.
+    #[must_use]
+    pub fn new(path: &RepoPath, mode: &Autonomy, source: &str) -> Self {
+        Self {
+            path: path.clone(),
+            mode: mode.clone(),
+            at: crate::rules::placed_value(source, &mode.key, &mode.value),
+        }
+    }
 }
 
 /// One thing to judge, and what is needed to place a finding in its file.
@@ -141,7 +158,7 @@ pub enum Examined<'a> {
     /// carried now against the chance that one will.
     Report {
         /// Every mode the scan found, with the file that set each.
-        modes: &'a [FoundMode<'a>],
+        modes: &'a [FoundMode],
     },
 }
 

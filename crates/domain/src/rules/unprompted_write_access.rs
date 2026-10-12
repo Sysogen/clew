@@ -3,7 +3,7 @@
 
 //! The `unprompted-write-access` rule.
 
-use super::{after_key, said_at};
+use super::said_at;
 use crate::autonomy::Autonomy;
 use crate::finding::{Finding, RuleId, Severity};
 use crate::repo_path::RepoPath;
@@ -61,7 +61,12 @@ impl Rule for UnpromptedWriteAccess {
                 this configuration. The reference recommends \"never\" for non-interactive \
                 runs, which is also where nobody is watching. Running unattended is a \
                 legitimate thing to do, and what this reports is that both controls were \
-                turned off together, not that the run is wrong."
+                turned off together, not that the run is wrong. One hole, stated: both \
+                halves have to be in the same file. The reference puts project-scoped \
+                overrides in .codex/config.toml files, plural, and does not say in what \
+                order they merge, so a pair split across two of them is not reported. \
+                Joining them in the wrong order would report a configuration that never \
+                applied, which is the worse of the two errors here."
     }
 
     fn remediation(&self) -> &'static str {
@@ -90,11 +95,11 @@ impl Rule for UnpromptedWriteAccess {
         // found them, which is the order a report lists them in.
         let mut answered: Vec<&RepoPath> = Vec::new();
         for held in *modes {
-            if answered.contains(&held.path) {
+            if answered.contains(&&held.path) {
                 continue;
             }
-            answered.push(held.path);
-            let here = |m: &&FoundMode<'_>| m.path == held.path;
+            answered.push(&held.path);
+            let here = |m: &&FoundMode| m.path == held.path;
             if !modes
                 .iter()
                 .filter(here)
@@ -102,7 +107,7 @@ impl Rule for UnpromptedWriteAccess {
             {
                 continue;
             }
-            let Some(writable) = modes.iter().filter(here).find(|m| writes(m.mode)) else {
+            let Some(writable) = modes.iter().filter(here).find(|m| writes(&m.mode)) else {
                 continue;
             };
             // Placed at the sandbox, which is the half granting the writes,
@@ -112,13 +117,13 @@ impl Rule for UnpromptedWriteAccess {
                 "{} = {:?} with {} = {:?}",
                 NEVER.0, NEVER.1, writable.mode.key, writable.mode.value
             );
-            found.extend(
-                after_key(writable.source, &writable.mode.key, &writable.mode.value, 0)
-                    .and_then(|at| {
-                        said_at(writable.path, self.id(), writable.source, at, &said, width)
-                    })
-                    .or_else(|| Some(super::about_file(writable.path, self.id(), &said, width))),
-            );
+            found.push(said_at(
+                &writable.path,
+                self.id(),
+                writable.at,
+                &said,
+                width,
+            ));
         }
         found
     }
@@ -145,26 +150,23 @@ mod tests {
         modes: &'a [(&'a str, &'a str)],
     }
 
-    /// Judged the way the scan judges it, one report over every file.
-    fn found_in(files: &[File<'_>]) -> Vec<Finding> {
-        let held: Vec<(RepoPath, String, Vec<Autonomy>)> = files
+    /// Judged the way the scan judges it, one report over every file, with
+    /// each mode placed in the file that wrote it as the scan places it.
+    fn found_in(files: &[File<'_>]) -> Vec<FoundMode> {
+        files
             .iter()
-            .map(|file| {
-                (
-                    RepoPath::root().join(file.path),
-                    file.source.to_owned(),
-                    file.modes.iter().map(|(k, v)| mode(k, v)).collect(),
-                )
-            })
-            .collect();
-        let modes: Vec<FoundMode<'_>> = held
-            .iter()
-            .flat_map(|(path, source, modes)| {
-                modes
+            .flat_map(|file| {
+                let path = RepoPath::root().join(file.path);
+                file.modes
                     .iter()
-                    .map(move |mode| FoundMode { path, source, mode })
+                    .map(move |(k, v)| FoundMode::new(&path, &mode(k, v), file.source))
             })
-            .collect();
+            .collect()
+    }
+
+    /// What the rule says about one scan.
+    fn said_about(files: &[File<'_>]) -> Vec<Finding> {
+        let modes = found_in(files);
         judge(
             &Examined::Report { modes: &modes },
             &[RuleId::UnpromptedWriteAccess],
@@ -173,7 +175,7 @@ mod tests {
     }
 
     fn codex(source: &str, modes: &[(&str, &str)]) -> Vec<Finding> {
-        found_in(&[File {
+        said_about(&[File {
             path: ".codex/config.toml",
             source,
             modes,
@@ -303,7 +305,7 @@ mod tests {
     /// together.
     #[test]
     fn two_halves_in_two_files_are_not_a_pair() {
-        let found = found_in(&[
+        let found = said_about(&[
             File {
                 path: ".codex/config.toml",
                 source: "approval_policy = \"never\"\n",
@@ -344,7 +346,7 @@ mod tests {
             ("approval_policy", "never"),
             ("sandbox_mode", "workspace-write"),
         ];
-        let found = found_in(&[
+        let found = said_about(&[
             File {
                 path: ".codex/config.toml",
                 source,
@@ -384,7 +386,7 @@ mod tests {
     /// A scan that found no mode at all, which is most of them.
     #[test]
     fn a_report_with_nothing_in_it_is_silent() {
-        assert!(found_in(&[]).is_empty());
+        assert!(said_about(&[]).is_empty());
     }
 
     /// A rule the catalogue does not name never runs, which is the invariant
@@ -393,18 +395,13 @@ mod tests {
     fn a_rule_the_catalogue_does_not_name_does_not_run() {
         let path = RepoPath::root().join(".codex/config.toml");
         let source = "approval_policy = \"never\"\nsandbox_mode = \"workspace-write\"\n";
-        let modes = [
+        let held: Vec<FoundMode> = [
             mode("approval_policy", "never"),
             mode("sandbox_mode", "workspace-write"),
-        ];
-        let held: Vec<FoundMode<'_>> = modes
-            .iter()
-            .map(|mode| FoundMode {
-                path: &path,
-                source,
-                mode,
-            })
-            .collect();
+        ]
+        .iter()
+        .map(|mode| FoundMode::new(&path, mode, source))
+        .collect();
 
         assert!(
             judge(

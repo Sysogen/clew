@@ -17,7 +17,12 @@ includes the files deciding what the next run may do: a git hook, an
 instruction file, this configuration. The reference recommends "never" for
 non-interactive runs, which is also where nobody is watching. Running
 unattended is a legitimate thing to do, and what this reports is that both
-controls were turned off together, not that the run is wrong.
+controls were turned off together, not that the run is wrong. One hole, stated:
+both halves have to be in the same file. The reference puts project-scoped
+overrides in .codex/config.toml files, plural, and does not say in what order
+they merge, so a pair split across two of them is not reported. Joining them in
+the wrong order would report a configuration that never applied, which is the
+worse of the two errors here.
 
 ## What to do
 

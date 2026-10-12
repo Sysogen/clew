@@ -291,7 +291,7 @@ pub(crate) fn is_shell(path: &RepoPath, text: &str) -> bool {
 }
 
 /// Where byte `at` of `text` is, counted for a report, with the line there.
-fn placed(text: &str, at: usize) -> Option<(Position, &str)> {
+pub(crate) fn placed(text: &str, at: usize) -> Option<(Position, &str)> {
     let before = text.get(..at)?;
     let start = before.rfind('\n').map_or(0, |newline| newline + 1);
     let column = text.get(start..at)?.chars().count();
@@ -322,28 +322,39 @@ pub(crate) fn found_at(
     })
 }
 
-/// A finding at byte `at` of `text` quoting `said` rather than the line there.
+/// Where a file wrote `key`'s `value`, for a finding placed later.
+///
+/// Resolved while the file's text is in hand rather than kept with it: a rule
+/// reading a whole scan would otherwise need every file it read held open
+/// until the scan ends.
+pub(crate) fn placed_value(text: &str, key: &str, value: &str) -> Option<Position> {
+    let at = after_key(text, key, value, 0)?;
+    placed(text, at).map(|(position, _)| position)
+}
+
+/// A finding at `at`, quoting `said` rather than whatever line is there.
 ///
 /// For a rule about two places at once. The position takes a reader to one of
 /// them, and the evidence has to name both: a rule whose halves are each
 /// silent on their own would otherwise quote a line its own prose calls
 /// harmless, and a reader would be right to think the finding wrong.
+///
+/// `at` is absent when nothing could be placed, which is the case
+/// [`about_file`] covers for a rule reading one file.
 pub(crate) fn said_at(
     path: &RepoPath,
     rule: RuleId,
-    text: &str,
-    at: usize,
+    at: Option<Position>,
     said: &str,
     width: usize,
-) -> Option<Finding> {
-    let (position, _) = placed(text, at)?;
-    Some(Finding {
+) -> Finding {
+    Finding {
         path: path.clone(),
-        at: Some(position),
+        at,
         rule,
         severity: rule.severity(),
         evidence: Evidence::quote(&Line::new(said), 0, width),
-    })
+    }
 }
 
 /// Non-printing Unicode in a file an agent reads as instructions: the Rules

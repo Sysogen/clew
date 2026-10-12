@@ -161,6 +161,13 @@ which keeps one answer to what decides whether a rule runs. Putting a rule in
 the wrong one of the two lists is refused when the catalogue loads, because a
 rule in the wrong list is a rule that never runs.
 
+One limit belongs on it: both halves have to be in the same file. Codex puts
+project-scoped overrides in `.codex/config.toml` files, plural, and its
+reference does not say in what order they merge, so a pair split across two of
+them is not reported. Joining them in an order the documentation does not give
+would report a configuration that never applied, which is the worse of the two
+errors.
+
 `unrestricted-shell` flags the grant the other permission entries exist to avoid
 needing: every command the agent picks runs without being shown to anyone. Only
 the shell is flagged. A bare `WebSearch` or `mcp__server__tool` is unscoped too,

@@ -35,6 +35,20 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   a reader shown `sandbox_mode = "workspace-write"` on its own, which this
   rule's own page calls harmless, would be right to think the finding wrong.
 
+  One limit belongs on the rule: both halves have to be in the same file.
+  Codex puts project-scoped overrides in `.codex/config.toml` files, plural,
+  and its reference does not say in what order they merge, so a pair split
+  across two of them is not reported. Joining them in an order the
+  documentation does not give would report a configuration that never applied.
+  Closing it needs the merge order, the way `core.hooksPath` needs
+  `.git/config`.
+
+  Each mode is placed where its file wrote it as the scan reads that file, so
+  the report carries a position rather than the text it came from. Holding the
+  text instead would have kept every file declaring a mode open until the scan
+  ended, which is as many megabytes as there are such files, and the only
+  thing a report rule wanted from it was where to point.
+
   Naming a rule in the wrong one of the two lists is refused at load, both
   ways round. A row offers a rule the file it matched, so a row naming a
   rule that reads the whole scan runs nothing; `report_checks` offers nothing
@@ -42,7 +56,8 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   would otherwise be a rule listed, never run, and a clean scan.
 
 - Codex's `default_permissions` is read, and `:danger-full-access` fires
-  `bypass-permissions` as `sandbox_mode = "danger-full-access"` already did.
+  `bypass-permissions` as `sandbox_mode = "danger-full-access"` already did,
+  which that rule's own page now says.
   The two are the same decision in two spellings, and reading one of them is
   how a configuration escapes a rule by being written the newer way.
   `approval_policy` is read as inventory, since a scan saying what a file
