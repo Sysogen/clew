@@ -207,19 +207,23 @@ mod contents_tests {
     /// Scratch directory, unique per process and `tag`. Tags must not repeat.
     /// A directory of this test's own.
     ///
-    /// Counted as well as named, because a process id is reused: a run whose
-    /// id matches an earlier one inherits that run's leftovers, and the
-    /// removal below cannot be relied on to clear them since its error is the
-    /// one thing a scratch directory must not report. A counter makes the name
-    /// new every time instead.
+    /// Created rather than cleared. `create_dir` fails when the name is taken,
+    /// so a leftover from a run whose process id the system has since reused
+    /// is stepped over instead of being written into. Clearing the name first
+    /// and trusting the clear is what let a tree from a week earlier stand in
+    /// for this one, and a counter alone does not help: it restarts at zero in
+    /// every process, so the same names come round again.
     fn scratch(tag: &str) -> PathBuf {
-        static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-        let held = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let dir =
-            std::env::temp_dir().join(format!("clew-contents-{}-{held}-{tag}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).expect("create scratch dir");
-        dir
+        for n in 0..4096 {
+            let dir = std::env::temp_dir()
+                .join(format!("clew-contents-{}-{n}-{tag}", std::process::id()));
+            match fs::create_dir(&dir) {
+                Ok(()) => return dir,
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+                Err(error) => panic!("create scratch dir: {error}"),
+            }
+        }
+        panic!("no free scratch directory for {tag}")
     }
 
     fn path(name: &str) -> RepoPath {
@@ -393,6 +397,28 @@ mod contents_tests {
             .expect("the named root is read");
 
         assert_eq!(entries.len(), 1);
+    }
+
+    /// A name already taken is stepped over rather than cleared and reused.
+    /// The case this guards cannot be reached from inside one process, since
+    /// it needs a directory left by an earlier run whose process id the system
+    /// has since handed out again, so the occupied name is made by hand here.
+    #[test]
+    fn a_scratch_name_already_taken_is_stepped_over() {
+        let taken =
+            std::env::temp_dir().join(format!("clew-contents-{}-0-stepover", std::process::id()));
+        let _ = fs::remove_dir_all(&taken);
+        fs::create_dir_all(&taken).expect("mkdir");
+        fs::write(taken.join("from-an-earlier-run"), "x").expect("write");
+
+        let dir = scratch("stepover");
+
+        assert_ne!(dir, taken, "the taken name was reused");
+        assert!(
+            taken.join("from-an-earlier-run").exists(),
+            "what was there is still there, not cleared"
+        );
+        assert!(dir.exists() && fs::read_dir(&dir).expect("read").next().is_none());
     }
 
     /// `never_walks_into_a_linked_directory` covers the refusal. This covers

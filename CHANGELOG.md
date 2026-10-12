@@ -35,6 +35,12 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `.git/config`, which is INI and inside the pruned directory. And a helper
   script a hook sources is not followed.
 
+  A seed that is there and cannot be read is a gap, like every other
+  directory this scan cannot open. Saying the scan was complete would mean
+  reporting nothing found in hooks nobody looked at. Absent, and not a
+  directory, stay answers: most repositories have no `.git/hooks`, and in a
+  linked worktree or a submodule `.git` is a file.
+
   The catalogue schema is 3, not because a reader without `seed` would refuse
   the file but because it would parse the file and enter none of the
   directories the field names. That is the half reading the number exists to
@@ -245,7 +251,12 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   leftovers laid one test's tree over another's, and the removal meant to
   prevent that discards its error. Found by writing a test that collided with
   one from a week earlier: this machine held leftovers from 360 distinct
-  process ids. Counted as well as named now.
+  process ids.
+
+  Each is now created rather than cleared. `create_dir` fails when the name is
+  taken, so a leftover is stepped over instead of written into. A counter was
+  the first attempt and was not enough: it restarts at zero in every process,
+  so the same names come round again with the same process id.
 
 
 - A command written bare rather than as a JSON string yielded its finding

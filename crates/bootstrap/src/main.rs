@@ -436,10 +436,14 @@ mod tests {
 
     /// Files under a scratch directory, unique to this process and `name`.
     fn tree(name: &str, files: &[(&str, &[u8])]) -> PathBuf {
-        static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-        let held = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let root = env::temp_dir().join(format!("clew-run-{}-{held}-{name}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
+        // Created rather than cleared: a process id is reused, and a counter
+        // restarts at zero in every process, so the same names come round
+        // again. `create_dir` fails when one is taken, which steps over a
+        // leftover instead of writing into it.
+        let root = (0..4096)
+            .map(|n| env::temp_dir().join(format!("clew-run-{}-{n}-{name}", std::process::id())))
+            .find(|at| fs::create_dir(at).is_ok())
+            .expect("a free scratch directory");
         for (path, bytes) in files {
             let file = root.join(path);
             fs::create_dir_all(file.parent().expect("a parent")).expect("mkdir");
