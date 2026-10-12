@@ -14,14 +14,26 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   evidence: a finding that reads as an accusation about a setting somebody had
   already turned off. Every rule placing by key had this.
 
-  Comments are read rather than guessed at: a `#` outside a string ends the
-  line, which is TOML's comment and YAML's, and a JSON file cannot hold one
-  outside a string at all. Two slashes and a block are read only where they
-  open the line, because neither can be told from a value without the file's
-  format, which placement is not given: a url carries `//` mid-line, YAML
-  writes one unquoted, and `/*` is how a glob starts. So a key commented out
-  with a trailing `//`, or inside a block opened mid-line, is still found;
-  closing that needs the format carried to the rule that places the finding.
+  A key is now read left to right in one pass, because a key is only a key
+  where the file is writing one. Inside a comment it is a note, and inside a
+  value it is prose: a quoted one looks exactly like a key, and what tells
+  them apart is the separator after the closing quote. Measured, a settings
+  file naming the setting in a note had the finding land on the next thing
+  that looked like the value, which was a different setting.
+
+  A `#` outside a string ends the line, which is TOML's comment and YAML's,
+  and a JSON file cannot hold one outside a string at all. Two slashes and a
+  block are read only where they open the line, because neither can be told
+  from a value without the file's format, which placement is not given: a url
+  carries `//` mid-line, YAML writes one unquoted, and `/*` is how a glob
+  starts. So a key commented out with a trailing `//`, inside a block opened
+  mid-line, or inside a single-quoted string, is still read as a key; closing
+  those needs the format carried to the rule that places the finding.
+
+  One pass also means a file holding many copies of a key costs its length
+  rather than its square. Measured on a 760 KB file with twenty thousand
+  commented copies: thirteen seconds of placement became half a second, which
+  matters because the files a scanner reads are not ones it chose.
 
 ### Added
 

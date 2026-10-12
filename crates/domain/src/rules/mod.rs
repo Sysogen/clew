@@ -213,57 +213,35 @@ pub(crate) fn after_words(
     None
 }
 
-/// Just past `key` where `source` writes it as a key: quoted, as JSON does, or
-/// bare before its separator, as TOML and YAML do.
+/// Just past `key` where `source` writes it as a key: quoted, as JSON does,
+/// or bare before its separator, as TOML and YAML do.
 ///
-/// A key inside a comment is not where the setting was written, and placing a
-/// finding there quotes the commented line as its evidence, which reads as a
-/// finding against something somebody had already turned off.
-fn key_end(source: &str, key: &str) -> Option<usize> {
-    let quoted = format!("\"{key}\"");
-    if let Some((at, _)) = source
-        .match_indices(&quoted)
-        .find(|(at, _)| !commented(source, *at))
-    {
-        return Some(at + quoted.len());
-    }
-    source
-        .match_indices(key)
-        .find(|(at, _)| {
-            let before_is_word = source[..*at]
-                .chars()
-                .next_back()
-                .is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '-');
-            let after = source[at + key.len()..].trim_start();
-            !before_is_word
-                && (after.starts_with('=') || after.starts_with(':'))
-                && !commented(source, *at)
-        })
-        .map(|(at, _)| at + key.len())
-}
-
-/// Whether byte `at` of `source` is inside a comment.
+/// Read left to right in one pass, because a key is only a key where the file
+/// is writing one. Inside a comment it is a note, and placing a finding there
+/// quotes the commented line as its evidence, which reads as an accusation
+/// about something somebody had already turned off. Inside a value it is
+/// prose, and a quoted one looks exactly like a key: what tells them apart is
+/// the separator after the closing quote. Measured, a file naming the setting
+/// in a note had the finding land on the next thing that looked like the
+/// value, which was a different setting.
 ///
-/// Read rather than guessed at, because placement finds a key by searching
-/// the text and a key left in a comment is not where a setting was written.
+/// One pass rather than a scan for each candidate, so a file with many copies
+/// of the key costs its length rather than its square.
+///
 /// A `#` outside a string ends the line, which is TOML's comment and YAML's,
-/// and a JSON file cannot hold one outside a string at all.
-///
-/// Two slashes and a block are read only where they open the line. Both are
-/// JSONC's and neither can be told from a value without knowing the file's
-/// format, which placement is not given: a url carries `//` mid-line, YAML
-/// writes one unquoted, and `/*` is how a glob starts. Reading those as
-/// comments would lose every key after a url in every workflow file, which
-/// trades one misplacement for a worse one.
-///
-/// So a key commented out with a trailing `//`, or inside a block opened
-/// mid-line, is still found. Closing that needs the format carried to the
-/// rule that places the finding.
-fn commented(source: &str, at: usize) -> bool {
+/// and a JSON file cannot hold one outside a string at all. Two slashes and a
+/// block are read only where they open the line: both are JSONC's and neither
+/// can be told from a value without knowing the file's format, which
+/// placement is not given, since a url carries `//` mid-line, YAML writes one
+/// unquoted, and `/*` is how a glob starts. So a key commented out with a
+/// trailing `//`, or inside a block opened mid-line, or inside a
+/// single-quoted string, is still read as a key. Closing those needs the
+/// format carried to the rule that places the finding.
+fn key_end(source: &str, key: &str) -> Option<usize> {
     /// Where the scan is, reading left to right.
     #[derive(PartialEq)]
     enum At {
-        /// Outside a string and outside a comment.
+        /// Writing a key or a value.
         Code,
         /// Inside a double-quoted string.
         Str,
@@ -273,16 +251,25 @@ fn commented(source: &str, at: usize) -> bool {
         Block,
     }
 
+    /// Whether a separator follows, which is what makes the text before it a
+    /// key rather than something that reads like one.
+    fn separated(source: &str, at: usize) -> bool {
+        let after = source.get(at..).unwrap_or_default().trim_start();
+        after.starts_with('=') || after.starts_with(':')
+    }
+
+    let text = source.as_bytes();
+    let wanted = key.as_bytes();
     let mut state = At::Code;
     let mut escaped = false;
-    // Whether this line has held nothing but whitespace so far, which is
-    // what makes a `//` or a `/*` on it a comment rather than a value.
+    // Whether this line has held nothing but whitespace so far, which is what
+    // makes a `//` or a `/*` on it a comment rather than a value.
     let mut bare = true;
-    let rest = source.as_bytes();
+    let mut i = 0;
 
-    for i in 0..at.min(rest.len()) {
-        let c = rest[i];
-        let next = rest.get(i + 1).copied();
+    while i < text.len() {
+        let c = text[i];
+        let next = text.get(i + 1).copied();
         match state {
             At::Str => {
                 if escaped {
@@ -292,33 +279,81 @@ fn commented(source: &str, at: usize) -> bool {
                 } else if c == b'"' {
                     state = At::Code;
                 }
+                i += 1;
+                continue;
             }
             At::Line => {
                 if c == b'\n' {
                     state = At::Code;
                     bare = true;
                 }
+                i += 1;
+                continue;
             }
             At::Block => {
-                if c == b'/' && i > 0 && rest[i - 1] == b'*' {
+                if c == b'*' && next == Some(b'/') {
                     state = At::Code;
+                    i += 2;
+                } else {
+                    i += 1;
                 }
+                continue;
             }
-            At::Code => match c {
-                b'"' => {
-                    state = At::Str;
-                    bare = false;
-                }
-                b'#' => state = At::Line,
-                b'/' if bare && next == Some(b'/') => state = At::Line,
-                b'/' if bare && next == Some(b'*') => state = At::Block,
-                b'\n' => bare = true,
-                _ => bare = bare && c.is_ascii_whitespace(),
-            },
+            At::Code => {}
         }
+
+        if c == b'\n' {
+            bare = true;
+            i += 1;
+            continue;
+        }
+        if c == b'#' {
+            state = At::Line;
+            i += 1;
+            continue;
+        }
+        if c == b'/' && bare && next == Some(b'/') {
+            state = At::Line;
+            i += 2;
+            continue;
+        }
+        if c == b'/' && bare && next == Some(b'*') {
+            state = At::Block;
+            i += 2;
+            continue;
+        }
+
+        // The string this quote opens, when it holds the key and a separator
+        // follows it. Anything else it opens is a value, and skipped as one.
+        if c == b'"' {
+            let closes = i + 1 + wanted.len();
+            if text.get(i + 1..closes) == Some(wanted)
+                && text.get(closes) == Some(&b'"')
+                && separated(source, closes + 1)
+            {
+                return Some(closes + 1);
+            }
+            state = At::Str;
+            bare = false;
+            i += 1;
+            continue;
+        }
+
+        if text[i..].starts_with(wanted) {
+            let runs_on = i > 0
+                && (text[i - 1].is_ascii_alphanumeric()
+                    || text[i - 1] == b'_'
+                    || text[i - 1] == b'-');
+            if !runs_on && separated(source, i + wanted.len()) {
+                return Some(i + wanted.len());
+            }
+        }
+
+        bare = bare && c.is_ascii_whitespace();
+        i += 1;
     }
 
-    state == At::Line || state == At::Block
+    None
 }
 
 /// Where `text` holds `word` whole: no identifier character runs into it, and
@@ -532,6 +567,23 @@ mod tests {
         let at = after_key(jsonc, "chat.tools.global.autoApprove", "true", 0).expect("placed");
 
         assert_eq!(placed(jsonc, at).expect("a position").0.line, 3);
+    }
+
+    /// A key and a value look the same in JSON, both inside quotes, so what
+    /// tells them apart is the separator after the closing quote. Measured
+    /// before this was checked: anchoring on the value named like the key put
+    /// the finding on the next thing that looked like the value, which here
+    /// is a different setting entirely.
+    #[test]
+    fn a_quoted_key_that_is_really_a_value_is_not_a_declaration() {
+        let json = "{\"note\": \"sandbox_mode\", \"other\": \"danger-full-access\", \"sandbox_mode\": \"danger-full-access\"}\n";
+
+        let at = after_key(json, "sandbox_mode", "danger-full-access", 0).expect("placed");
+
+        // Past the real declaration, rather than at the `other` holding the
+        // same value, which is where anchoring on the note landed.
+        let declared = json.rfind("\"sandbox_mode\"").expect("a declaration");
+        assert!(at > declared, "{at} is not past {declared}");
     }
 
     /// A `#` inside a string is part of the value, so the key after it on the
