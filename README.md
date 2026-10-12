@@ -43,8 +43,9 @@ CLAUDE.md                instruction file
 
 `path` reports every file an agent reads as configuration, across Claude Code,
 Codex, Crush, Cursor, VS Code, Gemini CLI, Kiro, Zed, Windsurf, Cline,
-Continue, Aider, Copilot and devcontainers, plus `.env` files and GitHub
-Actions workflow files, whose `run:` steps are read as the shell they are. From those it reads:
+Continue, Aider, Copilot and devcontainers, plus `.env` files, GitHub Actions
+workflow files, whose `run:` steps are read as the shell they are, and git
+hooks. From those it reads:
 
 - the hooks each registers, the event each runs on, and whether it runs a
   command or injects a prompt, a hook switched off included;
@@ -160,6 +161,27 @@ for it, so the same key copied into a file read by a tool that ignores it is
 reported as part of the declaration and is not a finding. A per-tool list such
 as Cline's `autoApprove` names what it approves rather than approving all of
 it, so it is not this rule.
+
+### Git hooks, and what is not followed
+
+A git hook runs on commit, on push and on merge without being asked, with
+whoever's credentials are at the keyboard, and an agent that commits triggers
+one. clew reads them from `.git/hooks`, `.githooks`, `.husky` and `hooks` at
+the repository root, by the names git itself looks for.
+
+Two limits, stated because a scanner that implies more than it reads is worse
+than one that reads less:
+
+- **`core.hooksPath` is not read.** A repository that points it at a directory
+  other than those four has hooks clew does not see. Reading it means reading
+  `.git/config`, which is INI and inside the directory a scan prunes.
+- **A helper a hook sources is not followed.** What the hook file itself says
+  is what gets read.
+
+Matching by name is also what keeps the samples `git init` writes out of the
+report: git runs a hook by the name it looks for, so `pre-commit.sample` is
+not one, and a wildcard would call a dozen files a surface in every repository
+ever initialised.
 
 ### Output formats
 

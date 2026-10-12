@@ -7,6 +7,35 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Git hooks are read, which no row covered: `.git` is pruned by default, so
+  `.git/hooks` was never entered, and clew did not see its own hooks in
+  `.githooks` either. A hook runs on commit, on push and on merge without
+  being asked and with whoever's credentials are at the keyboard, which is
+  what an agent that commits triggers.
+
+  Read from `.git/hooks`, `.githooks`, `.husky` and `hooks` at the repository
+  root, by the twenty-nine names git's own documentation lists. By name rather
+  than by wildcard for two reasons: git runs a hook by the name it looks for,
+  so a file under any other name is not one, and `git init` fills `.git/hooks`
+  with a sample per hook. Measured rather than assumed, those samples carry
+  nothing any rule flags, so a wildcard would have cost a dozen surfaces in
+  every repository ever initialised rather than a dozen findings. A count is
+  what a prevalence figure is, so that is still a cost. Matching by name also
+  keeps `hooks` usable as a row at all: it is where a React project keeps its
+  own hooks.
+
+  `.git/hooks` is reached by naming it on the row, which the scan seeds, and
+  not by relaxing the prune. The one type whose whole job is what not to enter
+  stays one rule rather than a rule with exceptions inside it, and a directory
+  that is not there is an answer rather than a gap.
+
+  Two holes, stated in the row, the README and here rather than left for
+  someone to find. `core.hooksPath` is not read, so a repository pointing it
+  somewhere else has hooks clew does not see; reading it means reading
+  `.git/config`, which is INI and inside the pruned directory. And a helper
+  script a hook sources is not followed.
+
+
 - A corpus that pins what the rules decide, which neither version number
   could. `crates/bootstrap/tests/corpus/` holds a small repository per rule
   and `corpus.snapshot` holds the findings clew reports in each, so a rule
@@ -17,7 +46,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   corpus, and so does a rule that starts firing where its prose promises
   silence.
 
-  Nine of the twenty-two fixtures are silent on purpose, each a case some
+  Ten of the twenty-four fixtures are silent on purpose, each a case some
   rule's own text names: the `grep` pattern that quotes `curl | sh` without
   running one, the download that reaches `tar` rather than an interpreter,
   `npx` running what the project already installed, an MCP server on

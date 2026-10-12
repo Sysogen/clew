@@ -146,6 +146,11 @@ pub struct SurfaceRule {
     /// Which tree it is matched against. Omitted means the repository.
     #[serde(default = "default_scope")]
     pub scope: String,
+    /// A directory the scan must be told to enter for this row to be
+    /// reachable, because the walk prunes its way there. Omitted means the
+    /// walk reaches it on its own, which is true of every other row.
+    #[serde(default)]
+    pub seed: Option<String>,
 }
 
 fn default_scope() -> String {
@@ -384,6 +389,26 @@ impl Catalogue {
         roots
     }
 
+    /// The directories a repository scan must be told to enter.
+    ///
+    /// A row inside a pruned directory is unreachable by walking, and relaxing
+    /// the prune would turn the one type whose job is "what not to enter" into
+    /// a set of exceptions. Naming the directory on the row instead keeps the
+    /// exception where a reviewer reads it.
+    #[must_use]
+    pub fn seeds_in(&self, scope: Scope) -> Vec<&str> {
+        let mut held: Vec<&str> = Vec::new();
+        for (rule, wanted) in self.rules.iter().zip(&self.scopes) {
+            if *wanted != scope {
+                continue;
+            }
+            if let Some(seed) = rule.seed.as_deref().filter(|s| !held.contains(s)) {
+                held.push(seed);
+            }
+        }
+        held
+    }
+
     /// Every row, in declaration order.
     #[must_use]
     pub fn rules(&self) -> &[SurfaceRule] {
@@ -526,6 +551,7 @@ mod tests {
             (".windsurfrules", SurfaceKind::Windsurf),
             (".crushrc", SurfaceKind::Crush),
             (".github/workflows/ci.yml", SurfaceKind::Workflow),
+            (".git/hooks/pre-commit", SurfaceKind::HookScript),
             ("crush.json", SurfaceKind::Crush),
             ("CRUSH.md", SurfaceKind::InstructionFile),
             (".continue/config.json", SurfaceKind::Continue),
@@ -706,7 +732,68 @@ mod tests {
             shipped().lookup(&p("hooks/.claude/readme")).is_none(),
             "hooks is an ancestor here"
         );
-        assert!(shipped().lookup(&p(".git/hooks/pre-commit")).is_none());
+        // `.git/hooks/pre-commit` is a surface, by its own row rather than
+        // this one: the Claude glob wants a `hooks` directory below `.claude`.
+        assert_eq!(
+            shipped()
+                .lookup(&p(".git/hooks/pre-commit"))
+                .map(|m| m.kind),
+            Some(SurfaceKind::HookScript)
+        );
+    }
+
+    /// git runs a hook by the name it looks for, so a file under any other
+    /// name is not one. That is also what keeps the samples `git init` writes
+    /// out of the report: every repository ever initialised holds a dozen,
+    /// and a wildcard would call each one a surface.
+    #[test]
+    fn a_git_hook_is_matched_by_name_and_a_sample_is_not() {
+        for at in [
+            ".git/hooks/pre-commit",
+            ".git/hooks/commit-msg",
+            ".git/hooks/post-index-change",
+            ".githooks/pre-push",
+            ".husky/pre-commit",
+            "hooks/prepare-commit-msg",
+        ] {
+            assert_eq!(
+                shipped()
+                    .lookup_in(&p(at), Scope::Repository)
+                    .map(|m| m.kind),
+                Some(SurfaceKind::HookScript),
+                "{at}"
+            );
+        }
+        for at in [
+            // What `git init` writes, and nothing git runs.
+            ".git/hooks/pre-commit.sample",
+            ".git/hooks/README",
+            ".git/hooks/pre-commit.bak",
+            // A name git does not look for is not a hook git runs.
+            ".githooks/install.sh",
+            ".husky/_/husky.sh",
+            // The directory a React project keeps its own hooks in, which is
+            // why `hooks` is matched by name rather than by wildcard.
+            "hooks/useAuth.ts",
+            "hooks/index.js",
+            // And only at the root, not wherever the name appears.
+            "vendor/x/.git/hooks/pre-commit",
+            "packages/a/hooks/pre-commit",
+        ] {
+            assert!(
+                shipped().lookup_in(&p(at), Scope::Repository).is_none(),
+                "{at} is not a hook git runs"
+            );
+        }
+    }
+
+    /// The directory a scan is told to enter, because the walk prunes its way
+    /// there. Naming it on the row keeps the exception where it is read.
+    #[test]
+    fn the_git_hooks_directory_is_seeded_and_nothing_else_is() {
+        assert_eq!(shipped().seeds_in(Scope::Repository), vec![".git/hooks"]);
+        assert!(shipped().seeds_in(Scope::Home).is_empty());
+        assert!(shipped().seeds_in(Scope::System).is_empty());
     }
 
     #[test]
@@ -852,6 +939,9 @@ mod tests {
                     (Scope::Repository, ".claude/hooks/sync.sh"),
                     (Scope::Repository, ".codex/hooks/session_start.py"),
                     (Scope::Home, ".codex/hooks/session_start.py"),
+                    // A git hook is shell that runs without being asked, and
+                    // an agent that commits is what asks for it.
+                    (Scope::Repository, ".git/hooks/pre-commit"),
                 ],
                 vec![
                     RuleId::InvisibleUnicode,
