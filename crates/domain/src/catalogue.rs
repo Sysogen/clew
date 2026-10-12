@@ -162,9 +162,15 @@ fn default_format() -> String {
 }
 
 /// The schema this crate reads. Raised when the shape of the file changes, as
-/// it did when `revision` was added, so a file written for an older shape is
-/// refused rather than half read.
-const SCHEMA: u32 = 2;
+/// it did when `revision` was added and again when `seed` was, so a file
+/// written for an older shape is refused rather than half read.
+///
+/// `seed` raised it although a reader that did not know the field would still
+/// parse the file: it would parse it and enter none of the directories the
+/// field names, which is the half reading this number exists to refuse. A
+/// field that changes what a scan reaches is a shape change whether or not
+/// serde minds.
+const SCHEMA: u32 = 3;
 
 /// Just the schema, read before the rest: a file written for an older shape is
 /// missing fields the current one requires, and "missing field `revision`" says
@@ -799,7 +805,7 @@ mod tests {
     #[test]
     fn an_invalid_glob_is_rejected_at_load() {
         let error = Catalogue::load(
-            r#"version = 2
+            r#"version = 3
                revision = 1
                [[surface]]
                glob = "["
@@ -816,7 +822,7 @@ mod tests {
     #[test]
     fn an_unknown_kind_is_rejected_at_load() {
         let error = Catalogue::load(
-            r#"version = 2
+            r#"version = 3
                revision = 1
                [[surface]]
                glob = "x"
@@ -836,7 +842,7 @@ mod tests {
     #[test]
     fn an_unknown_format_is_rejected_at_load() {
         let error = Catalogue::load(
-            r#"version = 2
+            r#"version = 3
                revision = 1
                [[surface]]
                glob = "x"
@@ -857,7 +863,7 @@ mod tests {
     #[test]
     fn an_unknown_check_is_rejected_at_load() {
         let error = Catalogue::load(
-            r#"version = 2
+            r#"version = 3
                revision = 1
                [[surface]]
                glob = "x"
@@ -1170,7 +1176,7 @@ mod tests {
                 error,
                 CatalogueError::UnknownSchema {
                     found: 1,
-                    expected: 2
+                    expected: 3
                 }
             ),
             "{error:?}"
@@ -1180,7 +1186,7 @@ mod tests {
     #[test]
     fn an_unknown_extraction_is_rejected_at_load() {
         let error = Catalogue::load(
-            r#"version = 2
+            r#"version = 3
                revision = 1
                [[surface]]
                glob = "x"
@@ -1350,7 +1356,7 @@ mod tests {
     fn a_row_outside_a_repository_cannot_walk_out_of_its_root() {
         for glob in ["../outside/**", "./**", ".", ".."] {
             let error = Catalogue::load(&format!(
-                r#"version = 2
+                r#"version = 3
                revision = 1
                    [[surface]]
                    scope = "home"
@@ -1482,7 +1488,7 @@ mod tests {
     fn a_row_outside_a_repository_cannot_reach_past_its_root() {
         for glob in ["foo/../../outside/**/*.md", "a/./b/**/*.md", "a/../b"] {
             let error = Catalogue::load(&format!(
-                r#"version = 2
+                r#"version = 3
                revision = 1
                    [[surface]]
                    scope = "home"
@@ -1696,7 +1702,7 @@ mod tests {
             "2026-13-01",
         ] {
             let toml = format!(
-                r#"version = 2
+                r#"version = 3
                revision = 1
                    [[surface]]
                    glob = "x"
@@ -1713,7 +1719,7 @@ mod tests {
             );
         }
 
-        let leap = r#"version = 2
+        let leap = r#"version = 3
                revision = 1
                       [[surface]]
                       glob = "x"
@@ -1728,7 +1734,7 @@ mod tests {
     #[test]
     fn a_row_missing_its_citation_is_rejected_at_load() {
         let error = Catalogue::load(
-            r#"version = 2
+            r#"version = 3
                revision = 1
                [[surface]]
                glob = "x"

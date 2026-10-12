@@ -138,7 +138,11 @@ fn fixtures() -> Vec<PathBuf> {
 /// differently on one operating system would record a different snapshot
 /// there, which is a corpus that agrees with itself and nothing else.
 fn laid_out(name: &str, source: &str) -> PathBuf {
-    let at = std::env::temp_dir().join(format!("clew-corpus-{name}-{}", std::process::id()));
+    // Counted as well as named: a process id is reused, and a run inheriting
+    // an earlier run's leftovers would lay a fixture out over another's.
+    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let held = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let at = std::env::temp_dir().join(format!("clew-corpus-{name}-{}-{held}", std::process::id()));
     let _ = fs::remove_dir_all(&at);
     fs::create_dir_all(&at).expect("a temporary directory");
 

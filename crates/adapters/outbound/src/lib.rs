@@ -205,8 +205,18 @@ mod contents_tests {
     use super::*;
 
     /// Scratch directory, unique per process and `tag`. Tags must not repeat.
+    /// A directory of this test's own.
+    ///
+    /// Counted as well as named, because a process id is reused: a run whose
+    /// id matches an earlier one inherits that run's leftovers, and the
+    /// removal below cannot be relied on to clear them since its error is the
+    /// one thing a scratch directory must not report. A counter makes the name
+    /// new every time instead.
     fn scratch(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("clew-contents-{}-{tag}", std::process::id()));
+        static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        let held = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir =
+            std::env::temp_dir().join(format!("clew-contents-{}-{held}-{tag}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).expect("create scratch dir");
         dir
@@ -383,6 +393,36 @@ mod contents_tests {
             .expect("the named root is read");
 
         assert_eq!(entries.len(), 1);
+    }
+
+    /// `never_walks_into_a_linked_directory` covers the refusal. This covers
+    /// what makes the refusal insufficient on its own: `symlink_metadata` does
+    /// not follow a path's last component but does follow every ancestor, so a
+    /// path *through* a link resolves and is read. A caller handed a path two
+    /// segments deep has to ask about each segment, which is what a scan
+    /// seeding `.git/hooks` does; without it a `.git` pointing elsewhere puts
+    /// files from outside the root into the report as though they were in it.
+    #[cfg(unix)]
+    #[test]
+    fn a_path_through_a_link_resolves_so_each_segment_must_be_asked_about() {
+        let dir = scratch("throughlink");
+        let outside = dir.join("outside");
+        fs::create_dir_all(outside.join("hooks")).expect("mkdir");
+        fs::write(outside.join("hooks/pre-commit"), "#!/bin/sh\n").expect("write");
+        let inside = dir.join("root");
+        fs::create_dir(&inside).expect("mkdir");
+        std::os::unix::fs::symlink(&outside, inside.join(".git")).expect("symlink");
+        let tree = StdFileTree::new(&inside);
+
+        assert_eq!(
+            tree.read_dir(&path(".git")),
+            Err(FileTreeError::NotADirectory),
+            "asked about the link, it is refused"
+        );
+        assert!(
+            tree.read_dir(&path(".git/hooks")).is_ok(),
+            "asked about what is under it, the link has already been followed"
+        );
     }
 
     #[cfg(unix)]

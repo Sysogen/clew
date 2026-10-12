@@ -436,7 +436,9 @@ mod tests {
 
     /// Files under a scratch directory, unique to this process and `name`.
     fn tree(name: &str, files: &[(&str, &[u8])]) -> PathBuf {
-        let root = env::temp_dir().join(format!("clew-run-{}-{name}", std::process::id()));
+        static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        let held = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let root = env::temp_dir().join(format!("clew-run-{}-{held}-{name}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         for (path, bytes) in files {
             let file = root.join(path);

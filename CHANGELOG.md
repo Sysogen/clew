@@ -35,6 +35,11 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `.git/config`, which is INI and inside the pruned directory. And a helper
   script a hook sources is not followed.
 
+  The catalogue schema is 3, not because a reader without `seed` would refuse
+  the file but because it would parse the file and enter none of the
+  directories the field names. That is the half reading the number exists to
+  refuse.
+
 
 - A corpus that pins what the rules decide, which neither version number
   could. `crates/bootstrap/tests/corpus/` holds a small repository per rule
@@ -234,6 +239,14 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   than claiming more than it should.
 
 ### Fixed
+
+- A scratch directory in three test helpers was named by the process id
+  alone. Process ids are reused, so a run inheriting an earlier run's
+  leftovers laid one test's tree over another's, and the removal meant to
+  prevent that discards its error. Found by writing a test that collided with
+  one from a week earlier: this machine held leftovers from 360 distinct
+  process ids. Counted as well as named now.
+
 
 - A command written bare rather than as a JSON string yielded its finding
   about the file rather than at the line, since placement looked only for the
