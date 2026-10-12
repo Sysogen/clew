@@ -185,6 +185,11 @@ than one that reads less:
   executable; the tree a scan reads exposes no file mode, so one that git
   would ignore is still reported.
 
+One of those four directories being a link is reported rather than passed
+over: git follows the link and runs what it finds, clew does not follow it,
+and so the scan says it could not look there and exits non-zero. A clean
+report over a directory clew declined to enter would be the worse answer.
+
 Matching by name is also what keeps the samples `git init` writes out of the
 report: git runs a hook by the name it looks for, so `pre-commit.sample` is
 not one, and a wildcard would call a dozen files a surface in every repository

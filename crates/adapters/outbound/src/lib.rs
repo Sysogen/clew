@@ -86,8 +86,14 @@ impl FileTree for StdFileTree {
             }
         } else {
             // symlink_metadata does not follow, so a link found while walking
-            // is refused rather than walked out of the scan root.
+            // is refused rather than walked out of the scan root. It is told
+            // apart from a plain file because a link may lead to a directory,
+            // and a caller reporting what it could not read needs to know
+            // which of the two it is looking at.
             let found = fs::symlink_metadata(&absolute).map_err(|e| map_error(&e))?;
+            if found.file_type().is_symlink() {
+                return Err(FileTreeError::IsALink);
+            }
             if !found.is_dir() {
                 return Err(FileTreeError::NotADirectory);
             }
@@ -352,7 +358,7 @@ mod contents_tests {
 
         assert_eq!(
             read,
-            Err(FileTreeError::NotADirectory),
+            Err(FileTreeError::IsALink),
             "a linked directory must be refused, not walked"
         );
     }
@@ -474,7 +480,7 @@ mod contents_tests {
 
         assert_eq!(
             tree.read_dir(&path(".git")),
-            Err(FileTreeError::NotADirectory),
+            Err(FileTreeError::IsALink),
             "asked about the link, it is refused"
         );
         assert!(

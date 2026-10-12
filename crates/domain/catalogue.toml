@@ -17,7 +17,7 @@
 #               against. Omitted means repository
 
 version = 3
-revision = 8
+revision = 9
 
 # --- Claude Code ------------------------------------------------------------
 
@@ -407,6 +407,14 @@ source = "https://containers.dev/implementors/json_reference/"
 # rule flags, so the cost would be noise in a count rather than false
 # findings, which is still a cost a prevalence figure cannot afford.
 #
+# All four directories are seeded. `.git/hooks` has to be: the walk prunes
+# `.git`, so nothing inside it is reachable otherwise. The other three are
+# reachable by walking, and are seeded for the other thing a seed gives, which
+# is hearing about a directory that could not be entered. A walk declines one
+# that is a link without saying so, and for a directory of hooks git does
+# follow that is a clean report over hooks that run. Read twice, by the walk
+# and by the seed, and reported once.
+#
 # Four holes, stated rather than hidden, because a row that implies more than
 # it reads is worse than one that reads less.
 #
@@ -436,7 +444,7 @@ source = "https://containers.dev/implementors/json_reference/"
 glob = "{.git/hooks,.githooks,.husky,hooks}/{applypatch-msg,pre-applypatch,post-applypatch,pre-commit,pre-merge-commit,prepare-commit-msg,commit-msg,post-commit,pre-rebase,post-checkout,post-merge,pre-push,pre-receive,update,proc-receive,post-receive,post-update,reference-transaction,receive-report,push-to-checkout,pre-auto-gc,post-rewrite,sendemail-validate,fsmonitor-watchman,p4-changelist,p4-prepare-changelist,p4-post-changelist,p4-pre-submit,post-index-change}"
 tool = "any"
 kind = "hook-script"
-seed = ".git/hooks"
+seed = [".git/hooks", ".githooks", ".husky", "hooks"]
 check = [
   "invisible-unicode",
   "opaque-hook",

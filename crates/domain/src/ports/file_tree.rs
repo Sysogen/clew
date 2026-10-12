@@ -42,6 +42,15 @@ pub enum FileTreeError {
     /// The path exists but is not a directory.
     #[error("not a directory")]
     NotADirectory,
+    /// The path is a symbolic link, which the adapter does not follow.
+    ///
+    /// Separate from `NotADirectory` because what it means to a caller is the
+    /// opposite: a link may well lead to a directory, and the reason nothing
+    /// was read is that following it would leave the tree the scan was given.
+    /// A caller that reports what it could not look at needs to tell the two
+    /// apart, since one is an answer and the other is a refusal.
+    #[error("a link, which a scan does not follow")]
+    IsALink,
     /// Any other failure, described by the adapter.
     #[error("unreadable: {0}")]
     Unreadable(String),
