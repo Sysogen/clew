@@ -1,0 +1,9 @@
+Ordinary instructions. Every character here reaches the reader.
+
+>>> CLAUDE.md
+# Project
+
+Run `cargo test` before committing. Prefer small commits.
+
+>>> AGENTS.md
+Use the existing error type rather than adding one.

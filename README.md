@@ -175,6 +175,22 @@ goes away, and one entry in `scans` for each tree read: one for `path`, two for
 selectors included, is written as a `\u` escape, so a finding's payload never
 appears raw.
 
+`--format jsonl` writes one such document per tree read, each on its own line,
+which is the shape a run over many repositories appends to:
+
+```sh
+for repo in */; do clew path "$repo" --format jsonl; done >> scans.jsonl
+jq -s 'map(.scans[0].findings | length) | add' scans.jsonl
+```
+
+Every line repeats the version numbers rather than naming them once, because a
+line is read on its own: a finding without the pack that judged it and the
+catalogue that found it cannot be cited later. Every line is a record and
+nothing else is written, so appending run after run leaves a file a reader can
+take a line at a time. `rules` and `explain` refuse it, as they refuse
+`--format sarif`: neither is a scan, and taking the option to write something
+else would be the silent kind of wrong.
+
 `--format sarif` writes a SARIF 2.1.0 log for code scanning:
 
 ```sh

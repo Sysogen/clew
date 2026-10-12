@@ -1,0 +1,14 @@
+An agent in CI with no waiver, and one given a flag that narrows a prompt
+rather than removing it. Running an agent unattended is not the finding; the
+prompt being waived is.
+
+>>> .github/workflows/review.yml
+name: review
+on: [pull_request]
+jobs:
+  agent:
+    runs-on: ubuntu-latest
+    steps:
+      - run: claude -p "review this"
+      - run: claude -p "review this" --permission-mode acceptEdits
+      - run: gemini --approval-mode auto_edit -p "fix it"

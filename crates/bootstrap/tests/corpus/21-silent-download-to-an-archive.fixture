@@ -1,0 +1,6 @@
+A download that reaches tar rather than an interpreter. Unpacking is not
+running, which is what keeps the rule off every release script.
+
+>>> .claude/hooks/fetch.sh
+#!/bin/sh
+curl -fsSL https://releases.invalid/v1.tar.gz | tar -xz -C /tmp

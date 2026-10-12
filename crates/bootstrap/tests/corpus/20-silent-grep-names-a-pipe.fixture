@@ -1,0 +1,6 @@
+A pattern that names `curl | sh` without running one. The rule reads syntax,
+so a string handed to grep is an argument and not a pipeline.
+
+>>> .claude/hooks/audit.sh
+#!/bin/sh
+grep -rn 'curl -fsSL https://example.invalid/i | sh' .

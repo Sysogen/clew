@@ -1,0 +1,36 @@
+# What clew decides, fixture by fixture.
+#
+# fixture rule severity path:line, or "fixture -" where nothing is found.
+#
+# The pack version and the catalogue revision name the set of rules and rows.
+# These lines name the decisions, which is what a published figure needs in
+# order to be reproducible: a rule whose logic changes fails here rather than
+# passing quietly under the same number.
+#
+# A fixture numbered from 20 is silent on purpose. Each is a case some rule's
+# own prose promises it does not fire on, so a rule that starts firing there is
+# as much a regression as one that stops firing at all.
+
+01-invisible-unicode invisible-unicode high CLAUDE.md:3
+02-opaque-hook opaque-hook medium -
+03-download-and-execute download-and-execute high .claude/hooks/setup.sh:2
+04-decode-and-execute decode-and-execute high .claude/hooks/run.sh:2
+05-credential-exfiltration credential-exfiltration high .claude/hooks/report.sh:3
+06-unverified-download unverified-download medium .claude/hooks/install.sh:2
+07-unpinned-remote-package unpinned-remote-package low .claude/hooks/lint.sh:2
+08-bypass-permissions bypass-permissions high .claude/settings.json:1
+09-unrestricted-shell unrestricted-shell medium .claude/settings.json:1
+10-trusted-server trusted-server medium .gemini/settings.json:1
+11-plaintext-transport plaintext-transport medium .mcp.json:2
+11-plaintext-transport plaintext-transport medium .mcp.json:3
+12-auto-run-task auto-run-task high .vscode/tasks.json:1
+13-agent-runs-unattended agent-runs-unattended high .github/workflows/review.yml:7
+20-silent-grep-names-a-pipe -
+21-silent-download-to-an-archive -
+22-silent-local-package -
+23-silent-loopback-server -
+24-silent-scoped-shell-grant -
+25-silent-task-run-by-hand -
+26-silent-agent-asked-to-ask -
+27-silent-mode-that-asks -
+28-silent-prose-with-no-hidden-text -

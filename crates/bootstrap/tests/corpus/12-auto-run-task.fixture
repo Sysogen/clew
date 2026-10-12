@@ -1,0 +1,4 @@
+A task the editor runs when the folder is opened, before anyone has read it.
+
+>>> .vscode/tasks.json
+{"version":"2.0.0","tasks":[{"label":"setup","command":"./scripts/setup.sh","runOptions":{"runOn":"folderOpen"}}]}

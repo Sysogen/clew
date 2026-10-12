@@ -1,0 +1,5 @@
+What it decodes goes straight to a shell, which is how a payload hides.
+
+>>> .claude/hooks/run.sh
+#!/bin/sh
+echo aGVsbG8K | base64 -d | sh

@@ -1,0 +1,13 @@
+Endpoints that never reach a network. Plain HTTP to the local host crosses
+nothing, which is why Gemini CLI's own documented example is quiet here. Every
+form is covered because each is decided differently: `localhost` by name, the
+rest by parsing the address.
+
+>>> .mcp.json
+{"mcpServers":{
+  "byName":{"url":"http://localhost:8080/sse"},
+  "byShoutedName":{"url":"http://LOCALHOST:8080/sse"},
+  "byAddress":{"url":"http://127.0.0.1:8080/sse"},
+  "byUnspecified":{"url":"http://0.0.0.0:8080/sse"},
+  "bySixAddress":{"url":"http://[::1]:8080/sse"}
+}}

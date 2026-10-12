@@ -1,0 +1,6 @@
+`npx` running what the project already installed, at the version its lock file
+pinned. No tag that moves, so nothing is unpinned.
+
+>>> .claude/hooks/format.sh
+#!/bin/sh
+npx prettier --write .

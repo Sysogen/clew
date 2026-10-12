@@ -18,6 +18,9 @@ pub enum Format {
     Json,
     /// A SARIF 2.1.0 log, for code scanning. Repository scans only.
     Sarif,
+    /// One JSON document per scan, each on its own line, for a run over many
+    /// repositories whose lines are read back one at a time.
+    Jsonl,
 }
 
 /// What the operator asked for.
@@ -68,10 +71,10 @@ pub enum ParseError {
     #[error("unknown option '{0}'")]
     UnknownOption(String),
     /// `--format` with nothing after it.
-    #[error("'--format' needs a value: text, json or sarif")]
+    #[error("'--format' needs a value: text, json, jsonl or sarif")]
     MissingFormat,
     /// `--format` naming no known format.
-    #[error("unknown format '{0}': expected text, json or sarif")]
+    #[error("unknown format '{0}': expected text, json, jsonl or sarif")]
     UnknownFormat(String),
     /// SARIF asked of a scan with no repository to place results in.
     #[error("SARIF places results in a repository: use it with 'clew path'")]
@@ -79,6 +82,9 @@ pub enum ParseError {
     /// SARIF asked of something that is not a scan.
     #[error("SARIF is a log of a scan: use it with 'clew path'")]
     SarifNeedsScan,
+    /// A listing asked for a line per scan, and a listing is not a scan.
+    #[error("JSONL writes a line per scan: use it with 'clew path' or 'clew system'")]
+    JsonlNeedsScan,
     /// `explain` with no rule named.
     #[error("'explain' needs a rule id: try 'clew rules'")]
     MissingRule,
@@ -164,6 +170,9 @@ fn listing(args: &[String]) -> Result<Options, ParseError> {
     if options.format == Format::Sarif {
         return Err(ParseError::SarifNeedsScan);
     }
+    if options.format == Format::Jsonl {
+        return Err(ParseError::JsonlNeedsScan);
+    }
     if options.fail_on.is_some() {
         return Err(ParseError::FailOnNeedsScan);
     }
@@ -190,6 +199,7 @@ fn options(args: &[String]) -> Result<Options, ParseError> {
                 "text" => Format::Text,
                 "json" => Format::Json,
                 "sarif" => Format::Sarif,
+                "jsonl" => Format::Jsonl,
                 other => return Err(ParseError::UnknownFormat(other.to_owned())),
             };
         } else if let Some(value) =
@@ -256,6 +266,19 @@ mod tests {
             assert_eq!(
                 parse(args.clone()),
                 Err(ParseError::SarifNeedsScan),
+                "{args:?}"
+            );
+        }
+        // And a line per scan, for the same reason: a listing is not a scan,
+        // and taking the option to then write something else is the silent
+        // kind of wrong.
+        for args in [
+            vec!["rules", "--format", "jsonl"],
+            vec!["explain", "trusted-server", "--format=jsonl"],
+        ] {
+            assert_eq!(
+                parse(args.clone()),
+                Err(ParseError::JsonlNeedsScan),
                 "{args:?}"
             );
         }

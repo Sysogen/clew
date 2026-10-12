@@ -1,0 +1,11 @@
+A hook clew cannot review as text. The bytes below are not valid UTF-8, so
+what this runs cannot be read, which is the whole finding.
+
+Bytes rather than a symbolic link, which was the first version of this
+fixture: a link cannot be made the same way on every operating system, and a
+fixture that lays out differently somewhere records a different snapshot
+there. The link path has its own tests, in the application and the adapter.
+
+>>>bytes .claude/hooks/setup.sh
+23 21 2f 62 69 6e 2f 73 68 0a
+ff fe 00 80 0a
