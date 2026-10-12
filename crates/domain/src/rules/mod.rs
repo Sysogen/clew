@@ -242,15 +242,83 @@ fn key_end(source: &str, key: &str) -> Option<usize> {
         .map(|(at, _)| at + key.len())
 }
 
-/// Whether byte `at` of `source` sits on a line a comment opened.
+/// Whether byte `at` of `source` is inside a comment.
 ///
-/// Only a marker that opens the line counts. A `#` or a `//` later on is
-/// routinely inside a value: a line of JSON holding one would otherwise lose
-/// every key written after it, which trades one misplacement for another.
+/// Read rather than guessed at, because placement finds a key by searching
+/// the text and a key left in a comment is not where a setting was written.
+/// A `#` outside a string ends the line, which is TOML's comment and YAML's,
+/// and a JSON file cannot hold one outside a string at all.
+///
+/// Two slashes and a block are read only where they open the line. Both are
+/// JSONC's and neither can be told from a value without knowing the file's
+/// format, which placement is not given: a url carries `//` mid-line, YAML
+/// writes one unquoted, and `/*` is how a glob starts. Reading those as
+/// comments would lose every key after a url in every workflow file, which
+/// trades one misplacement for a worse one.
+///
+/// So a key commented out with a trailing `//`, or inside a block opened
+/// mid-line, is still found. Closing that needs the format carried to the
+/// rule that places the finding.
 fn commented(source: &str, at: usize) -> bool {
-    let start = source[..at].rfind('\n').map_or(0, |newline| newline + 1);
-    let opens = source[start..at].trim_start();
-    opens.starts_with('#') || opens.starts_with("//")
+    /// Where the scan is, reading left to right.
+    #[derive(PartialEq)]
+    enum At {
+        /// Outside a string and outside a comment.
+        Code,
+        /// Inside a double-quoted string.
+        Str,
+        /// Inside a comment that ends with the line.
+        Line,
+        /// Inside a comment that ends with `*/`.
+        Block,
+    }
+
+    let mut state = At::Code;
+    let mut escaped = false;
+    // Whether this line has held nothing but whitespace so far, which is
+    // what makes a `//` or a `/*` on it a comment rather than a value.
+    let mut bare = true;
+    let rest = source.as_bytes();
+
+    for i in 0..at.min(rest.len()) {
+        let c = rest[i];
+        let next = rest.get(i + 1).copied();
+        match state {
+            At::Str => {
+                if escaped {
+                    escaped = false;
+                } else if c == b'\\' {
+                    escaped = true;
+                } else if c == b'"' {
+                    state = At::Code;
+                }
+            }
+            At::Line => {
+                if c == b'\n' {
+                    state = At::Code;
+                    bare = true;
+                }
+            }
+            At::Block => {
+                if c == b'/' && i > 0 && rest[i - 1] == b'*' {
+                    state = At::Code;
+                }
+            }
+            At::Code => match c {
+                b'"' => {
+                    state = At::Str;
+                    bare = false;
+                }
+                b'#' => state = At::Line,
+                b'/' if bare && next == Some(b'/') => state = At::Line,
+                b'/' if bare && next == Some(b'*') => state = At::Block,
+                b'\n' => bare = true,
+                _ => bare = bare && c.is_ascii_whitespace(),
+            },
+        }
+    }
+
+    state == At::Line || state == At::Block
 }
 
 /// Where `text` holds `word` whole: no identifier character runs into it, and
@@ -443,6 +511,53 @@ mod tests {
 
         let (position, line) = placed(jsonc, at).expect("a position");
         assert_eq!(position.line, 3, "{line:?}");
+    }
+
+    /// A comment need not open the line. TOML and YAML both end a line at an
+    /// unquoted `#`, so a note left after a real setting can hold a key too.
+    #[test]
+    fn a_key_in_a_trailing_comment_is_not_a_declaration() {
+        let toml = "approval_policy = \"never\"  # sandbox_mode = \"workspace-write\" was here\nsandbox_mode = \"workspace-write\"\n";
+
+        let at = after_key(toml, "sandbox_mode", "workspace-write", 0).expect("placed");
+
+        assert_eq!(placed(toml, at).expect("a position").0.line, 2);
+    }
+
+    /// A block comment that opens the line, which JSONC accepts.
+    #[test]
+    fn a_key_inside_an_opening_block_comment_is_not_a_declaration() {
+        let jsonc = "{\n/* \"chat.tools.global.autoApprove\": true, */\n  \"chat.tools.global.autoApprove\": true\n}\n";
+
+        let at = after_key(jsonc, "chat.tools.global.autoApprove", "true", 0).expect("placed");
+
+        assert_eq!(placed(jsonc, at).expect("a position").0.line, 3);
+    }
+
+    /// A `#` inside a string is part of the value, so the key after it on the
+    /// same line is still a declaration.
+    #[test]
+    fn a_hash_inside_a_string_does_not_open_a_comment() {
+        let json = "{\"note\": \"a #tag\", \"sandbox_mode\": \"danger-full-access\"}\n";
+
+        let at = after_key(json, "sandbox_mode", "danger-full-access", 0).expect("placed");
+
+        assert_eq!(placed(json, at).expect("a position").0.line, 1);
+    }
+
+    /// Two slashes are a comment only where they open a line. A url carries
+    /// them mid-line and YAML writes one unquoted, so reading those as a
+    /// comment would lose every key written after a url on the same line.
+    #[test]
+    fn two_slashes_in_a_url_do_not_open_a_comment() {
+        let yaml = "{server: https://example.invalid/x, runOn: fileCreate}\n";
+
+        let at = after_key(yaml, "runOn", "fileCreate", 0).expect("placed");
+
+        let (position, _) = placed(yaml, at).expect("a position");
+        assert_eq!(position.line, 1);
+        // Past the url, which is what the key being lost would look like.
+        assert!(position.column > 40, "{position:?}");
     }
 
     /// A marker inside a value is not a comment, and a line of JSON holding

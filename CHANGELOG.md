@@ -12,10 +12,16 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `# sandbox_mode = "danger-full-access"` left in a file as a note had
   `bypass-permissions` pointing at it and quoting the commented line as its
   evidence: a finding that reads as an accusation about a setting somebody had
-  already turned off. Every rule placing by key had this. Only a marker
-  opening the line counts, since a `#` or a `//` further along is routinely
-  inside a value, and a line of JSON holding one would otherwise lose every
-  key written after it.
+  already turned off. Every rule placing by key had this.
+
+  Comments are read rather than guessed at: a `#` outside a string ends the
+  line, which is TOML's comment and YAML's, and a JSON file cannot hold one
+  outside a string at all. Two slashes and a block are read only where they
+  open the line, because neither can be told from a value without the file's
+  format, which placement is not given: a url carries `//` mid-line, YAML
+  writes one unquoted, and `/*` is how a glob starts. So a key commented out
+  with a trailing `//`, or inside a block opened mid-line, is still found;
+  closing that needs the format carried to the rule that places the finding.
 
 ### Added
 

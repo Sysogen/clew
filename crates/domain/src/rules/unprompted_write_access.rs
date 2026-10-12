@@ -4,6 +4,8 @@
 //! The `unprompted-write-access` rule.
 
 use super::said_at;
+use std::collections::BTreeMap;
+
 use crate::autonomy::Autonomy;
 use crate::finding::{Finding, RuleId, Severity};
 use crate::repo_path::RepoPath;
@@ -89,21 +91,14 @@ impl Rule for UnpromptedWriteAccess {
         let Examined::Report { modes } = at else {
             return Vec::new();
         };
-        // Gathered in one pass, so a repository with many nested
-        // configurations is read once rather than once per configuration.
-        // One entry a file, in the order the scan found them, which is the
-        // order a report lists them in: each file is answered once however
-        // many of these keys it writes.
-        let mut per_file: Vec<(&RepoPath, bool, Option<&FoundMode>)> = Vec::new();
+        // Gathered by file in one pass, so a repository with many nested
+        // configurations costs one walk of the modes rather than one for each
+        // of them. Keyed by path, so a file is answered once however many of
+        // these keys it writes, and the answers come out in path order, which
+        // is the order a report lists everything else in.
+        let mut per_file: BTreeMap<&RepoPath, (bool, Option<&FoundMode>)> = BTreeMap::new();
         for held in *modes {
-            let at = per_file
-                .iter()
-                .position(|(path, _, _)| *path == &held.path)
-                .unwrap_or_else(|| {
-                    per_file.push((&held.path, false, None));
-                    per_file.len() - 1
-                });
-            let (_, unprompted, writable) = &mut per_file[at];
+            let (unprompted, writable) = per_file.entry(&held.path).or_default();
             if (held.mode.key.as_str(), held.mode.value.as_str()) == NEVER {
                 *unprompted = true;
             }
@@ -113,8 +108,8 @@ impl Rule for UnpromptedWriteAccess {
         }
 
         per_file
-            .into_iter()
-            .filter_map(|(_, unprompted, writable)| {
+            .into_values()
+            .filter_map(|(unprompted, writable)| {
                 let writable = writable.filter(|_| unprompted)?;
                 // Placed at the sandbox, which is the half granting the
                 // writes, and quoting both: the sandbox line on its own is a
