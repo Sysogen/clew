@@ -462,12 +462,6 @@ impl Catalogue {
     }
 }
 
-/// Whether `value` is a calendar day written `YYYY-MM-DD`.
-/// The directory a glob is rooted at: its leading literal segments, without a
-/// trailing filename.
-///
-/// `etc/devin/rules/**/*.md` is entered at `etc/devin/rules`, not at `etc`, so
-/// a scan reads what the row names rather than the rest of the machine.
 /// Whether a glob names the directory a scan outside a repository starts at.
 ///
 /// A home scan enters only the directories its rows name, so the first segment
@@ -499,6 +493,11 @@ fn rooted(seed: &str) -> bool {
             .all(|segment| !segment.is_empty() && segment != "." && segment != "..")
 }
 
+/// The directory a glob is rooted at: its leading literal segments, without a
+/// trailing filename.
+///
+/// `etc/devin/rules/**/*.md` is entered at `etc/devin/rules`, not at `etc`, so
+/// a scan reads what the row names rather than the rest of the machine.
 fn literal_prefix(glob: &str) -> &str {
     let wild = |s: &&str| s.contains(['*', '?', '[', '{']);
     let segments: Vec<&str> = glob.split('/').collect();
@@ -514,6 +513,7 @@ fn literal_prefix(glob: &str) -> &str {
     &glob[..end]
 }
 
+/// Whether `value` is a calendar day written `YYYY-MM-DD`.
 fn is_iso_date(value: &str) -> bool {
     let parts: Vec<&str> = value.split('-').collect();
     let [y, m, d] = parts[..] else { return false };
