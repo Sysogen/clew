@@ -314,26 +314,7 @@ impl Catalogue {
                     .collect::<Result<Vec<_>, _>>()?,
             );
 
-            checks.push(
-                rule.check
-                    .iter()
-                    .map(|name| {
-                        let id = RuleId::from_catalogue(name).ok_or_else(|| {
-                            CatalogueError::UnknownCheck {
-                                row,
-                                check: name.clone(),
-                            }
-                        })?;
-                        if reads_a_report(id) {
-                            return Err(CatalogueError::ReportCheckInRow {
-                                row,
-                                check: name.clone(),
-                            });
-                        }
-                        Ok(id)
-                    })
-                    .collect::<Result<Vec<_>, _>>()?,
-            );
+            checks.push(row_checks(row, &rule.check)?);
 
             formats.push(Format::from_catalogue(&rule.format).ok_or_else(|| {
                 CatalogueError::UnknownFormat {
@@ -516,6 +497,30 @@ impl Catalogue {
             .position(|k| *k == kind)
             .map_or(&[][..], |row| self.checks[row].as_slice())
     }
+}
+
+/// The rules a row's `check` names, or the first name that cannot go there.
+///
+/// A rule reading a whole scan is offered nothing by a row, so it is refused
+/// rather than named and never run. `report_checks` is the same check
+/// mirrored.
+fn row_checks(row: usize, names: &[String]) -> Result<Vec<RuleId>, CatalogueError> {
+    names
+        .iter()
+        .map(|name| {
+            let id = RuleId::from_catalogue(name).ok_or_else(|| CatalogueError::UnknownCheck {
+                row,
+                check: name.clone(),
+            })?;
+            if reads_a_report(id) {
+                return Err(CatalogueError::ReportCheckInRow {
+                    row,
+                    check: name.clone(),
+                });
+            }
+            Ok(id)
+        })
+        .collect()
 }
 
 /// The rules `report_checks` names, or the first name that cannot go there.
