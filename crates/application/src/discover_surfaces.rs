@@ -9,7 +9,7 @@ use clew_domain::extract;
 use clew_domain::finding::{Finding, RuleId, Severity};
 use clew_domain::hook::{Action, project_of};
 use clew_domain::ports::file_contents::{FileContents, FileContentsError};
-use clew_domain::ports::file_tree::{EntryKind, FileTree, FileTreeError};
+use clew_domain::ports::file_tree::{DirEntry, EntryKind, FileTree, FileTreeError};
 use clew_domain::rule::{self, Examined};
 use clew_domain::scope::Scope;
 use clew_domain::{
@@ -419,16 +419,18 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
 
     /// Read each seeded directory, for the rows that named it.
     ///
-    /// Every ancestor is asked about in turn, because the tree refuses a link
-    /// it is handed only for the path's last component: asked about
-    /// `.git/hooks` it answers for `hooks`, and a `.git` that is a link has
-    /// already been followed by then. Handing it each ancestor instead is what
-    /// keeps a seed from reaching outside the scan root.
+    /// Every segment is asked about in turn, from the root down, because the
+    /// tree refuses a link it is handed only for the path's last component:
+    /// asked about `.git/hooks` it answers for `hooks`, and a `.git` that is a
+    /// link has already been followed by then. Asking segment by segment is
+    /// what keeps a seed from reaching outside the scan root.
     ///
-    /// Absent, and not a directory, are answers: most repositories have no
-    /// `.git/hooks`, and in a linked worktree or a submodule `.git` is a file.
-    /// Anything else is a gap and is recorded as one. A directory that is
-    /// there and could not be read is not the same as finding nothing in it.
+    /// What a refusal means is read from the listing that found it. A segment
+    /// that is not there, or is an ordinary file, is an answer: most
+    /// repositories have no `.git/hooks`, and in a linked worktree or a
+    /// submodule `.git` is a file. A segment that is a link is a gap, because
+    /// git follows one and clew will not: saying nothing would report no hooks
+    /// where hooks run. Anything else the tree refuses is a gap too.
     ///
     /// Direct entries only, and matched against the rows carrying this seed.
     /// git looks for a hook at `<hooksPath>/<name>`, so there is nothing below
@@ -437,28 +439,36 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
     fn read_seeded(&self, report: &mut DiscoveryReport) {
         for seed in catalogue().seeds_in(self.scope) {
             let at = RepoPath::root().join(seed);
-            let mut ancestors = Vec::new();
+            let mut chain = vec![at.clone()];
             let mut up = at.parent();
             while let Some(dir) = up {
-                if dir.as_str().is_empty() {
-                    break;
-                }
                 up = dir.parent();
-                ancestors.push(dir);
+                chain.push(dir);
             }
-            ancestors.reverse();
+            chain.reverse();
 
-            let mut entries = None;
-            for dir in ancestors.iter().chain(std::iter::once(&at)) {
+            let mut entries: Option<Vec<DirEntry>> = None;
+            for dir in &chain {
                 match self.tree.read_dir(dir) {
-                    Ok(found) => entries = Some(found),
-                    Err(FileTreeError::NotFound | FileTreeError::NotADirectory) => {
-                        entries = None;
-                        break;
-                    }
+                    Ok(listing) => entries = Some(listing),
                     Err(error) => {
-                        entries = None;
-                        if !report.unreadable.iter().any(|(p, _)| p == dir) {
+                        // What `entries` holds here is the listing of the
+                        // segment before this one, which is the parent that
+                        // names it and says whether it is a link.
+                        let linked = entries.take().is_some_and(|parent| {
+                            parent
+                                .iter()
+                                .any(|e| e.path == *dir && e.kind == EntryKind::Symlink)
+                        });
+                        // A link clew will not follow is a gap: git follows it,
+                        // so saying nothing would report no hooks for a
+                        // repository whose hooks run.
+                        let answer = !linked
+                            && matches!(
+                                error,
+                                FileTreeError::NotFound | FileTreeError::NotADirectory
+                            );
+                        if !answer && !report.unreadable.iter().any(|(p, _)| p == dir) {
                             report.unreadable.push((dir.clone(), error));
                         }
                         break;
@@ -2566,13 +2576,17 @@ mod tests {
     /// `hooks`, and a `.git` that is a link has been followed by then. So
     /// every ancestor is asked about in turn, and one the tree will not open
     /// stops the seed. The refusal itself is the adapter's, and tested there.
+    ///
+    /// A link stops the seed as a gap rather than as an answer. git follows a
+    /// linked `.git` and clew does not, so saying nothing would report no
+    /// hooks for a repository whose hooks run.
     #[test]
-    fn a_seed_whose_ancestor_the_tree_refuses_is_not_entered() {
+    fn a_seed_whose_ancestor_is_a_refused_link_is_a_gap() {
         let tree = FakeTree::default()
             .dir("", &[(".git", EntryKind::Symlink)])
             .dir(".git", &[("hooks", EntryKind::Directory)])
             .dir(".git/hooks", &[("pre-commit", EntryKind::File)])
-            // What the real tree answers for a link, and for a `.git` file.
+            // What the real tree answers for a link it will not follow.
             .refuse(".git");
         let contents = FakeContents::default().file(
             ".git/hooks/pre-commit",
@@ -2587,9 +2601,14 @@ mod tests {
             "the seed was not entered: {report:?}"
         );
         assert!(report.findings.is_empty(), "{report:?}");
-        assert!(
-            report.is_complete(),
-            "a seed that cannot be opened is an answer: {report:?}"
+        assert_eq!(
+            report
+                .unreadable
+                .iter()
+                .map(|(p, _)| p.as_str())
+                .collect::<Vec<_>>(),
+            vec![".git"],
+            "and the scan says it could not look: {report:?}"
         );
     }
 
@@ -2729,10 +2748,13 @@ mod tests {
     /// which is a non-zero exit for a repository with nothing wrong with it.
     #[test]
     fn a_seed_under_a_git_file_is_not_a_gap() {
-        let tree = FakeTree::default().dir(
-            "",
-            &[(".git", EntryKind::File), ("CLAUDE.md", EntryKind::File)],
-        );
+        let tree = FakeTree::default()
+            .dir(
+                "",
+                &[(".git", EntryKind::File), ("CLAUDE.md", EntryKind::File)],
+            )
+            // What the real tree answers for a path that is a file.
+            .refuse(".git");
         let contents = FakeContents::default()
             .file(".git", "gitdir: /elsewhere/.git/worktrees/side\n")
             .file("CLAUDE.md", "Run the tests.\n");
