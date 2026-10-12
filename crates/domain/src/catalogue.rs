@@ -402,6 +402,30 @@ impl Catalogue {
         roots
     }
 
+    /// The row an entry of a seeded directory matches, among the rows that
+    /// asked for that directory to be entered.
+    ///
+    /// A seed steps around the prune list for the row that names it, and for
+    /// no other. Matching the whole catalogue inside a seeded directory would
+    /// hand every row a subtree the walk was told to skip: a `CLAUDE.md` left
+    /// in `.git/hooks` is not an instruction file an agent reads, and
+    /// reporting it would claim more of that directory than any row asked for.
+    #[must_use]
+    pub fn lookup_seeded(&self, path: &RepoPath, scope: Scope, seed: &str) -> Option<Matched<'_>> {
+        let first =
+            self.globs.matches(path.as_str()).into_iter().find(|i| {
+                self.scopes[*i] == scope && self.rules[*i].seed.as_deref() == Some(seed)
+            })?;
+        Some(Matched {
+            rule: &self.rules[first],
+            kind: self.kinds[first],
+            extract: &self.extractions[first],
+            check: &self.checks[first],
+            format: self.formats[first],
+            scope: self.scopes[first],
+        })
+    }
+
     /// The directories a repository scan must be told to enter.
     ///
     /// A row inside a pruned directory is unreachable by walking, and relaxing
@@ -465,11 +489,13 @@ fn anchored(glob: &str) -> bool {
 /// check of its own; a drive letter and a UNC prefix do, since neither leaves
 /// one.
 fn rooted(seed: &str) -> bool {
-    !seed.starts_with('\\')
-        && !seed.contains(':')
+    !seed.contains(':')
         && !seed.is_empty()
+        // Split on both separators: a seed is joined to a path, and on the
+        // platform where `\` separates, `a\..\out` traverses as surely as
+        // `a/../out` does.
         && seed
-            .split('/')
+            .split(['/', '\\'])
             .all(|segment| !segment.is_empty() && segment != "." && segment != "..")
 }
 
@@ -865,6 +891,27 @@ mod tests {
                 "{seed:?}: {error:?}"
             );
         }
+        // A backslash separates on the platform that uses one, so a
+        // traversal written with backslashes traverses just as surely.
+        for seed in ["a\\..\\outside", "..\\outside", "a\\.\\b", "a\\\\b"] {
+            let error = Catalogue::load(&format!(
+                r#"version = 3
+                   revision = 1
+                   [[surface]]
+                   glob = "x"
+                   tool = "x"
+                   kind = "hook-script"
+                   seed = '{seed}'
+                   last_verified = "2026-09-11"
+                   source = "https://example.invalid"
+                "#
+            ))
+            .expect_err("a backslash traversal must not load");
+            assert!(
+                matches!(error, CatalogueError::UnrootedSeed { .. }),
+                "{seed:?}: {error:?}"
+            );
+        }
         // A plain path inside the scan loads, whatever the scope.
         for scope in ["repository", "home", "system"] {
             let held = Catalogue::load(&format!(
@@ -882,6 +929,33 @@ mod tests {
             ));
             assert!(held.is_ok(), "{scope}: {held:?}");
         }
+    }
+
+    /// A seeded directory is matched against the rows that named it, so a
+    /// file there that some other row would claim is not claimed.
+    #[test]
+    fn a_seeded_lookup_sees_only_the_rows_that_asked_for_it() {
+        let held = shipped();
+        assert_eq!(
+            held.lookup_seeded(&p(".git/hooks/pre-commit"), Scope::Repository, ".git/hooks")
+                .map(|m| m.kind),
+            Some(SurfaceKind::HookScript)
+        );
+        for at in [".git/hooks/CLAUDE.md", ".git/hooks/.env"] {
+            assert!(
+                held.lookup_seeded(&p(at), Scope::Repository, ".git/hooks")
+                    .is_none(),
+                "{at} is claimed by a row that did not ask for this directory"
+            );
+            // And the plain lookup does claim them, which is why the seeded
+            // one has to exist at all.
+            assert!(held.lookup_in(&p(at), Scope::Repository).is_some(), "{at}");
+        }
+        // A seed nothing declares matches nothing.
+        assert!(
+            held.lookup_seeded(&p(".git/hooks/pre-commit"), Scope::Repository, "elsewhere")
+                .is_none()
+        );
     }
 
     /// The directory a scan is told to enter, because the walk prunes its way

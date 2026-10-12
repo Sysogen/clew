@@ -40,6 +40,12 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   mode: these are candidate hooks rather than proven active ones, which
   inflates a count by whatever share is not executable.
 
+  A seeded directory is read for the rows that named it and nothing else, one
+  level deep. Putting it into the ordinary walk instead would have handed
+  every row a subtree the prune list was told to skip, so a `CLAUDE.md` left
+  in `.git/hooks` would have been read as an instruction file and a `.claude`
+  directory there descended into.
+
   `seed` is validated as a plain path inside the scan root and recorded in the
   catalogue snapshot. It is the one field joined to that root and read rather
   than matched against something the walk already found, so a traversal
