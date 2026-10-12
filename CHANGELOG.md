@@ -40,6 +40,10 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   mode: these are candidate hooks rather than proven active ones, which
   inflates a count by whatever share is not executable.
 
+  A surface reached twice is read once. A seeded directory can also be reached
+  by walking, since a policy is free not to prune `.git`, and reading the same
+  hook twice would have reported it twice and every finding in it twice.
+
   A seeded directory is read for the rows that named it and nothing else, one
   level deep. Putting it into the ordinary walk instead would have handed
   every row a subtree the prune list was told to skip, so a `CLAUDE.md` left

