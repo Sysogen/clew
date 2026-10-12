@@ -1321,8 +1321,13 @@ mod tests {
     }
 
     /// A file written for an older shape is refused rather than half read.
-    /// `revision` became required when it was added, which is a change of
-    /// shape, so the schema says 2.
+    ///
+    /// The schema says 3. `revision` raised it to 2 by becoming required,
+    /// which serde would refuse on its own. `seed` raised it to 3 and serde
+    /// would not: an optional field reads as absent, and a reader that did
+    /// not know it would parse the file and enter none of the directories it
+    /// names. Half reading is what this number refuses, whether or not the
+    /// parser minds.
     #[test]
     fn a_file_written_for_another_schema_is_refused() {
         let error = Catalogue::load(

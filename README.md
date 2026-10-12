@@ -169,7 +169,7 @@ whoever's credentials are at the keyboard, and an agent that commits triggers
 one. clew reads them from `.git/hooks`, `.githooks`, `.husky` and `hooks` at
 the repository root, by the names git itself looks for.
 
-Two limits, stated because a scanner that implies more than it reads is worse
+Four limits, stated because a scanner that implies more than it reads is worse
 than one that reads less:
 
 - **`core.hooksPath` is not read.** A repository that points it at a directory

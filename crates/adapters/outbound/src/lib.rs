@@ -205,7 +205,7 @@ mod contents_tests {
     use super::*;
 
     /// Scratch directory, unique per process and `tag`. Tags must not repeat.
-    /// A directory of this test's own.
+    /// A directory of this test's own, removed when the test ends.
     ///
     /// Created rather than cleared. `create_dir` fails when the name is taken,
     /// so a leftover from a run whose process id the system has since reused
@@ -213,12 +213,40 @@ mod contents_tests {
     /// and trusting the clear is what let a tree from a week earlier stand in
     /// for this one, and a counter alone does not help: it restarts at zero in
     /// every process, so the same names come round again.
-    fn scratch(tag: &str) -> PathBuf {
+    ///
+    /// Stepping over a name only works while there are names left, which is
+    /// why this is removed on the way out rather than left for the next run to
+    /// step over. A panicking test drops it too.
+    struct Scratch(PathBuf);
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    impl std::ops::Deref for Scratch {
+        type Target = Path;
+
+        fn deref(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    // So a scratch directory is handed to a root the way a path is, which is
+    // what every caller here was already doing.
+    impl From<&Scratch> for PathBuf {
+        fn from(held: &Scratch) -> Self {
+            held.0.clone()
+        }
+    }
+
+    fn scratch(tag: &str) -> Scratch {
         for n in 0..4096 {
             let dir = std::env::temp_dir()
                 .join(format!("clew-contents-{}-{n}-{tag}", std::process::id()));
             match fs::create_dir(&dir) {
-                Ok(()) => return dir,
+                Ok(()) => return Scratch(dir),
                 Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
                 Err(error) => panic!("create scratch dir: {error}"),
             }
@@ -413,12 +441,16 @@ mod contents_tests {
 
         let dir = scratch("stepover");
 
-        assert_ne!(dir, taken, "the taken name was reused");
+        assert_ne!(*dir, *taken, "the taken name was reused");
         assert!(
             taken.join("from-an-earlier-run").exists(),
             "what was there is still there, not cleared"
         );
-        assert!(dir.exists() && fs::read_dir(&dir).expect("read").next().is_none());
+        assert!(dir.exists() && fs::read_dir(&*dir).expect("read").next().is_none());
+
+        // Made by hand, so it is cleared by hand: a `Scratch` clears only
+        // what it created, and this run should leave nothing behind.
+        let _ = fs::remove_dir_all(&taken);
     }
 
     /// `never_walks_into_a_linked_directory` covers the refusal. This covers

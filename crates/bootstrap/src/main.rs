@@ -434,12 +434,31 @@ mod tests {
         );
     }
 
-    /// Files under a scratch directory, unique to this process and `name`.
-    fn tree(name: &str, files: &[(&str, &[u8])]) -> PathBuf {
-        // Created rather than cleared: a process id is reused, and a counter
-        // restarts at zero in every process, so the same names come round
-        // again. `create_dir` fails when one is taken, which steps over a
-        // leftover instead of writing into it.
+    /// Files under a scratch directory of this test's own, removed when the
+    /// test ends.
+    ///
+    /// Created rather than cleared: a process id is reused, and a counter
+    /// restarts at zero in every process, so the same names come round again.
+    /// `create_dir` fails when one is taken, which steps over a leftover
+    /// instead of writing into it. Stepping over a name only works while
+    /// there are names left, so the directory goes away on the way out.
+    struct Scratch(PathBuf);
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    impl std::ops::Deref for Scratch {
+        type Target = Path;
+
+        fn deref(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    fn tree(name: &str, files: &[(&str, &[u8])]) -> Scratch {
         let root = (0..4096)
             .map(|n| env::temp_dir().join(format!("clew-run-{}-{n}-{name}", std::process::id())))
             .find(|at| match fs::create_dir(at) {
@@ -455,7 +474,7 @@ mod tests {
             fs::create_dir_all(file.parent().expect("a parent")).expect("mkdir");
             fs::write(file, bytes).expect("write");
         }
-        root
+        Scratch(root)
     }
 
     /// The exit status, stdout and stderr of `clew path` on `root`.

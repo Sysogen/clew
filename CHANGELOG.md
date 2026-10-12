@@ -271,10 +271,13 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   one from a week earlier: this machine held leftovers from 360 distinct
   process ids.
 
-  Each is now created rather than cleared. `create_dir` fails when the name is
-  taken, so a leftover is stepped over instead of written into. A counter was
-  the first attempt and was not enough: it restarts at zero in every process,
-  so the same names come round again with the same process id.
+  Each is now created rather than cleared, and removed when the test ends.
+  `create_dir` fails when the name is taken, so a leftover is stepped over
+  instead of written into. A counter was the first attempt and was not enough:
+  it restarts at zero in every process, so the same names come round again
+  with the same process id. Stepping over a name only works while names are
+  left, so the directory is a guard that clears itself rather than another
+  entry in a pile that was already 2,500 deep. A full run adds none now.
 
 
 - A command written bare rather than as a JSON string yielded its finding
