@@ -233,8 +233,8 @@ alone.
 
 What pins a decision is the corpus: `crates/bootstrap/tests/corpus/`, a small
 repository per rule with the findings recorded in `corpus.snapshot`. A rule
-whose logic changes fails there. Fifteen fixtures fire and eleven are silent on
-purpose, each of those a case some rule's own prose promises it does not fire
+whose logic changes fails there. Seventeen fixtures fire and thirteen are
+silent on purpose, each of those a case some rule's own prose promises it does not fire
 on, because a rule that starts firing is as much a regression as one that
 stops. Those two numbers are asserted by the corpus itself, so a fixture added
 without updating them fails rather than leaving this paragraph describing a

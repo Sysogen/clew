@@ -27,6 +27,7 @@ pub mod mcp_server;
 pub mod pack;
 pub mod permission;
 pub mod ports;
+pub mod profile;
 pub mod repo_path;
 pub mod rule;
 pub mod rules;

@@ -11,7 +11,7 @@ use clew_domain::finding::{Finding, RuleId, Severity};
 use clew_domain::hook::{Action, project_of};
 use clew_domain::ports::file_contents::{FileContents, FileContentsError};
 use clew_domain::ports::file_tree::{EntryKind, FileTree, FileTreeError};
-use clew_domain::rule::{self, Examined, FoundMode};
+use clew_domain::rule::{self, Examined, FoundMode, FoundProfile};
 use clew_domain::scope::Scope;
 use clew_domain::{
     Autonomy, Hook, McpServer, Permission, RepoPath, ScanPolicy, Step, Surface, SurfaceKind, Task,
@@ -220,6 +220,8 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
         // placed here, while its file's text is in hand, so the scan does not
         // hold every such file open until it ends.
         let mut declared: Vec<FoundMode> = Vec::new();
+        // The profiles beside them, which a mode names rather than holds.
+        let mut defined: Vec<FoundProfile> = Vec::new();
 
         let paths: Vec<RepoPath> = report.surfaces.iter().map(|s| s.path.clone()).collect();
         for path in paths {
@@ -309,9 +311,13 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
                     .iter()
                     .map(|mode| FoundMode::new(&path, mode, &text, matched.format)),
             );
+            defined.extend(found.profiles.into_iter().map(|profile| FoundProfile {
+                path: path.clone(),
+                profile,
+            }));
         }
 
-        self.read_report(&declared, report);
+        self.read_report(&declared, &defined, report);
     }
 
     /// Judge each step a workflow runs, and record it.
@@ -393,9 +399,17 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
     /// Enabled by `report_checks` rather than by a row, because a rule reading
     /// the whole scan belongs to no row. The catalogue stays the one place
     /// deciding whether a rule runs.
-    fn read_report(&self, declared: &[FoundMode], report: &mut DiscoveryReport) {
+    fn read_report(
+        &self,
+        declared: &[FoundMode],
+        defined: &[FoundProfile],
+        report: &mut DiscoveryReport,
+    ) {
         report.findings.extend(rule::judge(
-            &Examined::Report { modes: declared },
+            &Examined::Report {
+                modes: declared,
+                profiles: defined,
+            },
             catalogue().report_checks(),
             self.policy.evidence_width(),
         ));

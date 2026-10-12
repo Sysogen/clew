@@ -161,16 +161,15 @@ which keeps one answer to what decides whether a rule runs. Putting a rule in
 the wrong one of the two lists is refused when the catalogue loads, because a
 rule in the wrong list is a rule that never runs.
 
-Two limits belong on it. Both halves have to be in the same file: Codex puts
-project-scoped overrides in `.codex/config.toml` files, plural, and its
-reference does not say in what order they merge, so a pair split across two of
-them is not reported, since joining them in an order the documentation does not
-give would report a configuration that never applied. And the sandbox half is
-read in its two built-in spellings only: a `default_permissions` naming a
-`[permissions.<name>]` table of its own is not read, although such a table
-grants writes with `filesystem.<path>` set to write or by extending
-`:workspace`. Reading those tables is an extraction this rule does not have,
-the way the git hook row does not read `core.hooksPath`.
+The two halves need not be in one file. Codex walks from the project root to
+the working directory and loads every `.codex/config.toml` it finds, and the
+closest file to the run wins a key, so a root that stops the asking and a
+nested file that permits writes leave neither control for a run below, and a
+nested file putting the sandbox back is the fix rather than a finding. A
+finding carries one path, so it is placed at the sandbox and names the file the
+other half came from. A `default_permissions` naming a `[permissions.<name>]`
+table of its own is resolved against that table, which grants writes with
+filesystem rules or by extending `:workspace`.
 
 `unrestricted-shell` flags the grant the other permission entries exist to avoid
 needing: every command the agent picks runs without being shown to anyone. Only

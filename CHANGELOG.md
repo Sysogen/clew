@@ -37,6 +37,11 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Codex's named permissions profiles are read: `[permissions.<name>]` tables,
+  what each grants and the parent each extends. A profile is a sandbox written
+  apart from the key that selects it, so a mode naming one says nothing on its
+  own about what the agent may reach.
+
 - `unprompted-write-access`, the first rule that reads a whole scan rather
   than one thing in one file. It fires on a pair of Codex settings each of
   which clew calls harmless on its own: `approval_policy = "never"`, which
@@ -65,17 +70,24 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   a reader shown `sandbox_mode = "workspace-write"` on its own, which this
   rule's own page calls harmless, would be right to think the finding wrong.
 
-  Two limits belong on the rule, stated in it, the README and here. Both
-  halves have to be in the same file: Codex puts project-scoped overrides in
-  `.codex/config.toml` files, plural, and its reference does not say in what
-  order they merge, so a pair split across two of them is not reported, since
-  joining them in an order the documentation does not give would report a
-  configuration that never applied. And the sandbox half is read in its two
-  built-in spellings only: a `default_permissions` naming a
-  `[permissions.<name>]` table of its own is not read, although such a table
-  grants writes with `filesystem.<path>` set to write or by extending
-  `:workspace`. Both are pinned by a test, so closing either is a visible
-  change rather than a number moving.
+  The two halves need not be in one file. Codex walks from the project root to
+  the working directory and loads every `.codex/config.toml` it finds, and the
+  closest file to the run wins a key, so a root that stops the asking and a
+  nested file that permits writes leave neither control for a run below. That
+  order is what makes a nested file putting the sandbox back the fix rather
+  than another finding, and it is why the rule asks the question once for each
+  directory a run could start under. A finding carries one path, so it is
+  placed at the sandbox and the evidence names the file the other half came
+  from, last, because evidence is clipped to a width and the two halves matter
+  more than which file the far one sits in.
+
+  A `default_permissions` naming a `[permissions.<name>]` table of its own is
+  resolved against that table rather than guessed at from its name. The
+  reference gives a profile filesystem rules, which grant `"write"` at a path
+  or under `:workspace_roots`, and an `extends` naming a parent applied before
+  it, so the chain is walked: a profile granting nothing of its own still
+  writes where its parent does. A file is free to write a cycle, and the
+  answer there is no rather than a scan that does not finish.
 
   A report is gathered in one pass over the modes, so a repository with many
   nested configurations is read once rather than once for each of them.

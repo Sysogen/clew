@@ -16,6 +16,7 @@ use crate::yaml;
 use yaml_rust2::{Yaml, YamlLoader};
 
 use crate::permission::Permission;
+use crate::profile::Profile;
 
 /// Why a file could not be understood.
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
@@ -295,6 +296,8 @@ pub enum Extraction {
     Tasks,
     /// Steps a CI workflow runs.
     Workflow,
+    /// Named permissions profiles, which a mode selects by name.
+    Profiles,
 }
 
 impl Extraction {
@@ -307,6 +310,7 @@ impl Extraction {
             "mcp-servers" => Self::McpServers,
             "autonomy" => Self::Autonomy,
             "tasks" => Self::Tasks,
+            "permission-profiles" => Self::Profiles,
             "workflow" => Self::Workflow,
             _ => return None,
         })
@@ -328,6 +332,8 @@ pub struct Findings {
     pub tasks: Vec<Task>,
     /// Steps a CI workflow runs.
     pub steps: Vec<Step>,
+    /// Named permissions profiles the file defines.
+    pub profiles: Vec<Profile>,
 }
 
 /// Run `wanted` over `contents`, parsing it once.
@@ -365,6 +371,7 @@ pub fn run(wanted: &[Extraction], format: Format, contents: &str) -> Result<Find
             Extraction::McpServers => found.servers = mcp_servers(&root),
             Extraction::Autonomy => found.autonomy = autonomy(&root, format),
             Extraction::Tasks => found.tasks = tasks(&root),
+            Extraction::Profiles => found.profiles = profiles(&root),
             Extraction::Workflow => {
                 found.steps = spanned.as_ref().map(workflow).unwrap_or_default();
             }
@@ -534,6 +541,48 @@ const MODES: &[(Format, &str, &[&str])] = &[
         &["agent", "tool_permissions", "default"],
     ),
 ];
+
+/// The named permissions profiles a file defines.
+///
+/// A profile is a sandbox written apart from the key that selects it, so a
+/// mode naming one says nothing on its own about what the agent may reach.
+fn profiles(root: &serde_json::Value) -> Vec<Profile> {
+    let Some(defined) = root
+        .get("permissions")
+        .and_then(serde_json::Value::as_object)
+    else {
+        return Vec::new();
+    };
+    let mut found: Vec<Profile> = defined
+        .iter()
+        .map(|(name, body)| Profile {
+            name: name.clone(),
+            extends: body
+                .get("extends")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned),
+            writes: grants_a_write(body.get("filesystem")),
+        })
+        .collect();
+    found.sort();
+    found
+}
+
+/// Whether any rule under a filesystem table grants a write.
+///
+/// Searched rather than read key by key, because a rule nests: the reference
+/// gives a path either a grant or a table of its own, and `:workspace_roots`
+/// always holds one. A number under there, the glob depth, is not a grant and
+/// a search for the word passes over it.
+fn grants_a_write(at: Option<&serde_json::Value>) -> bool {
+    match at {
+        Some(serde_json::Value::String(grant)) => grant == "write",
+        Some(serde_json::Value::Object(nested)) => {
+            nested.values().any(|at| grants_a_write(Some(at)))
+        }
+        _ => false,
+    }
+}
 
 /// The modes a file starts an agent in. A blank value selects none, so it is
 /// a defect rather than a declaration.
@@ -1362,6 +1411,79 @@ env = { DATABASE_URL = "postgres://u:hunter2@h/d", PGPORT = "5432" }
             run(&[Extraction::Hooks], Format::Json, "{not json").map(|f| f.hooks),
             Err(ParseError::NotJson)
         );
+    }
+
+    fn profiles_of(text: &str) -> Vec<Profile> {
+        run(&[Extraction::Profiles], Format::Toml, text)
+            .expect("parses")
+            .profiles
+    }
+
+    /// The reference gives a profile a description, a parent and a table of
+    /// filesystem rules. What a rule grants is read as written.
+    #[test]
+    fn a_permission_profile_is_read_for_what_it_grants() {
+        let found = profiles_of(
+            "[permissions.ours]\ndescription = \"ours\"\nextends = \":read-only\"\n\n[permissions.ours.filesystem]\n\"/srv\" = \"write\"\n",
+        );
+
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].name, "ours");
+        assert_eq!(found[0].extends.as_deref(), Some(":read-only"));
+        assert!(found[0].writes);
+    }
+
+    /// A rule nests, and the reference says a path may hold a table of its
+    /// own, with `:workspace_roots` always holding one. A write under there
+    /// is a write.
+    #[test]
+    fn a_nested_filesystem_rule_granting_a_write_is_read() {
+        let found =
+            profiles_of("[permissions.ours.filesystem.\":workspace_roots\"]\n\".\" = \"write\"\n");
+
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(found[0].writes, "{found:?}");
+    }
+
+    /// Reading only, which is the profile that bounds what it reaches.
+    #[test]
+    fn a_profile_granting_reads_does_not_write() {
+        let found = profiles_of(
+            "[permissions.ours.filesystem]\n\"/srv\" = \"read\"\n\"/etc\" = \"deny\"\n",
+        );
+
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(!found[0].writes, "{found:?}");
+    }
+
+    /// The glob depth sits in the same table and is a number, not a grant.
+    /// A search for the word passes over it.
+    #[test]
+    fn the_glob_depth_is_not_a_grant() {
+        let found = profiles_of("[permissions.ours.filesystem]\nglob_scan_max_depth = 4\n");
+
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(!found[0].writes, "{found:?}");
+    }
+
+    /// Several profiles in one file, in a settled order so a report of them
+    /// does not depend on how a table was spelt.
+    #[test]
+    fn every_profile_in_a_file_is_read_in_order() {
+        let found = profiles_of(
+            "[permissions.second]\nextends = \":workspace\"\n\n[permissions.first]\ndescription = \"x\"\n",
+        );
+
+        assert_eq!(
+            found.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(),
+            vec!["first", "second"]
+        );
+    }
+
+    /// A file with no profiles, which is almost all of them.
+    #[test]
+    fn a_file_defining_no_profile_yields_none() {
+        assert!(profiles_of("approval_policy = \"never\"\n").is_empty());
     }
 
     fn modes_of(format: Format, text: &str) -> Vec<Autonomy> {

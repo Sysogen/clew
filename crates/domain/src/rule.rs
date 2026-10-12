@@ -14,6 +14,7 @@ use crate::extract::Format;
 use crate::finding::{Finding, Position, RuleId, Severity};
 use crate::mcp_server::McpServer;
 use crate::permission::Permission;
+use crate::profile::Profile;
 use crate::repo_path::RepoPath;
 use crate::rules::{
     agent_runs_unattended, auto_run_task, bypass_permissions, credential_exfiltration,
@@ -63,6 +64,19 @@ pub struct FoundMode {
     pub mode: Autonomy,
     /// Where that file wrote the mode's value, when it could be found.
     pub at: Option<Position>,
+}
+
+/// One named permissions profile a scan found, and the file defining it.
+///
+/// A profile is defined in one file and selected in another: Codex applies
+/// the configurations from the project root down, so a profile a root file
+/// defines is in force for a run in a directory below it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FoundProfile {
+    /// The file that defined it.
+    pub path: RepoPath,
+    /// The profile.
+    pub profile: Profile,
 }
 
 impl FoundMode {
@@ -162,12 +176,15 @@ pub enum Examined<'a> {
     },
     /// Everything one scan found.
     ///
-    /// Only the modes, because only one rule reads a whole scan and that is
-    /// what it reads. Another part is added when a rule needs it, rather than
+    /// The modes, and the permissions profiles a mode may name, because a
+    /// mode selecting a profile says nothing on its own about what the agent
+    /// may reach. Another part is added when a rule needs it, rather than
     /// carried now against the chance that one will.
     Report {
         /// Every mode the scan found, with the file that set each.
         modes: &'a [FoundMode],
+        /// Every named permissions profile the scan found, with its file.
+        profiles: &'a [FoundProfile],
     },
 }
 

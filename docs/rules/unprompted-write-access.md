@@ -17,16 +17,15 @@ includes the files deciding what the next run may do: a git hook, an
 instruction file, this configuration. The reference recommends "never" for
 non-interactive runs, which is also where nobody is watching. Running
 unattended is a legitimate thing to do, and what this reports is that both
-controls were turned off together, not that the run is wrong. One hole, stated:
-both halves have to be in the same file. The reference puts project-scoped
-overrides in .codex/config.toml files, plural, and does not say in what order
-they merge, so a pair split across two of them is not reported. Joining them in
-the wrong order would report a configuration that never applied, which is the
-worse of the two errors here. A second: the sandbox half is read in its two
-built-in spellings, and a default_permissions naming a [permissions.<name>]
-table of its own is not, although such a table grants writes with
-filesystem.<path> set to write or by extending :workspace. Reading those tables
-is an extraction this rule does not have.
+controls were turned off together, not that the run is wrong. The two halves
+need not be in one file: Codex walks from the project root to the working
+directory and loads every .codex/config.toml it finds, with the closest file
+winning a key, so a root that stops the asking and a nested file that permits
+writes leave neither control for a run below. The finding is placed at the
+sandbox, and names the file the other half came from. A default_permissions
+naming a [permissions.<name>] table of its own is resolved against that table,
+which grants writes with filesystem rules or by extending :workspace, rather
+than guessed at from the name.
 
 ## What to do
 

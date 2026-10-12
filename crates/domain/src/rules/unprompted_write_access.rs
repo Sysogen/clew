@@ -4,10 +4,10 @@
 //! The `unprompted-write-access` rule.
 
 use super::said_at;
-use std::collections::BTreeMap;
-
 use crate::autonomy::Autonomy;
 use crate::finding::{Finding, RuleId, Severity};
+use crate::hook::project_of;
+use crate::profile::Profile;
 use crate::repo_path::RepoPath;
 use crate::rule::{Examined, FoundMode, Rule, Subject};
 
@@ -21,16 +21,56 @@ pub struct UnpromptedWriteAccess;
 /// `on-failure` as deprecated, so neither is named.
 const NEVER: (&str, &str) = ("approval_policy", "never");
 
+/// The key naming the sandbox as a mode, and the one naming it as a profile.
+const SANDBOX: &str = "sandbox_mode";
+const PROFILE: &str = "default_permissions";
+
+/// The project directories a run could start under, one for each directory
+/// holding a file that declared a mode, in path order.
+///
+/// A run deeper than the deepest such directory sees the layers that
+/// directory sees, so there is nothing further to ask about, and two files in
+/// one directory are one configuration rather than two.
+fn layers(modes: &[FoundMode]) -> Vec<RepoPath> {
+    let mut held: Vec<RepoPath> = modes.iter().map(|m| project_of(&m.path)).collect();
+    held.sort();
+    held.dedup();
+    held
+}
+
+/// Whether the file at `path` is in force for a run under the project
+/// directory `at`.
+///
+/// Codex walks from the project root to the working directory and loads every
+/// `.codex/config.toml` it finds, so a file applies where its own project
+/// directory holds the one being asked about. The project directory rather
+/// than the file's own: `.codex` sits between them, and `a/.codex` is no
+/// prefix of `a/b/.codex` although `a` is of `a/b`.
+fn applies(path: &RepoPath, at: &RepoPath) -> bool {
+    let above = project_of(path);
+    above == *at
+        || above.as_str().is_empty()
+        || at.as_str().starts_with(above.as_str())
+            && at.as_str().as_bytes().get(above.as_str().len()) == Some(&b'/')
+}
+
 /// Whether a mode lets the agent write the working tree.
 ///
-/// Both spellings of the same decision. `danger-full-access` is deliberately
-/// absent in either spelling: it is already `bypass-permissions` on its own,
-/// and a second finding over the same key would say the same thing twice.
-fn writes(mode: &Autonomy) -> bool {
-    matches!(
-        (mode.key.as_str(), mode.value.as_str()),
-        ("sandbox_mode", "workspace-write") | ("default_permissions", ":workspace")
-    )
+/// Both spellings of the same decision, and a profile of its own is resolved
+/// rather than guessed at: the table defining it grants writes with
+/// `filesystem.<path> = "write"`, or extends one that does, so what it
+/// permits is read out of the file rather than assumed from its name.
+///
+/// `danger-full-access` is deliberately absent in either spelling: it is
+/// already `bypass-permissions` on its own, and a second finding over the
+/// same key would say the same thing twice.
+fn writes(mode: &Autonomy, defined: &[&Profile]) -> bool {
+    match (mode.key.as_str(), mode.value.as_str()) {
+        (SANDBOX, "workspace-write") => true,
+        (PROFILE, ":danger-full-access") => false,
+        (PROFILE, selected) => Profile::selected(defined, selected),
+        _ => false,
+    }
 }
 
 impl Rule for UnpromptedWriteAccess {
@@ -63,17 +103,15 @@ impl Rule for UnpromptedWriteAccess {
                 this configuration. The reference recommends \"never\" for non-interactive \
                 runs, which is also where nobody is watching. Running unattended is a \
                 legitimate thing to do, and what this reports is that both controls were \
-                turned off together, not that the run is wrong. One hole, stated: both \
-                halves have to be in the same file. The reference puts project-scoped \
-                overrides in .codex/config.toml files, plural, and does not say in what \
-                order they merge, so a pair split across two of them is not reported. \
-                Joining them in the wrong order would report a configuration that never \
-                applied, which is the worse of the two errors here. A second: the \
-                sandbox half is read in its two built-in spellings, and a \
+                turned off together, not that the run is wrong. The two halves need not \
+                be in one file: Codex walks from the project root to the working \
+                directory and loads every .codex/config.toml it finds, with the closest \
+                file winning a key, so a root that stops the asking and a nested file \
+                that permits writes leave neither control for a run below. The finding \
+                is placed at the sandbox, and names the file the other half came from. A \
                 default_permissions naming a [permissions.<name>] table of its own is \
-                not, although such a table grants writes with filesystem.<path> set to \
-                write or by extending :workspace. Reading those tables is an extraction \
-                this rule does not have."
+                resolved against that table, which grants writes with filesystem rules \
+                or by extending :workspace, rather than guessed at from the name."
     }
 
     fn remediation(&self) -> &'static str {
@@ -93,45 +131,70 @@ impl Rule for UnpromptedWriteAccess {
     }
 
     fn check(&self, at: &Examined<'_>, width: usize) -> Vec<Finding> {
-        let Examined::Report { modes } = at else {
+        let Examined::Report { modes, profiles } = at else {
             return Vec::new();
         };
-        // Gathered by file in one pass, so a repository with many nested
-        // configurations costs one walk of the modes rather than one for each
-        // of them. Keyed by path, so a file is answered once however many of
-        // these keys it writes, and the answers come out in path order, which
-        // is the order a report lists everything else in.
-        let mut per_file: BTreeMap<&RepoPath, (bool, Option<&FoundMode>)> = BTreeMap::new();
-        for held in *modes {
-            let (unprompted, writable) = per_file.entry(&held.path).or_default();
-            if (held.mode.key.as_str(), held.mode.value.as_str()) == NEVER {
-                *unprompted = true;
+
+        // One answer per configuration a run could start under, which is one
+        // per directory holding a file. A run deeper than the deepest file
+        // sees the same layers as that file does, so there is nothing further
+        // to ask about.
+        let mut answers: Vec<Finding> = Vec::new();
+        for under in layers(modes) {
+            let under = &under;
+            // What the layers from the root down to `under` settle on. The
+            // closest file to the run wins, so the deepest layer naming a key
+            // is the one in force.
+            let effective = |key: &str| -> Option<&FoundMode> {
+                modes
+                    .iter()
+                    .filter(|m| m.mode.key == key && applies(&m.path, under))
+                    .max_by_key(|m| project_of(&m.path).depth())
+            };
+            let Some(unprompted) = effective(NEVER.0).filter(|m| m.mode.value == NEVER.1) else {
+                continue;
+            };
+            // Both spellings of the sandbox, the deeper of the two winning
+            // where a file writes both, which the reference tells it not to.
+            let Some(sandbox) = [SANDBOX, PROFILE]
+                .iter()
+                .filter_map(|key| effective(key))
+                .max_by_key(|m| project_of(&m.path).depth())
+            else {
+                continue;
+            };
+            let defined: Vec<&Profile> = profiles
+                .iter()
+                .filter(|p| applies(&p.path, under))
+                .map(|p| &p.profile)
+                .collect();
+            if !writes(&sandbox.mode, &defined) {
+                continue;
             }
-            if writable.is_none() && writes(&held.mode) {
-                *writable = Some(held);
+
+            // Placed at the sandbox, which is the half granting the writes,
+            // and quoting both: the sandbox line on its own is a value this
+            // rule's own prose calls harmless. A finding carries one path, so
+            // where the other half is in another file the evidence names it,
+            // last: evidence is clipped to a width, and the two halves matter
+            // more than which file the far one sits in.
+            let from = if unprompted.path == sandbox.path {
+                String::new()
+            } else {
+                format!(" in {}", unprompted.path.as_str())
+            };
+            let said = format!(
+                "{} = {:?} with {} = {:?}{from}",
+                sandbox.mode.key, sandbox.mode.value, NEVER.0, NEVER.1
+            );
+            let found = said_at(&sandbox.path, self.id(), sandbox.at, &said, width);
+            // The same pair settles several runs where a deeper file says
+            // nothing about either key, and that is one thing to fix.
+            if !answers.contains(&found) {
+                answers.push(found);
             }
         }
-
-        per_file
-            .into_values()
-            .filter_map(|(unprompted, writable)| {
-                let writable = writable.filter(|_| unprompted)?;
-                // Placed at the sandbox, which is the half granting the
-                // writes, and quoting both: the sandbox line on its own is a
-                // value this rule's own prose calls harmless.
-                let said = format!(
-                    "{} = {:?} with {} = {:?}",
-                    NEVER.0, NEVER.1, writable.mode.key, writable.mode.value
-                );
-                Some(said_at(
-                    &writable.path,
-                    self.id(),
-                    writable.at,
-                    &said,
-                    width,
-                ))
-            })
-            .collect()
+        answers
     }
 }
 
@@ -140,6 +203,7 @@ mod tests {
     use super::*;
     use crate::extract::Format;
     use crate::finding::DEFAULT_EVIDENCE_WIDTH;
+    use crate::rule::FoundProfile;
     use crate::rule::judge;
 
     fn mode(key: &str, value: &str) -> Autonomy {
@@ -149,12 +213,13 @@ mod tests {
         }
     }
 
-    /// A file as a test writes it: where it is, what it says, and the modes
-    /// a scan would have read out of it.
+    /// A file as a test writes it: where it is, what it says, the modes a
+    /// scan would have read out of it, and any profile it defines.
     struct File<'a> {
         path: &'a str,
         source: &'a str,
         modes: &'a [(&'a str, &'a str)],
+        profiles: &'a [(&'a str, Option<&'a str>, bool)],
     }
 
     /// Judged the way the scan judges it, one report over every file, with
@@ -171,13 +236,47 @@ mod tests {
             .collect()
     }
 
-    /// What the rule says about one scan.
+    /// The profiles those files define, as the scan gathers them.
+    fn defined_in(files: &[File<'_>]) -> Vec<FoundProfile> {
+        files
+            .iter()
+            .flat_map(|file| {
+                let path = RepoPath::root().join(file.path);
+                file.profiles
+                    .iter()
+                    .map(move |(name, extends, writes)| FoundProfile {
+                        path: path.clone(),
+                        profile: Profile {
+                            name: (*name).to_owned(),
+                            extends: extends.map(str::to_owned),
+                            writes: *writes,
+                        },
+                    })
+            })
+            .collect()
+    }
+
+    /// What the rule says about one scan, quoted as a report quotes it.
     fn said_about(files: &[File<'_>]) -> Vec<Finding> {
+        said_at_width(files, DEFAULT_EVIDENCE_WIDTH)
+    }
+
+    /// The same, with room for every word, for a test about what the evidence
+    /// says rather than about how wide a report is.
+    fn said_widely(files: &[File<'_>]) -> Vec<Finding> {
+        said_at_width(files, 200)
+    }
+
+    fn said_at_width(files: &[File<'_>], width: usize) -> Vec<Finding> {
         let modes = found_in(files);
+        let profiles = defined_in(files);
         judge(
-            &Examined::Report { modes: &modes },
+            &Examined::Report {
+                modes: &modes,
+                profiles: &profiles,
+            },
             &[RuleId::UnpromptedWriteAccess],
-            DEFAULT_EVIDENCE_WIDTH,
+            width,
         )
     }
 
@@ -186,6 +285,7 @@ mod tests {
             path: ".codex/config.toml",
             source,
             modes,
+            profiles: &[],
         }])
     }
 
@@ -307,40 +407,195 @@ mod tests {
         );
     }
 
-    /// A profile of its own is a hole, stated rather than guessed at. Such a
-    /// table grants writes with `filesystem.<path>` set to write or by
-    /// extending `:workspace`, and reading it is an extraction this rule does
-    /// not have, so a configuration using one is silent. Pinned, so closing
-    /// the hole is a visible change rather than a number moving.
+    /// Codex walks from the project root to the working directory and loads
+    /// every `.codex/config.toml` it finds, so two files in that chain are
+    /// one configuration. A root that stops the asking and a nested file that
+    /// permits writes leave neither control for a run below.
+    ///
+    /// A finding carries one path, so it is placed at the sandbox and the
+    /// evidence names the file the other half came from.
     #[test]
-    fn a_permission_profile_of_its_own_is_not_read() {
-        assert!(
-            codex(
-                "approval_policy = \"never\"\ndefault_permissions = \"ours\"\n\n[permissions.ours]\nextends = \":workspace\"\n",
-                &[("approval_policy", "never"), ("default_permissions", "ours")],
-            )
-            .is_empty()
-        );
-    }
-
-    /// One file at a time, which is a stated limit rather than a claim about
-    /// Codex. The reference puts project-scoped overrides in
-    /// `.codex/config.toml` files, plural, and does not say in what order they
-    /// merge, so a pair split across two of them is left unreported: joining
-    /// them in an order the documentation does not give would be a finding
-    /// against a configuration that never applied.
-    #[test]
-    fn two_halves_in_two_files_are_not_a_pair() {
-        let found = said_about(&[
+    fn two_halves_in_two_layers_are_a_pair() {
+        let found = said_widely(&[
             File {
                 path: ".codex/config.toml",
                 source: "approval_policy = \"never\"\n",
                 modes: &[("approval_policy", "never")],
+                profiles: &[],
             },
             File {
                 path: "nested/.codex/config.toml",
                 source: "sandbox_mode = \"workspace-write\"\n",
                 modes: &[("sandbox_mode", "workspace-write")],
+                profiles: &[],
+            },
+        ]);
+
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].path.as_str(), "nested/.codex/config.toml");
+        let said = found[0].evidence.as_str();
+        assert!(said.contains(".codex/config.toml"), "{said:?}");
+        assert!(said.contains("workspace-write"), "{said:?}");
+    }
+
+    /// The closest file to the run wins, which is the whole reason the order
+    /// matters: a nested file putting the sandbox back is the fix, and
+    /// reporting it anyway would report a configuration that never applied.
+    #[test]
+    fn a_nested_layer_putting_the_sandbox_back_is_not_a_pair_there() {
+        let found = said_about(&[
+            File {
+                path: ".codex/config.toml",
+                source: "approval_policy = \"never\"\nsandbox_mode = \"workspace-write\"\n",
+                modes: &[
+                    ("approval_policy", "never"),
+                    ("sandbox_mode", "workspace-write"),
+                ],
+                profiles: &[],
+            },
+            File {
+                path: "nested/.codex/config.toml",
+                source: "sandbox_mode = \"read-only\"\n",
+                modes: &[("sandbox_mode", "read-only")],
+                profiles: &[],
+            },
+        ]);
+
+        // The root still answers for a run started there, and only that.
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].path.as_str(), ".codex/config.toml");
+    }
+
+    /// Only the chain from the root down. Two directories beside each other
+    /// are two configurations, and neither loads the other, so joining them
+    /// would report a pair nothing ever applies together.
+    #[test]
+    fn two_halves_in_two_directories_beside_each_other_are_not_a_pair() {
+        let found = said_about(&[
+            File {
+                path: "a/.codex/config.toml",
+                source: "approval_policy = \"never\"\n",
+                modes: &[("approval_policy", "never")],
+                profiles: &[],
+            },
+            File {
+                path: "b/.codex/config.toml",
+                source: "sandbox_mode = \"workspace-write\"\n",
+                modes: &[("sandbox_mode", "workspace-write")],
+                profiles: &[],
+            },
+        ]);
+
+        assert!(found.is_empty(), "{found:?}");
+    }
+
+    /// A directory holding another tool's settings is a layer too, since a
+    /// mode was read there, and the pair it inherits is the same pair. One
+    /// thing to fix is one finding.
+    #[test]
+    fn a_pair_inherited_by_two_layers_is_reported_once() {
+        let found = said_about(&[
+            File {
+                path: ".codex/config.toml",
+                source: "approval_policy = \"never\"\nsandbox_mode = \"workspace-write\"\n",
+                modes: &[
+                    ("approval_policy", "never"),
+                    ("sandbox_mode", "workspace-write"),
+                ],
+                profiles: &[],
+            },
+            File {
+                path: "nested/.claude/settings.json",
+                source: "{\"permissions\":{\"defaultMode\":\"plan\"}}",
+                modes: &[("permissions.defaultMode", "plan")],
+                profiles: &[],
+            },
+        ]);
+
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].path.as_str(), ".codex/config.toml");
+    }
+
+    /// A profile of its own is resolved rather than guessed at: the table
+    /// defining it grants writes, so the pair is there.
+    #[test]
+    fn a_permission_profile_that_writes_is_the_sandbox_half() {
+        let found = said_about(&[File {
+            path: ".codex/config.toml",
+            source: "approval_policy = \"never\"\ndefault_permissions = \"ours\"\n\n[permissions.ours.filesystem]\n\"/srv\" = \"write\"\n",
+            modes: &[
+                ("approval_policy", "never"),
+                ("default_permissions", "ours"),
+            ],
+            profiles: &[("ours", None, true)],
+        }]);
+
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(found[0].evidence.as_str().contains("ours"), "{found:?}");
+    }
+
+    /// And one that grants nothing is not, which is what keeps this from
+    /// firing on every profile a file happens to name.
+    #[test]
+    fn a_permission_profile_that_writes_nothing_is_not() {
+        let found = said_about(&[File {
+            path: ".codex/config.toml",
+            source: "approval_policy = \"never\"\ndefault_permissions = \"ours\"\n",
+            modes: &[
+                ("approval_policy", "never"),
+                ("default_permissions", "ours"),
+            ],
+            profiles: &[("ours", Some(":read-only"), false)],
+        }]);
+
+        assert!(found.is_empty(), "{found:?}");
+    }
+
+    /// A profile defined in a root layer is in force below it, because Codex
+    /// loads that layer for a run there.
+    #[test]
+    fn a_profile_defined_in_a_root_layer_is_in_force_below_it() {
+        let found = said_about(&[
+            File {
+                path: ".codex/config.toml",
+                source: "[permissions.ours]\nextends = \":workspace\"\n",
+                modes: &[],
+                profiles: &[("ours", Some(":workspace"), false)],
+            },
+            File {
+                path: "nested/.codex/config.toml",
+                source: "approval_policy = \"never\"\ndefault_permissions = \"ours\"\n",
+                modes: &[
+                    ("approval_policy", "never"),
+                    ("default_permissions", "ours"),
+                ],
+                profiles: &[],
+            },
+        ]);
+
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].path.as_str(), "nested/.codex/config.toml");
+    }
+
+    /// A profile defined only below where it is selected is not in force
+    /// there: Codex loads the layers above a run, not the ones under it.
+    #[test]
+    fn a_profile_defined_below_where_it_is_selected_is_not_in_force() {
+        let found = said_about(&[
+            File {
+                path: ".codex/config.toml",
+                source: "approval_policy = \"never\"\ndefault_permissions = \"ours\"\n",
+                modes: &[
+                    ("approval_policy", "never"),
+                    ("default_permissions", "ours"),
+                ],
+                profiles: &[],
+            },
+            File {
+                path: "nested/.codex/config.toml",
+                source: "[permissions.ours.filesystem]\n\"/srv\" = \"write\"\n",
+                modes: &[],
+                profiles: &[("ours", None, true)],
             },
         ]);
 
@@ -384,11 +639,13 @@ mod tests {
                 path: ".codex/config.toml",
                 source,
                 modes,
+                profiles: &[],
             },
             File {
                 path: "nested/.codex/config.toml",
                 source,
                 modes,
+                profiles: &[],
             },
         ]);
 
@@ -438,7 +695,10 @@ mod tests {
 
         assert!(
             judge(
-                &Examined::Report { modes: &held },
+                &Examined::Report {
+                    modes: &held,
+                    profiles: &[],
+                },
                 &[],
                 DEFAULT_EVIDENCE_WIDTH
             )

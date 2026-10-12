@@ -22,7 +22,7 @@
 # whether a rule runs stays this file.
 
 version = 4
-revision = 11
+revision = 12
 
 report_checks = ["unprompted-write-access"]
 
@@ -128,7 +128,7 @@ glob = "**/.codex/config.toml"
 tool = "codex"
 kind = "codex"
 format = "toml"
-extract = ["mcp-servers", "autonomy", "hooks"]
+extract = ["mcp-servers", "autonomy", "hooks", "permission-profiles"]
 check = ["bypass-permissions", "plaintext-transport"]
 last_verified = "2026-10-11"
 source = "https://developers.openai.com/codex/config-reference"
@@ -566,7 +566,7 @@ glob = ".codex/config.toml"
 tool = "codex"
 kind = "codex"
 format = "toml"
-extract = ["mcp-servers", "autonomy", "hooks"]
+extract = ["mcp-servers", "autonomy", "hooks", "permission-profiles"]
 check = ["bypass-permissions", "plaintext-transport"]
 last_verified = "2026-10-11"
 source = "https://developers.openai.com/codex/config-reference"

@@ -1,0 +1,15 @@
+The sandbox half written as a profile of its own rather than as a mode.
+
+`default_permissions` names a `[permissions.<name>]` table, and what that table
+grants is read out of it: a filesystem rule for the workspace roots is a write,
+so nothing asks and the agent may write.
+
+>>> .codex/config.toml
+approval_policy = "never"
+default_permissions = "ours"
+
+[permissions.ours]
+description = "what our agents may touch"
+
+[permissions.ours.filesystem.":workspace_roots"]
+"." = "write"
