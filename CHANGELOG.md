@@ -38,7 +38,10 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   neither is a
   value: placement finds the key and then counts copies of the value after it,
   so a note between two declarations used to put the second finding on the
-  note. The scan now carries through the values as well.
+  note. The scan now carries through the values as well, and counts only the
+  values a key was given, which is the list or block after it or the rest of
+  its line: a `label` holding the same word between two `runOn` declarations
+  is another key's value, and counting it put the second finding on the label.
 
   One pass also means a file holding many copies of a key costs its length
   rather than its square. Measured on a 760 KB file with twenty thousand
@@ -96,7 +99,8 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   A finding carries one path, so it is placed at the sandbox and the evidence
   names the file the other half came from, last, because evidence is clipped
   to a width and the two halves matter more than which file the far one sits
-  in.
+  in. Two pairs are compared before that clipping, so how wide a report quotes
+  cannot change how many findings it holds.
 
   A `default_permissions` naming a `[permissions.<name>]` table of its own is
   resolved against that table rather than guessed at from its name. The

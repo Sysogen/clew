@@ -157,29 +157,34 @@ pub(crate) fn after_key(
     // A file writes the whole key, as VS Code does, or only its last segment,
     // as one nesting `defaultMode` under `permissions` does.
     let leaf = key.rsplit('.').next().unwrap_or(key);
-    let from = key_end(source, format, key).or_else(|| key_end(source, format, leaf))?;
-    // Counted in code only, as the key was. A value named in a comment is a
-    // note, so a note between two declarations would otherwise put the second
-    // finding on the note rather than on the second declaration.
     let quoted = format!("\"{value}\"");
-    let written = in_code(source, format, from, &quoted, false);
-    if let Some(at) = written.get(occurrence) {
+    for name in [key, leaf] {
+        let given = given(source, format, name);
+        if given.is_empty() {
+            continue;
+        }
         // Past the opening quote, so the finding points at the value.
-        return Some(at + 1);
+        if let Some(at) = in_code(source, format, &given, &quoted, false).get(occurrence) {
+            return Some(at + 1);
+        }
+        // Frontmatter writes a list unquoted.
+        if let Some(at) = in_code(source, format, &given, value, true).get(occurrence) {
+            return Some(*at);
+        }
     }
-    // Frontmatter writes a list unquoted.
-    in_code(source, format, from, value, true)
-        .get(occurrence)
-        .copied()
+    None
 }
 
-/// Where `source` writes `needle` at or after byte `from`, in code.
+/// The byte ranges holding the values `key` is given, one for each place the
+/// file writes it as a key, in order.
 ///
-/// A value sits inside a string, so a string counts and only a comment does
-/// not: what this excludes is a copy the file is not declaring. `whole` asks
-/// for the bare form, where no identifier character runs into it and nothing
-/// opens a longer one after it.
-fn in_code(source: &str, format: Format, from: usize, needle: &str, whole: bool) -> Vec<usize> {
+/// A key's values are the ones it was given, not every copy of the text after
+/// it: between two `runOn` declarations a `label` holding the same word is
+/// another key's value, and counting it put the second finding on the label.
+///
+/// A list or a block runs to its close, and anything else to the end of the
+/// line, which is where frontmatter writes several values for one key.
+fn given(source: &str, format: Format, key: &str) -> Vec<(usize, usize)> {
     let syntax = format.syntax();
     let text = source.as_bytes();
     let mut scan = Scan::default();
@@ -187,7 +192,112 @@ fn in_code(source: &str, format: Format, from: usize, needle: &str, whole: bool)
     let mut i = 0;
 
     while i < text.len() {
-        if i >= from
+        if let Some(on) = scan.inside(text, i) {
+            i = on;
+            continue;
+        }
+        if let Some(end) = key_at(source, syntax, i, key) {
+            found.push((end, span(source, format, end)));
+            i = end;
+            continue;
+        }
+        if let Some(on) = scan.opens(text, i, syntax) {
+            i = on;
+            continue;
+        }
+        i += 1;
+    }
+
+    found
+}
+
+/// Where the values written after byte `at` end.
+fn span(source: &str, format: Format, at: usize) -> usize {
+    let syntax = format.syntax();
+    let text = source.as_bytes();
+    let opens = source[at..]
+        .char_indices()
+        .find(|(_, c)| !c.is_whitespace() && *c != ':' && *c != '=')
+        .map(|(offset, c)| (at + offset, c));
+    let Some((from, c @ ('[' | '{'))) = opens else {
+        // One value, or several on one line, which is frontmatter's shape.
+        return source[at..]
+            .find('\n')
+            .map_or(text.len(), |newline| at + newline);
+    };
+
+    // To the close that matches, counting the nesting between and reading
+    // what is a string and what is a comment on the way.
+    let shuts = if c == '[' { b']' } else { b'}' };
+    let mut scan = Scan::default();
+    let mut depth = 0_usize;
+    let mut i = from;
+    while i < text.len() {
+        if let Some(on) = scan.inside(text, i) {
+            i = on;
+            continue;
+        }
+        if text[i] == c as u8 {
+            depth += 1;
+        } else if text[i] == shuts {
+            depth -= 1;
+            if depth == 0 {
+                return i;
+            }
+        }
+        if let Some(on) = scan.opens(text, i, syntax) {
+            i = on;
+            continue;
+        }
+        i += 1;
+    }
+    text.len()
+}
+
+/// Just past `key` where byte `i` of `source` writes it as one: quoted, as
+/// JSON does, or bare before its separator, as TOML and YAML do.
+fn key_at(source: &str, syntax: Syntax, i: usize, key: &str) -> Option<usize> {
+    let text = source.as_bytes();
+    let wanted = key.as_bytes();
+    // A quoted key, in whichever quote the format allows: TOML and YAML both
+    // take one in either.
+    let closes = i + 1 + wanted.len();
+    if syntax.quotes.contains(&text[i])
+        && text.get(i + 1..closes) == Some(wanted)
+        && text.get(closes) == Some(&text[i])
+        && separated(source, closes + 1)
+    {
+        return Some(closes + 1);
+    }
+    if !text[i..].starts_with(wanted) {
+        return None;
+    }
+    let runs_on = i > 0
+        && (text[i - 1].is_ascii_alphanumeric() || text[i - 1] == b'_' || text[i - 1] == b'-');
+    (!runs_on && separated(source, i + wanted.len())).then_some(i + wanted.len())
+}
+
+/// Where `source` writes `needle` inside one of `given`, in code.
+///
+/// A value sits inside a string, so a string counts and only a comment does
+/// not: what this excludes is a copy the file is not declaring. `whole` asks
+/// for the bare form, where no identifier character runs into it and nothing
+/// opens a longer one after it.
+fn in_code(
+    source: &str,
+    format: Format,
+    given: &[(usize, usize)],
+    needle: &str,
+    whole: bool,
+) -> Vec<usize> {
+    let syntax = format.syntax();
+    let text = source.as_bytes();
+    let mut scan = Scan::default();
+    let mut found = Vec::new();
+    let mut i = 0;
+
+    while i < text.len() {
+        if given.iter().any(|(from, to)| i >= *from && i < *to)
             && !scan.in_comment()
             && text[i..].starts_with(needle.as_bytes())
             && (!whole || bare(text, i, needle.len()))
@@ -206,16 +316,6 @@ fn in_code(source: &str, format: Format, from: usize, needle: &str, whole: bool)
     }
 
     found
-}
-
-/// Whether the `len` bytes at `at` stand on their own: no identifier
-/// character runs into them, and nothing opens a longer form after them.
-fn bare(text: &[u8], at: usize, len: usize) -> bool {
-    let word = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
-    let before = at > 0 && word(text[at - 1]);
-    let after = text.get(at + len).copied();
-    // `Bash` must not be taken for the start of `Bash(*)` either.
-    !before && !after.is_some_and(|c| word(c) || c == b'(')
 }
 
 /// The builtin a `crushrc` lists its pre-approvals with. A `crushrc` holds no
@@ -384,72 +484,21 @@ impl Scan {
     }
 }
 
+/// Whether the `len` bytes at `at` stand on their own: no identifier
+/// character runs into them, and nothing opens a longer form after them.
+fn bare(text: &[u8], at: usize, len: usize) -> bool {
+    let word = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
+    let before = at > 0 && word(text[at - 1]);
+    let after = text.get(at + len).copied();
+    // `Bash` must not be taken for the start of `Bash(*)` either.
+    !before && !after.is_some_and(|c| word(c) || c == b'(')
+}
+
 /// Whether a separator follows byte `at`, which is what makes the text before
 /// it a key rather than something that reads like one.
 fn separated(source: &str, at: usize) -> bool {
     let after = source.get(at..).unwrap_or_default().trim_start();
     after.starts_with('=') || after.starts_with(':')
-}
-
-/// Just past `key` where `source` writes it as a key: quoted, as JSON does,
-/// or bare before its separator, as TOML and YAML do.
-///
-/// Read left to right in one pass, because a key is only a key where the file
-/// is writing one. Inside a comment it is a note, and placing a finding there
-/// quotes the commented line as its evidence, which reads as an accusation
-/// about something somebody had already turned off. Inside a value it is
-/// prose, and a quoted one looks exactly like a key: what tells them apart is
-/// the separator after the closing quote. Measured, a file naming the setting
-/// in a note had the finding land on the next thing that looked like the
-/// value, which was a different setting.
-///
-/// One pass rather than a scan for each candidate, so a file with many copies
-/// of the key costs its length rather than its square.
-///
-/// What counts as a comment and as a string is [`Format::syntax`], because
-/// the same two characters mean different things in different files: `//`
-/// opens a comment in JSONC and sits inside a url in YAML.
-fn key_end(source: &str, format: Format, key: &str) -> Option<usize> {
-    let syntax = format.syntax();
-    let text = source.as_bytes();
-    let wanted = key.as_bytes();
-    let mut scan = Scan::default();
-    let mut i = 0;
-
-    while i < text.len() {
-        if let Some(on) = scan.inside(text, i) {
-            i = on;
-            continue;
-        }
-        // The string about to open, when it holds the key and a separator
-        // follows the closing quote, in whichever quote the format allows:
-        // TOML and YAML both take a quoted key in either. Anything else a
-        // quote opens is a value.
-        let closes = i + 1 + wanted.len();
-        if syntax.quotes.contains(&text[i])
-            && text.get(i + 1..closes) == Some(wanted)
-            && text.get(closes) == Some(&text[i])
-            && separated(source, closes + 1)
-        {
-            return Some(closes + 1);
-        }
-        if let Some(on) = scan.opens(text, i, syntax) {
-            i = on;
-            continue;
-        }
-        if text[i..].starts_with(wanted) {
-            let runs_on = i > 0
-                && (text[i - 1].is_ascii_alphanumeric()
-                    || text[i - 1] == b'_'
-                    || text[i - 1] == b'-');
-            if !runs_on && separated(source, i + wanted.len()) {
-                return Some(i + wanted.len());
-            }
-        }
-        i += 1;
-    }
-
-    None
 }
 
 /// Where `text` holds `word` whole: no identifier character runs into it, and
@@ -769,6 +818,34 @@ mod tests {
             after_key(toml, Format::Toml, "sandbox_mode", "danger-full-access", 0).expect("placed");
 
         assert_eq!(placed(toml, at).expect("a position").0.line, 4);
+    }
+
+    /// An occurrence counts the values a key was given, not every copy of
+    /// the text after it. A `label` holding the same word between two
+    /// declarations is another key's value, and counting it put the second
+    /// finding on the label.
+    #[test]
+    fn a_value_under_another_key_is_not_a_copy_of_this_one() {
+        let json = "{\n  \"runOn\": \"folderOpen\",\n  \"label\": \"folderOpen\",\n  \"runOn\": \"folderOpen\"\n}\n";
+
+        let first = after_key(json, Format::Json, "runOn", "folderOpen", 0).expect("placed");
+        let second = after_key(json, Format::Json, "runOn", "folderOpen", 1).expect("placed");
+
+        assert_eq!(placed(json, first).expect("a position").0.line, 2);
+        assert_eq!(placed(json, second).expect("a position").0.line, 4);
+    }
+
+    /// And a key given a list keeps counting that list, since one key with
+    /// several values is how a pre-approval is written.
+    #[test]
+    fn a_key_given_a_list_counts_the_list() {
+        let json = "{\n  \"allow\": [\n    \"Bash(*)\",\n    \"Bash(*)\"\n  ]\n}\n";
+
+        let first = after_key(json, Format::Json, "allow", "Bash(*)", 0).expect("placed");
+        let second = after_key(json, Format::Json, "allow", "Bash(*)", 1).expect("placed");
+
+        assert_eq!(placed(json, first).expect("a position").0.line, 3);
+        assert_eq!(placed(json, second).expect("a position").0.line, 4);
     }
 
     /// A value named in a comment is a note too. Placement finds the key and

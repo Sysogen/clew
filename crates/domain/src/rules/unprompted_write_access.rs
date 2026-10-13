@@ -10,7 +10,7 @@ use crate::hook::project_of;
 use crate::profile::Profile;
 use crate::repo_path::RepoPath;
 use crate::rule::{Examined, FoundMode, Rule, Subject};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// See [`Rule::detail`] for what this flags and why.
 pub struct UnpromptedWriteAccess;
@@ -52,8 +52,10 @@ struct Declared<'a> {
 /// The project directory rather than the file's own throughout: `.codex` sits
 /// between them, and `a/.codex` is no prefix of `a/b/.codex` although `a` is
 /// of `a/b`.
-fn ancestry(at: &RepoPath, projects: &[RepoPath]) -> impl Iterator<Item = RepoPath> {
-    let stops: Vec<RepoPath> = projects.to_vec();
+fn ancestry<'a>(
+    at: &RepoPath,
+    stops: &'a BTreeSet<&RepoPath>,
+) -> impl Iterator<Item = RepoPath> + 'a {
     let mut next = Some(at.clone());
     std::iter::from_fn(move || {
         let here = next.take()?;
@@ -184,12 +186,23 @@ impl Rule for UnpromptedWriteAccess {
         // per directory holding a declaration. A run deeper than the deepest
         // of those sees the same layers as that directory does, so there is
         // nothing further to ask about.
+        // The project roots, as a set: every candidate directory walks up
+        // through them, and searching a list at each step would be the square
+        // of what a repository chose to hold.
+        let stops: BTreeSet<&RepoPath> = projects.iter().collect();
+
         let mut answers: Vec<Finding> = Vec::new();
+        // Compared before the evidence is built, not after. Evidence is
+        // clipped to a width, so two pairs differing only in the file their
+        // far half sits in collapsed into one whenever that part fell off the
+        // end, which made the number of findings depend on how wide a report
+        // quotes.
+        let mut said_already: Vec<(&RepoPath, &RepoPath, &str)> = Vec::new();
         for under in by_dir.keys() {
             // The layers a run there loads, closest first, which is the order
             // they win in: the closest file to the run wins a key, and a
             // profile table is a key like any other.
-            let chain: Vec<&Declared<'_>> = ancestry(under, projects)
+            let chain: Vec<&Declared<'_>> = ancestry(under, &stops)
                 .filter_map(|dir| by_dir.get(&dir))
                 .collect();
             let effective = |key: &str| -> Option<&FoundMode> {
@@ -235,11 +248,12 @@ impl Rule for UnpromptedWriteAccess {
                 "{} = {:?} with {} = {:?}{from}",
                 sandbox.mode.key, sandbox.mode.value, NEVER.0, NEVER.1
             );
-            let found = said_at(&sandbox.path, self.id(), sandbox.at, &said, width);
             // The same pair settles several runs where a deeper directory
             // says nothing about either key, and that is one thing to fix.
-            if !answers.contains(&found) {
-                answers.push(found);
+            let pair = (&sandbox.path, &unprompted.path, sandbox.mode.value.as_str());
+            if !said_already.contains(&pair) {
+                said_already.push(pair);
+                answers.push(said_at(&sandbox.path, self.id(), sandbox.at, &said, width));
             }
         }
         answers
@@ -250,7 +264,7 @@ impl Rule for UnpromptedWriteAccess {
 mod tests {
     use super::*;
     use crate::extract::Format;
-    use crate::finding::DEFAULT_EVIDENCE_WIDTH;
+    use crate::finding::{DEFAULT_EVIDENCE_WIDTH, MIN_EVIDENCE_WIDTH};
     use crate::rule::FoundProfile;
     use crate::rule::judge;
 
@@ -625,6 +639,40 @@ mod tests {
         ]);
 
         assert!(found.is_empty(), "{found:?}");
+    }
+
+    /// Two pairs sharing one sandbox are two things to fix, and how wide a
+    /// report quotes its evidence must not change that. The evidence is
+    /// clipped to a width, so comparing findings collapsed them whenever the
+    /// part naming the far file fell off the end.
+    #[test]
+    fn two_pairs_are_two_findings_however_narrow_the_evidence() {
+        let files = &[
+            File {
+                path: ".codex/config.toml",
+                source: "sandbox_mode = \"workspace-write\"\n",
+                modes: &[("sandbox_mode", "workspace-write")],
+                profiles: &[],
+            },
+            File {
+                path: "one/.codex/config.toml",
+                source: "approval_policy = \"never\"\n",
+                modes: &[("approval_policy", "never")],
+                profiles: &[],
+            },
+            File {
+                path: "one/two/.codex/config.toml",
+                source: "approval_policy = \"never\"\n",
+                modes: &[("approval_policy", "never")],
+                profiles: &[],
+            },
+        ];
+
+        for width in [MIN_EVIDENCE_WIDTH, DEFAULT_EVIDENCE_WIDTH, 200] {
+            let found = said_at_width(files, &[""], width);
+
+            assert_eq!(found.len(), 2, "at {width}: {found:?}");
+        }
     }
 
     /// A directory holding another tool's settings is a layer too, since a
