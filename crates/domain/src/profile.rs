@@ -4,6 +4,8 @@
 //! A named permissions profile, which is how Codex writes a sandbox apart
 //! from the file that selects it.
 
+use std::collections::{BTreeMap, BTreeSet};
+
 /// A named permissions profile a configuration file defines.
 ///
 /// Recorded as found, not judged: what a profile grants is read out of it and
@@ -41,23 +43,31 @@ impl Profile {
     /// followed one would not finish.
     #[must_use]
     pub fn selected(defined: &[&Self], selected: &str) -> bool {
-        let mut name = selected.to_owned();
-        let mut seen: Vec<String> = Vec::new();
+        // Indexed once, and the first of a name kept, because `defined`
+        // arrives closest first and the closest file wins a key. Walking the
+        // slice for each hop instead made a chain cost its own square, on a
+        // chain the repository being scanned chose the length of.
+        let mut by_name: BTreeMap<&str, &Self> = BTreeMap::new();
+        for held in defined {
+            by_name.entry(held.name.as_str()).or_insert(held);
+        }
+
+        let mut name = selected;
+        let mut seen: BTreeSet<&str> = BTreeSet::new();
         loop {
             if name == WORKSPACE || name == FULL_ACCESS {
                 return true;
             }
-            if seen.contains(&name) {
+            if !seen.insert(name) {
                 return false;
             }
-            let Some(held) = defined.iter().find(|p| p.name == name) else {
+            let Some(held) = by_name.get(name) else {
                 return false;
             };
             if held.writes {
                 return true;
             }
-            seen.push(name);
-            let Some(parent) = held.extends.clone() else {
+            let Some(parent) = held.extends.as_deref() else {
                 return false;
             };
             name = parent;

@@ -29,7 +29,9 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   while YAML and Bash need whitespace or a line start before it, since `a#b`
   is a scalar holding a hash in one and a word in the other, and TOML takes a
   single-quoted string literally and runs a long one between three quotes,
-  honouring escapes in the basic form and none in the literal one. Bash also
+  honouring escapes in the basic form and none in the literal one, and closing
+  on the last three of a run, since up to two quotes may sit against the
+  delimiter and belong to the value. Bash also
   begins a token after an operator, so `:;# x` comments where `a#b` does not.
   A key written in any of those is text, not a declaration, and neither is a
   value: placement finds the key and then counts copies of the value after it,
@@ -139,8 +141,11 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   how a configuration escapes a rule by being written the newer way.
   `approval_policy` is read as inventory, since a scan saying what a file
   declares cannot leave out the key deciding whether anyone is asked. Its
-  table form, `{ granular = ... }`, selects categories rather than a mode, so
-  nothing is recorded for it.
+  table form is recorded by the name it holds, which the reference calls
+  `granular`: a file writing it is overriding whatever a file above it said,
+  and recording nothing for it left that other file's `never` standing as
+  though nothing had replaced it. That key alone takes a table, so one found
+  under any other mode is a shape nothing documents and is still passed over.
 
 - Git hooks are read, which no row covered: `.git` is pruned by default, so
   `.git/hooks` was never entered, and clew did not see its own hooks in

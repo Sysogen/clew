@@ -469,6 +469,32 @@ mod tests {
         assert!(said.contains("workspace-write"), "{said:?}");
     }
 
+    /// A nested file keeping some prompts overrides a root that kept none, so
+    /// the pair is not in force below it. Recording nothing for the table
+    /// form let that override vanish and left the root's `never` standing.
+    #[test]
+    fn a_nested_granular_policy_overrides_a_root_that_asks_nothing() {
+        let found = said_about(&[
+            File {
+                path: ".codex/config.toml",
+                source: "approval_policy = \"never\"\n",
+                modes: &[("approval_policy", "never")],
+                profiles: &[],
+            },
+            File {
+                path: "service/.codex/config.toml",
+                source: "sandbox_mode = \"workspace-write\"\n\n[approval_policy.granular]\nrules = true\n",
+                modes: &[
+                    ("approval_policy", "granular"),
+                    ("sandbox_mode", "workspace-write"),
+                ],
+                profiles: &[],
+            },
+        ]);
+
+        assert!(found.is_empty(), "{found:?}");
+    }
+
     /// The closest file to the run wins, which is the whole reason the order
     /// matters: a nested file putting the sandbox back is the fix, and
     /// reporting it anyway would report a configuration that never applied.

@@ -627,6 +627,19 @@ fn autonomy(root: &serde_json::Value, format: Format) -> Vec<Autonomy> {
                 serde_json::Value::String(text) => text.clone(),
                 // VS Code writes its switch as a boolean.
                 serde_json::Value::Bool(yes) => yes.to_string(),
+                // Codex writes `approval_policy` as a table too, and the
+                // reference names that form after the key it holds. Recorded
+                // by that name rather than passed over: a file writing it is
+                // overriding whatever a file above it said, and recording
+                // nothing let the override vanish and left the other file's
+                // mode standing as though nothing had replaced it.
+                //
+                // That key alone, because the reference gives every other
+                // mode a value, and a table found under one of those is a
+                // shape nothing documents rather than a form of the setting.
+                serde_json::Value::Object(table) if *key == "approval_policy" => {
+                    table.keys().next()?.clone()
+                }
                 _ => return None,
             };
             (!value.trim().is_empty()).then(|| Autonomy {
@@ -1570,19 +1583,20 @@ env = { DATABASE_URL = "postgres://u:hunter2@h/d", PGPORT = "5432" }
         );
     }
 
-    /// `approval_policy` also takes a table, which selects categories rather
-    /// than a mode. A mode is a value, so there is nothing here to record,
-    /// and recording the table's debug spelling would put a Rust shape in a
-    /// report about a TOML file.
+    /// `approval_policy` also takes a table, and the reference names that
+    /// form `granular`. What it selects is recorded by the name the file
+    /// wrote, because a file writing it is overriding whatever a file above
+    /// it said, and recording nothing let that override vanish.
     #[test]
-    fn a_granular_approval_policy_is_not_a_mode() {
-        assert!(
-            modes_of(
-                Format::Toml,
-                "[approval_policy.granular]\nrules = true\nmcp_elicitations = false\n",
-            )
-            .is_empty()
+    fn a_granular_approval_policy_is_the_mode_it_names() {
+        let found = modes_of(
+            Format::Toml,
+            "[approval_policy.granular]\nrules = true\nmcp_elicitations = false\n",
         );
+
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].key, "approval_policy");
+        assert_eq!(found[0].value, "granular");
     }
 
     /// At the root it is a different key, and not one Claude Code honours.
@@ -1693,6 +1707,9 @@ env = { DATABASE_URL = "postgres://u:hunter2@h/d", PGPORT = "5432" }
             assert!(modes_of(Format::Json, text).is_empty(), "{text}");
         }
         assert!(modes_of(Format::Toml, "sandbox_mode = 3\n").is_empty());
+        // A table under a key the reference gives a value: a shape nothing
+        // documents, not a form of the setting.
+        assert!(modes_of(Format::Toml, "[sandbox_mode]\nmode = \"x\"\n").is_empty());
     }
 
     /// Frontmatter has no mode to read.

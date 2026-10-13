@@ -324,9 +324,17 @@ impl Scan {
                     self.escaped = false;
                 } else if c == b'\\' && quote == b'"' {
                     self.escaped = true;
-                } else if c == quote && next == Some(quote) && text.get(i + 2) == Some(&quote) {
-                    self.at = At::Code;
-                    return Some(i + 3);
+                } else if c == quote {
+                    // TOML lets up to two quotes sit against the delimiter,
+                    // so a run of four or five closes and the extras belong
+                    // to the value. Closing at the first three would leave
+                    // one over to open a string of its own.
+                    let run = text[i..].iter().take_while(|c| **c == quote).count();
+                    if run >= 3 {
+                        self.at = At::Code;
+                        return Some(i + run.min(5));
+                    }
+                    return Some(i + run);
                 }
             }
             At::Line => {
@@ -786,6 +794,22 @@ mod tests {
             after_key(toml, Format::Toml, "sandbox_mode", "danger-full-access", 0).expect("placed");
 
         assert_eq!(placed(toml, at).expect("a position").0.line, 3);
+    }
+
+    /// TOML lets up to two quotes sit against the closing delimiter, so a run
+    /// of four or five closes a long string and the extras belong to the
+    /// value. Closing at the first three leaves one over, which opens a
+    /// string of its own and swallows the rest of the file.
+    #[test]
+    fn a_long_string_closes_on_the_last_three_of_a_run() {
+        for note in ["\"\"\"text\"\"\"\"", "\"\"\"text\"\"\"\"\""] {
+            let toml = format!("note = {note}\nsandbox_mode = \"danger-full-access\"\n");
+
+            let at = after_key(&toml, Format::Toml, "sandbox_mode", "danger-full-access", 0)
+                .expect("placed");
+
+            assert_eq!(placed(&toml, at).expect("a position").0.line, 2, "{note:?}");
+        }
     }
 
     /// A long literal string honours none, so a backslash in one is a
