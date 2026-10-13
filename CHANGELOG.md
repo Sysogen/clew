@@ -13,6 +13,15 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   segment anywhere: another block writing the same one is a different setting,
   and anchoring there put the finding on it.
 
+  A grant is looked for the same way. Placement named the leaves alone,
+  `allow` and `allowed` among them, so a grant was looked for in any block
+  spelling one: a server given an `allow` list of its own came first in the
+  file, and `unrestricted-shell` pointed at that line and quoted it, which
+  grants nothing. The paths are now the ones extraction reads and no others,
+  `permissions.allow`, `permissions.allowed_tools`, `tools.allowed` and a
+  skill's `allowed-tools`, in extraction's order of preference, so a file
+  carrying two spellings is placed by the list the tool obeys.
+
 - A server's name is placed at the key declaring it, in the block it was
   declared under. Placement looked for the name among the values of the block
   holding it, so a server named in a sibling's arguments came first in the

@@ -1302,27 +1302,47 @@ mod tests {
         assert!(found.evidence.as_str().contains("Bash(*)"));
     }
 
-    /// Every key a tool lists its pre-approvals under, counted. A spelling
-    /// absent from `GRANT_LISTS` still yields the finding, placed at the file
-    /// rather than the line, so only an assertion on the line catches it.
+    /// Every path a tool lists its pre-approvals under, counted, each written
+    /// as the block it sits in. A path absent from `GRANT_LISTS` still yields
+    /// the finding, placed at the file rather than the line, so only an
+    /// assertion on the line catches it.
     ///
     /// Named here rather than read from the list, because a test that iterates
     /// the list it is checking passes by dropping a case whenever the list
     /// loses one.
     #[test]
     fn a_finding_is_placed_under_each_grant_key() {
-        let keys = ["allow", "allowed-tools", "allowed_tools", "allowed"];
+        let paths = [
+            (
+                "permissions.allow",
+                "{\n  \"permissions\": {\n    \"allow\": [\"Bash\"]\n  }\n}\n",
+                3,
+            ),
+            (
+                "permissions.allowed_tools",
+                "{\n  \"permissions\": {\n    \"allowed_tools\": [\"Bash\"]\n  }\n}\n",
+                3,
+            ),
+            (
+                "tools.allowed",
+                "{\n  \"tools\": {\n    \"allowed\": [\"Bash\"]\n  }\n}\n",
+                3,
+            ),
+            (
+                "allowed-tools",
+                "{\n  \"allowed-tools\": [\"Bash\"]\n}\n",
+                2,
+            ),
+        ];
         assert_eq!(
-            keys.len(),
+            paths.len(),
             place::GRANT_LISTS.len(),
-            "a key has no case here"
+            "a path has no case here"
         );
-        for key in keys {
-            let source = format!("{{\n  \"{key}\": [\n    \"Bash\"\n  ]\n}}\n");
+        for (path, source, line) in paths {
+            let found = grant_found_in("Bash", source, 0).expect("a finding");
 
-            let found = grant_found_in("Bash", &source, 0).expect("a finding");
-
-            assert_eq!(found.at.map(|p| p.line), Some(3), "{key}: {found:?}");
+            assert_eq!(found.at.map(|p| p.line), Some(line), "{path}: {found:?}");
         }
     }
 
@@ -1429,13 +1449,39 @@ mod tests {
     /// Two copies of one grant are two findings, each at its own copy.
     #[test]
     fn two_identical_grants_are_placed_separately() {
-        let source = "{\n  \"allow\": [\n    \"Bash(*)\",\n    \"Bash(*)\"\n  ]\n}\n";
+        let source = "{\n  \"permissions\": {\n    \"allow\": [\n      \"Bash(*)\",\n      \"Bash(*)\"\n    ]\n  }\n}\n";
 
         let first = grant_found_in("Bash(*)", source, 0).expect("a finding");
         let second = grant_found_in("Bash(*)", source, 1).expect("a finding");
 
-        assert_eq!(first.at.map(|p| p.line), Some(3));
-        assert_eq!(second.at.map(|p| p.line), Some(4));
+        assert_eq!(first.at.map(|p| p.line), Some(4));
+        assert_eq!(second.at.map(|p| p.line), Some(5));
+    }
+
+    /// A grant is looked for under the key the tool actually reads it from.
+    /// A leaf on its own is matched in any block that spells it, so an
+    /// unrelated `allow` list earlier in the file took the finding and
+    /// quoted a line the tool grants nothing by.
+    #[test]
+    fn a_grant_under_another_block_is_not_the_one_read() {
+        let source = "{\n  \"mcpServers\": {\n    \"proxy\": { \"allow\": [\"Bash(*)\"] }\n  },\n  \"permissions\": {\n    \"allow\": [\"Bash(*)\"]\n  }\n}\n";
+
+        let found = grant_found_in("Bash(*)", source, 0).expect("a finding");
+
+        assert_eq!(found.at.map(|p| p.line), Some(6), "{found:?}");
+    }
+
+    /// A file carrying two of the spellings is placed by the one extraction
+    /// reads, which is Claude's: the grant reported came from that list, so
+    /// pointing at the other one would quote a line the finding is not about.
+    /// Counterpart to `the_claude_spelling_wins_when_a_file_carries_both`.
+    #[test]
+    fn a_grant_written_twice_is_placed_where_the_tool_reads_it() {
+        let source = "{\n  \"permissions\": {\n    \"allowed_tools\": [\"Bash(*)\"],\n    \"allow\": [\"Bash(*)\"]\n  }\n}\n";
+
+        let found = grant_found_in("Bash(*)", source, 0).expect("a finding");
+
+        assert_eq!(found.at.map(|p| p.line), Some(4), "{found:?}");
     }
 
     /// A tool name in a description is not a grant. Unanchored, the finding
@@ -1452,21 +1498,21 @@ mod tests {
     /// A scope holding the tool's own name is not another grant of it.
     #[test]
     fn a_name_inside_a_scope_is_not_another_grant() {
-        let source = "{\n  \"allow\": [\n    \"Bash(echo Bash)\",\n    \"Bash\"\n  ]\n}\n";
+        let source = "{\n  \"permissions\": {\n    \"allow\": [\n      \"Bash(echo Bash)\",\n      \"Bash\"\n    ]\n  }\n}\n";
 
         let found = grant_found_in("Bash", source, 0).expect("a finding");
 
-        assert_eq!(found.at.map(|p| p.line), Some(4), "{found:?}");
+        assert_eq!(found.at.map(|p| p.line), Some(5), "{found:?}");
     }
 
     /// A bare grant is a whole entry, not the start of a longer one.
     #[test]
     fn a_bare_grant_is_not_found_inside_a_scoped_one() {
-        let source = "{\n  \"allow\": [\n    \"Bash(ls)\",\n    \"Bash\"\n  ]\n}\n";
+        let source = "{\n  \"permissions\": {\n    \"allow\": [\n      \"Bash(ls)\",\n      \"Bash\"\n    ]\n  }\n}\n";
 
         let found = grant_found_in("Bash", source, 0).expect("a finding");
 
-        assert_eq!(found.at.map(|p| p.line), Some(4), "{found:?}");
+        assert_eq!(found.at.map(|p| p.line), Some(5), "{found:?}");
     }
 
     /// A grant the text does not hold is still worth saying, about the file.

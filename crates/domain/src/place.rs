@@ -249,10 +249,21 @@ fn under(source: &str, format: Format, outer: &[(usize, usize)], key: &str) -> V
 }
 
 /// The keys a tool lists its pre-approvals under. A grant is looked for only
-/// after one of them, so a tool name in a description is not taken for a grant.
-/// The longer spellings precede the ones they contain, so a Crush
-/// `allowed_tools` is not half-matched as `allowed` and left unplaced.
-pub const GRANT_LISTS: &[&str] = &["allow", "allowed-tools", "allowed_tools", "allowed"];
+/// after one of them, so a tool name in a description is not taken for a
+/// grant.
+///
+/// Written out to the block each sits in, because the leaf alone is matched
+/// in any block that spells it: a server given an `allow` list of its own
+/// came first in the file and the finding landed there, on a line the tool
+/// grants nothing by. These are the paths extraction reads and no others,
+/// and they are in its order of preference, so a file writing two of them
+/// is placed by the one the tool would honour.
+pub const GRANT_LISTS: &[&str] = &[
+    "permissions.allow",
+    "permissions.allowed_tools",
+    "tools.allowed",
+    "allowed-tools",
+];
 
 /// The builtin a `crushrc` lists its pre-approvals with. A `crushrc` holds no
 /// key to anchor to, so a grant is anchored to the call that makes it.
