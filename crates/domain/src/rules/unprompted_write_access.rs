@@ -39,18 +39,29 @@ struct Declared<'a> {
 }
 
 /// The directories a run under `at` loads a configuration from, closest
-/// first: `at` itself, then its parent, up to the root.
+/// first: `at` itself, then its parent, up to and including the project root
+/// it sits in.
 ///
-/// Codex walks from the project root to the working directory and loads every
-/// `.codex/config.toml` it finds, letting the closest file to the run win a
-/// key, so this is that walk read backwards. The project directory rather
-/// than the file's own throughout: `.codex` sits between them, and `a/.codex`
-/// is no prefix of `a/b/.codex` although `a` is of `a/b`.
-fn ancestry(at: &RepoPath) -> impl Iterator<Item = RepoPath> {
+/// Codex walks up from the working directory until it reaches a project root,
+/// then loads every `.codex/config.toml` from there down, letting the closest
+/// file to the run win a key, so this is that walk read backwards. It stops
+/// at the root rather than carrying on to the scan root, because a directory
+/// holding `.git` is one: a submodule has its own, and a run inside it never
+/// loads the superproject's configuration.
+///
+/// The project directory rather than the file's own throughout: `.codex` sits
+/// between them, and `a/.codex` is no prefix of `a/b/.codex` although `a` is
+/// of `a/b`.
+fn ancestry(at: &RepoPath, projects: &[RepoPath]) -> impl Iterator<Item = RepoPath> {
+    let stops: Vec<RepoPath> = projects.to_vec();
     let mut next = Some(at.clone());
     std::iter::from_fn(move || {
         let here = next.take()?;
-        next = here.parent();
+        next = if stops.contains(&here) {
+            None
+        } else {
+            here.parent()
+        };
         Some(here)
     })
 }
@@ -141,7 +152,12 @@ impl Rule for UnpromptedWriteAccess {
     }
 
     fn check(&self, at: &Examined<'_>, width: usize) -> Vec<Finding> {
-        let Examined::Report { modes, profiles } = at else {
+        let Examined::Report {
+            modes,
+            profiles,
+            projects,
+        } = at
+        else {
             return Vec::new();
         };
 
@@ -173,8 +189,9 @@ impl Rule for UnpromptedWriteAccess {
             // The layers a run there loads, closest first, which is the order
             // they win in: the closest file to the run wins a key, and a
             // profile table is a key like any other.
-            let chain: Vec<&Declared<'_>> =
-                ancestry(under).filter_map(|dir| by_dir.get(&dir)).collect();
+            let chain: Vec<&Declared<'_>> = ancestry(under, projects)
+                .filter_map(|dir| by_dir.get(&dir))
+                .collect();
             let effective = |key: &str| -> Option<&FoundMode> {
                 chain
                     .iter()
@@ -288,23 +305,35 @@ mod tests {
     }
 
     /// What the rule says about one scan, quoted as a report quotes it.
+    ///
+    /// The scan root is a project root, as a repository being scanned is.
     fn said_about(files: &[File<'_>]) -> Vec<Finding> {
-        said_at_width(files, DEFAULT_EVIDENCE_WIDTH)
+        said_at_width(files, &[""], DEFAULT_EVIDENCE_WIDTH)
+    }
+
+    /// The same, for a scan that saw a project root further in as well.
+    fn said_in(files: &[File<'_>], projects: &[&str]) -> Vec<Finding> {
+        said_at_width(files, projects, DEFAULT_EVIDENCE_WIDTH)
     }
 
     /// The same, with room for every word, for a test about what the evidence
     /// says rather than about how wide a report is.
     fn said_widely(files: &[File<'_>]) -> Vec<Finding> {
-        said_at_width(files, 200)
+        said_at_width(files, &[""], 200)
     }
 
-    fn said_at_width(files: &[File<'_>], width: usize) -> Vec<Finding> {
+    fn said_at_width(files: &[File<'_>], projects: &[&str], width: usize) -> Vec<Finding> {
         let modes = found_in(files);
         let profiles = defined_in(files);
+        let projects: Vec<RepoPath> = projects
+            .iter()
+            .map(|at| RepoPath::root().join(at))
+            .collect();
         judge(
             &Examined::Report {
                 modes: &modes,
                 profiles: &profiles,
+                projects: &projects,
             },
             &[RuleId::UnpromptedWriteAccess],
             width,
@@ -521,6 +550,58 @@ mod tests {
         // The root still answers for a run started there, and only that.
         assert_eq!(found.len(), 1, "{found:?}");
         assert_eq!(found[0].path.as_str(), ".codex/config.toml");
+    }
+
+    /// Codex walks up from the working directory until it reaches a project
+    /// root, and treats a directory holding `.git` as one. A submodule holds
+    /// its own, so a run inside it never loads the superproject's
+    /// configuration and the two files are two configurations.
+    #[test]
+    fn a_project_root_stops_the_walk() {
+        let found = said_in(
+            &[
+                File {
+                    path: ".codex/config.toml",
+                    source: "approval_policy = \"never\"\n",
+                    modes: &[("approval_policy", "never")],
+                    profiles: &[],
+                },
+                File {
+                    path: "vendor/thing/.codex/config.toml",
+                    source: "sandbox_mode = \"workspace-write\"\n",
+                    modes: &[("sandbox_mode", "workspace-write")],
+                    profiles: &[],
+                },
+            ],
+            &["", "vendor/thing"],
+        );
+
+        assert!(found.is_empty(), "{found:?}");
+    }
+
+    /// And one directory further out is not that boundary, so the layers
+    /// below it do inherit.
+    #[test]
+    fn a_root_above_the_pair_leaves_it_inherited() {
+        let found = said_in(
+            &[
+                File {
+                    path: ".codex/config.toml",
+                    source: "approval_policy = \"never\"\n",
+                    modes: &[("approval_policy", "never")],
+                    profiles: &[],
+                },
+                File {
+                    path: "vendor/thing/.codex/config.toml",
+                    source: "sandbox_mode = \"workspace-write\"\n",
+                    modes: &[("sandbox_mode", "workspace-write")],
+                    profiles: &[],
+                },
+            ],
+            &[""],
+        );
+
+        assert_eq!(found.len(), 1, "{found:?}");
     }
 
     /// Only the chain from the root down. Two directories beside each other
@@ -831,6 +912,7 @@ mod tests {
                 &Examined::Report {
                     modes: &held,
                     profiles: &[],
+                    projects: &[RepoPath::root()],
                 },
                 &[],
                 DEFAULT_EVIDENCE_WIDTH

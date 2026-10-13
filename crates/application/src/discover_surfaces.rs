@@ -99,6 +99,12 @@ pub struct DiscoveryReport {
     pub unparsed: Vec<(RepoPath, String)>,
     /// What the rules said was wrong, in path order.
     pub findings: Vec<Finding>,
+    /// Directories holding a project root marker, in path order.
+    ///
+    /// Not a surface, and never entered: a tool reading its configuration
+    /// from several files walks up from where it was run and stops at one of
+    /// these, so a rule resolving those layers needs to know where they are.
+    pub projects: Vec<RepoPath>,
 }
 
 impl DiscoveryReport {
@@ -114,6 +120,14 @@ impl DiscoveryReport {
         self.findings.iter().any(|f| f.severity >= severity)
     }
 }
+
+/// What marks the directory a tool stops walking up at.
+///
+/// Codex's reference says it treats a directory containing `.git` as the
+/// project root, and `project_root_markers` can name others, which clew does
+/// not read: a repository using one of those is a configuration clew reads as
+/// though the marker were not there.
+const PROJECT_MARKER: &str = ".git";
 
 /// Discovers agent surfaces beneath a scan root.
 pub struct DiscoverSurfaces<'a, T: FileTree, C: FileContents> {
@@ -405,10 +419,12 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
         defined: &[FoundProfile],
         report: &mut DiscoveryReport,
     ) {
+        let projects = report.projects.clone();
         report.findings.extend(rule::judge(
             &Examined::Report {
                 modes: declared,
                 profiles: defined,
+                projects: &projects,
             },
             catalogue().report_checks(),
             self.policy.evidence_width(),
@@ -618,6 +634,12 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
             };
 
             for entry in entries {
+                // A directory holding this is where a tool reading layered
+                // configuration stops walking up, so the scan notes it even
+                // though it is no surface of its own and is never entered.
+                if entry.path.file_name() == PROJECT_MARKER {
+                    report.projects.push(dir.clone());
+                }
                 if self.policy.should_descend(&entry) {
                     queue.push(entry.path);
                     continue;
@@ -668,6 +690,8 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
         // counting which copy of its trigger it is, which only means anything
         // in the order the file lists them, so `extract::tasks` returns them
         // unsorted and they stay that way.
+        report.projects.sort();
+        report.projects.dedup();
         report.unreadable.sort_by(|a, b| a.0.cmp(&b.0));
         report.unparsed.sort_by(|a, b| a.0.cmp(&b.0));
         report.findings.sort();
@@ -2699,6 +2723,71 @@ mod tests {
         assert_eq!(rules, vec![RuleId::DownloadAndExecute], "{report:?}");
         // And nothing else under `.git` was walked on the way.
         assert!(report.is_complete(), "{report:?}");
+    }
+
+    /// A tool reading its configuration from several files walks up from
+    /// where it was run and stops at a project root, which Codex's reference
+    /// gives as a directory holding `.git`. The scan notes those, although
+    /// `.git` is no surface and is never entered, because nothing else can
+    /// tell a rule where one configuration ends and another begins.
+    #[test]
+    fn a_directory_holding_a_project_marker_is_noted() {
+        let tree = FakeTree::default()
+            .dir(
+                "",
+                &[
+                    (".git", EntryKind::Directory),
+                    ("shared", EntryKind::Directory),
+                ],
+            )
+            .dir("shared", &[("thing", EntryKind::Directory)])
+            // A submodule, whose `.git` is a file holding a path.
+            .dir("shared/thing", &[(".git", EntryKind::File)]);
+        let contents = FakeContents::default();
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &ScanPolicy::default()).run();
+
+        assert_eq!(
+            report
+                .projects
+                .iter()
+                .map(RepoPath::as_str)
+                .collect::<Vec<_>>(),
+            vec!["", "shared/thing"],
+            "{report:?}"
+        );
+    }
+
+    /// And the pair is not joined across that boundary: a run inside the
+    /// submodule never loads the superproject's configuration.
+    #[test]
+    fn a_submodule_does_not_inherit_the_configuration_above_it() {
+        let tree = FakeTree::default()
+            .dir(
+                "",
+                &[
+                    (".git", EntryKind::Directory),
+                    (".codex", EntryKind::Directory),
+                    ("shared", EntryKind::Directory),
+                ],
+            )
+            .dir(".codex", &[("config.toml", EntryKind::File)])
+            .dir("shared", &[("thing", EntryKind::Directory)])
+            .dir(
+                "shared/thing",
+                &[(".git", EntryKind::File), (".codex", EntryKind::Directory)],
+            )
+            .dir("shared/thing/.codex", &[("config.toml", EntryKind::File)]);
+        let contents = FakeContents::default()
+            .file(".codex/config.toml", "approval_policy = \"never\"\n")
+            .file(
+                "shared/thing/.codex/config.toml",
+                "sandbox_mode = \"workspace-write\"\n",
+            );
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &ScanPolicy::default()).run();
+
+        assert!(report.findings.is_empty(), "{report:?}");
     }
 
     /// A seed is handed to the tree whole, and a tree refuses a link only for

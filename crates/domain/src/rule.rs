@@ -185,6 +185,12 @@ pub enum Examined<'a> {
         modes: &'a [FoundMode],
         /// Every named permissions profile the scan found, with its file.
         profiles: &'a [FoundProfile],
+        /// The directories the scan found a project root marker in.
+        ///
+        /// A tool reading a configuration from more than one file walks up
+        /// from where it was run and stops at one of these, so a rule
+        /// resolving those layers needs to know where they are.
+        projects: &'a [RepoPath],
     },
 }
 

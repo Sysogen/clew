@@ -33,7 +33,9 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   on the last three of a run, since up to two quotes may sit against the
   delimiter and belong to the value. Bash also
   begins a token after an operator, so `:;# x` comments where `a#b` does not.
-  A key written in any of those is text, not a declaration, and neither is a
+  A quoted key is read in either quote, since TOML and YAML both take one
+  that way. A key written in any of those is text, not a declaration, and
+  neither is a
   value: placement finds the key and then counts copies of the value after it,
   so a note between two declarations used to put the second finding on the
   note. The scan now carries through the values as well.
@@ -78,16 +80,23 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   a reader shown `sandbox_mode = "workspace-write"` on its own, which this
   rule's own page calls harmless, would be right to think the finding wrong.
 
-  The two halves need not be in one file. Codex walks from the project root to
-  the working directory and loads every `.codex/config.toml` it finds, and the
-  closest file to the run wins a key, so a root that stops the asking and a
-  nested file that permits writes leave neither control for a run below. That
-  order is what makes a nested file putting the sandbox back the fix rather
-  than another finding, and it is why the rule asks the question once for each
-  directory a run could start under. A finding carries one path, so it is
-  placed at the sandbox and the evidence names the file the other half came
-  from, last, because evidence is clipped to a width and the two halves matter
-  more than which file the far one sits in.
+  The two halves need not be in one file. Codex walks up from the working
+  directory until it reaches a project root, which its reference gives as a
+  directory holding `.git`, then loads every `.codex/config.toml` from there
+  down, and the closest file to the run wins a key, so a root that stops the
+  asking and a nested file that permits writes leave neither control for a run
+  below. That order is what makes a nested file putting the sandbox back the
+  fix rather than another finding, and it is why the rule asks the question
+  once for each directory a run could start under. The walk stopping at a
+  project root is what keeps a submodule out of it: a submodule holds its own
+  `.git`, so a run inside it never loads the superproject's configuration, and
+  the scan notes where those markers are although `.git` is no surface and is
+  never entered.
+
+  A finding carries one path, so it is placed at the sandbox and the evidence
+  names the file the other half came from, last, because evidence is clipped
+  to a width and the two halves matter more than which file the far one sits
+  in.
 
   A `default_permissions` naming a `[permissions.<name>]` table of its own is
   resolved against that table rather than guessed at from its name. The

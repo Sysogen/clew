@@ -380,6 +380,7 @@ mod tests {
         let settings = path(".claude/settings.json");
         let args = ["--api-key".to_owned(), "sk-live-SECRET".to_owned()];
         DiscoveryReport {
+            projects: Vec::new(),
             surfaces: vec![Surface {
                 path: settings.clone(),
                 kind: SurfaceKind::ClaudeCode,

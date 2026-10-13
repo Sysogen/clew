@@ -161,11 +161,14 @@ which keeps one answer to what decides whether a rule runs. Putting a rule in
 the wrong one of the two lists is refused when the catalogue loads, because a
 rule in the wrong list is a rule that never runs.
 
-The two halves need not be in one file. Codex walks from the project root to
-the working directory and loads every `.codex/config.toml` it finds, and the
-closest file to the run wins a key, so a root that stops the asking and a
+The two halves need not be in one file. Codex walks up from the working
+directory until it reaches a project root, which its reference gives as a
+directory holding `.git`, then loads every `.codex/config.toml` from there
+down, and the closest file to the run wins a key, so a root that stops the asking and a
 nested file that permits writes leave neither control for a run below, and a
 nested file putting the sandbox back is the fix rather than a finding. A
+submodule holds its own `.git`, so the walk stops there and a run inside it
+never loads the superproject's configuration. A
 finding carries one path, so it is placed at the sandbox and names the file the
 other half came from. A `default_permissions` naming a `[permissions.<name>]`
 table of its own is resolved against that table, which grants writes with

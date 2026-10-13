@@ -422,11 +422,13 @@ fn key_end(source: &str, format: Format, key: &str) -> Option<usize> {
             continue;
         }
         // The string about to open, when it holds the key and a separator
-        // follows the closing quote. Anything else it opens is a value.
+        // follows the closing quote, in whichever quote the format allows:
+        // TOML and YAML both take a quoted key in either. Anything else a
+        // quote opens is a value.
         let closes = i + 1 + wanted.len();
-        if text[i] == b'"'
+        if syntax.quotes.contains(&text[i])
             && text.get(i + 1..closes) == Some(wanted)
-            && text.get(closes) == Some(&b'"')
+            && text.get(closes) == Some(&text[i])
             && separated(source, closes + 1)
         {
             return Some(closes + 1);
@@ -865,6 +867,35 @@ mod tests {
             after_key(toml, Format::Toml, "sandbox_mode", "danger-full-access", 0).expect("placed");
 
         assert_eq!(placed(toml, at).expect("a position").0.line, 2);
+    }
+
+    /// TOML and YAML both allow a quoted key, in either quote. Reading only
+    /// the double-quoted form left a single-quoted one skipped as a value,
+    /// and the finding fell back to naming the file.
+    #[test]
+    fn a_single_quoted_key_is_a_key() {
+        for (format, source) in [
+            (Format::Toml, "'sandbox_mode' = \"danger-full-access\"\n"),
+            (Format::Yaml, "'runOn': fileCreate\n"),
+        ] {
+            let value = if format == Format::Toml {
+                "danger-full-access"
+            } else {
+                "fileCreate"
+            };
+            let key = if format == Format::Toml {
+                "sandbox_mode"
+            } else {
+                "runOn"
+            };
+
+            let at = after_key(source, format, key, value, 0).expect("placed");
+
+            let (position, _) = placed(source, at).expect("a position");
+            assert_eq!(position.line, 1, "{format:?}");
+            // Past the key, which is where the value sits.
+            assert!(position.column > key.len(), "{format:?}: {position:?}");
+        }
     }
 
     /// A key and a value look the same in JSON, both inside quotes, so what

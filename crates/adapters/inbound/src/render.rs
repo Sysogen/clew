@@ -264,6 +264,7 @@ mod tests {
     fn with_findings(text: &str) -> DiscoveryReport {
         let path = surface("CLAUDE.md", SurfaceKind::InstructionFile).path;
         DiscoveryReport {
+            projects: Vec::new(),
             surfaces: vec![surface("CLAUDE.md", SurfaceKind::InstructionFile)],
             findings: clew_domain::rule::judge(
                 &clew_domain::rule::Examined::Text { path: &path, text },
@@ -318,6 +319,7 @@ mod tests {
             },
         };
         let found = DiscoveryReport {
+            projects: Vec::new(),
             surfaces: vec![surface(".kiro/hooks/x.json", SurfaceKind::Kiro)],
             hooks: vec![
                 hook(Action::Command("npx eslint".to_owned()), true),
@@ -348,6 +350,7 @@ mod tests {
     fn a_server_whose_calls_are_not_confirmed_says_so() {
         let path = surface(".gemini/settings.json", SurfaceKind::Gemini).path;
         let found = DiscoveryReport {
+            projects: Vec::new(),
             surfaces: vec![surface(".gemini/settings.json", SurfaceKind::Gemini)],
             hooks: vec![],
             permissions: vec![],
@@ -376,6 +379,7 @@ mod tests {
     #[test]
     fn a_mode_a_settings_file_sets_is_reported() {
         let found = DiscoveryReport {
+            projects: Vec::new(),
             surfaces: vec![surface(".claude/settings.json", SurfaceKind::ClaudeCode)],
             hooks: vec![],
             permissions: vec![],
@@ -411,6 +415,7 @@ mod tests {
     #[test]
     fn surfaces_are_listed_with_their_labels_and_counted() {
         let found = DiscoveryReport {
+            projects: Vec::new(),
             surfaces: vec![
                 surface("CLAUDE.md", SurfaceKind::InstructionFile),
                 surface(".claude/settings.json", SurfaceKind::ClaudeCode),
@@ -438,6 +443,7 @@ mod tests {
     #[test]
     fn an_incomplete_scan_is_never_rendered_as_clean() {
         let found = DiscoveryReport {
+            projects: Vec::new(),
             surfaces: vec![surface("CLAUDE.md", SurfaceKind::InstructionFile)],
             hooks: vec![],
             permissions: vec![],
@@ -463,6 +469,7 @@ mod tests {
     #[test]
     fn the_incomplete_notice_is_absent_when_the_scan_was_complete() {
         let found = DiscoveryReport {
+            projects: Vec::new(),
             surfaces: vec![surface("CLAUDE.md", SurfaceKind::InstructionFile)],
             hooks: vec![],
             permissions: vec![],
@@ -481,6 +488,7 @@ mod tests {
     #[test]
     fn the_directory_count_is_pluralised() {
         let one = DiscoveryReport {
+            projects: Vec::new(),
             surfaces: vec![],
             hooks: vec![],
             permissions: vec![],
@@ -495,6 +503,7 @@ mod tests {
         assert!(report(&one, ".").contains("1 directory could not be read"));
 
         let two = DiscoveryReport {
+            projects: Vec::new(),
             surfaces: vec![],
             hooks: vec![],
             permissions: vec![],
@@ -516,6 +525,7 @@ mod tests {
     fn a_hook_is_printed_under_the_file_that_registers_it() {
         let path = surface(".claude/settings.json", SurfaceKind::ClaudeCode).path;
         let found = DiscoveryReport {
+            projects: Vec::new(),
             surfaces: vec![surface(".claude/settings.json", SurfaceKind::ClaudeCode)],
             hooks: vec![RegisteredHook {
                 source: path,
@@ -550,6 +560,7 @@ mod tests {
     #[test]
     fn an_unparsed_file_is_never_rendered_as_clean() {
         let found = DiscoveryReport {
+            projects: Vec::new(),
             surfaces: vec![surface(".claude/settings.json", SurfaceKind::ClaudeCode)],
             hooks: vec![],
             permissions: vec![],
@@ -583,6 +594,7 @@ mod tests {
             permission: Permission::parse(entry).expect("valid entry"),
         };
         let found = DiscoveryReport {
+            projects: Vec::new(),
             surfaces: vec![surface(".claude/settings.json", SurfaceKind::ClaudeCode)],
             hooks: vec![],
             permissions: vec![
@@ -616,6 +628,7 @@ mod tests {
     fn a_server_is_printed_under_its_declaring_file_with_its_env_names() {
         let path = surface(".mcp.json", SurfaceKind::McpServers).path;
         let found = DiscoveryReport {
+            projects: Vec::new(),
             surfaces: vec![surface(".mcp.json", SurfaceKind::McpServers)],
             hooks: vec![],
             permissions: vec![],
@@ -658,6 +671,7 @@ mod tests {
         let newline = char::from(10);
         let path = surface(".mcp.json", SurfaceKind::McpServers).path;
         let found = DiscoveryReport {
+            projects: Vec::new(),
             surfaces: vec![surface(".mcp.json", SurfaceKind::McpServers)],
             servers: vec![DeclaredServer {
                 source: path,
@@ -696,6 +710,7 @@ mod tests {
         let newline = char::from(10);
         let forged = RepoPath::root().join(&format!("a{newline}  .mcp.json"));
         let found = DiscoveryReport {
+            projects: Vec::new(),
             unparsed: vec![(forged, format!("bad{newline}    0 file(s) could not"))],
             ..DiscoveryReport::default()
         };
@@ -728,6 +743,7 @@ mod tests {
         for code in [13u8, 27, 8, 11, 12, 0] {
             let hidden = char::from(code);
             let found = DiscoveryReport {
+                projects: Vec::new(),
                 surfaces: vec![surface(".mcp.json", SurfaceKind::McpServers)],
                 servers: vec![DeclaredServer {
                     source: path.clone(),
@@ -772,6 +788,7 @@ mod tests {
     fn the_table_stays_aligned_when_a_path_is_escaped() {
         let newline = char::from(10);
         let found = DiscoveryReport {
+            projects: Vec::new(),
             surfaces: vec![
                 Surface {
                     path: RepoPath::root().join(&format!("a{newline}b")),
@@ -802,6 +819,7 @@ mod tests {
         assert_eq!(accented.chars().count(), 14);
         assert_eq!(accented.len(), 17);
         let found = DiscoveryReport {
+            projects: Vec::new(),
             surfaces: vec![
                 Surface {
                     path: RepoPath::root().join(accented),
@@ -827,6 +845,7 @@ mod tests {
     fn a_server_with_no_env_prints_no_reads_line() {
         let path = surface(".mcp.json", SurfaceKind::McpServers).path;
         let found = DiscoveryReport {
+            projects: Vec::new(),
             surfaces: vec![surface(".mcp.json", SurfaceKind::McpServers)],
             hooks: vec![],
             permissions: vec![],
