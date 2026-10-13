@@ -23,6 +23,21 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   its safe namesake. The five spellings live in one place for that, since a
   copy of a set that lives somewhere else is how the two come to disagree.
 
+  A block's declarations are its own keys and not every key beneath them.
+  Placement indexed all of them, so a server named like a property an
+  earlier one holds, `command` or `url` among them, came first in the file
+  and a finding about the trusted declaration quoted that property's line.
+  What nests is now read the way the file writes it: brackets say it
+  wherever a format has them, and indentation says it as well where that is
+  what nests, which is YAML's block style. Indenting is read nowhere else,
+  because a bracketed block laid out over lines of different widths declares
+  all of them, and reading its indenting would keep only the one indented
+  least.
+
+  A key written inside a value is text rather than a declaration, which is
+  the rule a value already followed. A server named like a word another
+  server's value happens to hold was placed inside that value.
+
 - A finding is no longer placed on a key written inside a comment. Placement
   finds a key by searching the text and took the first match, so a
   `# sandbox_mode = "danger-full-access"` left in a file as a note had

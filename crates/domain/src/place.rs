@@ -362,22 +362,34 @@ fn within(
         .map(|(text, at)| (text.as_str(), *at))
 }
 
-/// Every key written between bytes `from` and `to`, with where a finding
-/// about each one points, which is just past it.
+/// The keys a block declares between bytes `from` and `to`, with where a
+/// finding about each one points, which is just past it.
+///
+/// Its own keys, not every key beneath them: what a block declares sits at
+/// one level, and what sits deeper belongs to one of those.
 fn keys_between(source: &str, format: Format, from: usize, to: usize) -> Vec<(String, usize)> {
     let syntax = format.syntax();
     let text = source.as_bytes();
     let mut scan = Scan::default();
-    let mut found = Vec::new();
+    let mut found: Vec<(String, usize, (usize, usize))> = Vec::new();
+    let mut depth = 0_usize;
+    let mut indent = 0_usize;
+    let mut leading = true;
     let mut i = 0;
 
     while i < text.len() {
         if i >= from
             && i < to
             && !scan.in_comment()
+            && !scan.in_string()
             && let Some((name, at, past)) = key_here(source, syntax, i)
         {
-            found.push((name, at));
+            // Indenting says what nests only where the format says it does,
+            // so elsewhere every key is read as equally indented and the
+            // brackets decide alone.
+            let under = (depth, if syntax.indented { indent } else { 0 });
+            found.push((name, at, under));
+            leading = false;
             i = past;
             continue;
         }
@@ -389,10 +401,35 @@ fn keys_between(source: &str, format: Format, from: usize, to: usize) -> Vec<(St
             i = on;
             continue;
         }
+        // How far in the file has nested, and how far the line a key sits on
+        // is indented: the two ways a format writes what a key belongs to.
+        match text[i] {
+            b'\n' => {
+                indent = 0;
+                leading = true;
+            }
+            b' ' | b'\t' if leading => indent += 1,
+            _ => leading = false,
+        }
+        match text[i] {
+            b'[' | b'{' => depth += 1,
+            b']' | b'}' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
         i += 1;
     }
 
+    // A block declares at one level and what sits deeper than that is a
+    // property of what it declared. Nothing inside the block is shallower
+    // than its own keys, so the shallowest are them: a server named like a
+    // property an earlier one holds would otherwise be placed on it, and a
+    // finding about the trusted declaration would quote its safe namesake.
+    let own = found.iter().map(|(_, _, under)| *under).min();
     found
+        .into_iter()
+        .filter(|(_, _, under)| Some(*under) == own)
+        .map(|(name, at, _)| (name, at))
+        .collect()
 }
 
 /// The key byte `i` of `source` opens, where a finding about it points, and
@@ -860,6 +897,70 @@ mod tests {
             line_of(json, held.nth_in("servers", "pg", 0).expect("second").start),
             6
         );
+    }
+
+    /// A block's declarations are its own keys, not every key beneath them.
+    /// A server named like a property an earlier one holds would otherwise
+    /// be placed on that property, which is a different declaration.
+    #[test]
+    fn a_property_of_a_declaration_is_not_another_declaration() {
+        let json = "{\n  \"mcpServers\": {\n    \"a\": { \"command\": \"x\" },\n    \"command\": { \"url\": \"http://e\" }\n  }\n}\n";
+
+        let held = Places::declared(json, Format::Json, &["mcpServers"]);
+
+        let first = held.nth_in("mcpServers", "a", 0).expect("the first");
+        let named = held.nth_in("mcpServers", "command", 0).expect("the second");
+        assert_eq!(line_of(json, first.start), 3);
+        assert_eq!(line_of(json, named.start), 4);
+        assert_eq!(held.nth_in("mcpServers", "command", 1), None);
+    }
+
+    /// The same where the nesting is written as indentation rather than
+    /// brackets, which is how YAML writes a block.
+    #[test]
+    fn a_property_indented_under_a_declaration_is_not_another() {
+        let yaml = "mcpServers:\n  a:\n    command: x\n  command:\n    url: http://e\n";
+
+        let held = Places::declared(yaml, Format::Yaml, &["mcpServers"]);
+
+        let first = held.nth_in("mcpServers", "a", 0).expect("the first");
+        let named = held.nth_in("mcpServers", "command", 0).expect("the second");
+        assert_eq!(line_of(yaml, first.start), 2);
+        assert_eq!(line_of(yaml, named.start), 4);
+        assert_eq!(held.nth_in("mcpServers", "command", 1), None);
+    }
+
+    /// Indenting says nothing where brackets say it, so a block laid out
+    /// over lines of different widths declares all of them: a file written
+    /// by hand or wrapped by a formatter would otherwise lose every
+    /// declaration but the one indented least.
+    #[test]
+    fn a_bracketed_block_declares_whatever_its_indenting() {
+        let json = "{ \"mcpServers\": { \"a\": {},\n    \"b\": {} } }\n";
+
+        let held = Places::declared(json, Format::Json, &["mcpServers"]);
+
+        let first = held.nth_in("mcpServers", "a", 0).expect("the first");
+        let second = held.nth_in("mcpServers", "b", 0).expect("the second");
+        assert_eq!(line_of(json, first.start), 1);
+        assert_eq!(line_of(json, second.start), 2);
+    }
+
+    /// A key written inside a value is text rather than a declaration: a
+    /// server named like a word another server's value happens to hold
+    /// would otherwise be placed inside that value.
+    #[test]
+    fn a_key_inside_a_value_is_not_a_declaration() {
+        let json = "{\"mcpServers\":{\"a\":\"b: c\",\"b\":{}}}";
+
+        let held = Places::declared(json, Format::Json, &["mcpServers"]);
+
+        let named = held.nth_in("mcpServers", "b", 0).expect("the declaration");
+        assert_eq!(
+            json.get(..named.start),
+            Some("{\"mcpServers\":{\"a\":\"b: c\",\"b\"")
+        );
+        assert_eq!(held.nth_in("mcpServers", "b", 1), None);
     }
 
     /// A declaration points just past its key, which is where a finding has

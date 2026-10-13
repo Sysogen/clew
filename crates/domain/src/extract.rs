@@ -87,6 +87,13 @@ pub struct Syntax {
     pub block: bool,
     /// Whether three quotes open a string that runs to the next three.
     pub long: bool,
+    /// Whether indentation is what nests one key under another.
+    ///
+    /// YAML's block style, where a key belongs to the shallower key above
+    /// it. Everywhere else a bracket says what belongs to what and the
+    /// indenting is for the reader, so a file laid out over several lines
+    /// would otherwise read as several levels.
+    pub indented: bool,
 }
 
 impl Format {
@@ -102,6 +109,7 @@ impl Format {
                 quotes: b"\"",
                 block: false,
                 long: false,
+                indented: false,
             },
             Self::Jsonc => Syntax {
                 line: &["//"],
@@ -110,6 +118,7 @@ impl Format {
                 quotes: b"\"",
                 block: true,
                 long: false,
+                indented: false,
             },
             Self::Toml => Syntax {
                 line: &["#"],
@@ -118,6 +127,7 @@ impl Format {
                 quotes: b"\"'",
                 block: false,
                 long: true,
+                indented: false,
             },
             // A Markdown file declares in a leading YAML block, so YAML's
             // answer is its answer.
@@ -128,6 +138,7 @@ impl Format {
                 quotes: b"\"'",
                 block: false,
                 long: false,
+                indented: true,
             },
             // Bash, which comments and quotes as YAML does but begins a token
             // after an operator too, so `:;# x` is a comment.
@@ -138,6 +149,7 @@ impl Format {
                 quotes: b"\"'",
                 block: false,
                 long: false,
+                indented: false,
             },
         }
     }

@@ -455,6 +455,28 @@ mod tests {
         assert_eq!(found[0].at.map(|p| p.line), Some(6), "{found:?}");
     }
 
+    /// A server named like a property an earlier one holds is a declaration
+    /// of its own, so a finding about it quotes its own line rather than the
+    /// line that happens to spell its name inside another server.
+    #[test]
+    fn a_server_named_like_a_property_is_its_own_declaration() {
+        let json = "{\n  \"mcpServers\": {\n    \"proxy\": {\n      \"command\": \"./proxy\"\n    },\n    \"command\": {\n      \"trust\": true\n    }\n  }\n}\n";
+
+        let found = judge(
+            &Examined::Server {
+                path: &RepoPath::root().join(".mcp.json"),
+                server: &declared("command", true),
+                source: json,
+                at: at_of(json, "mcpServers", "command"),
+            },
+            &[RuleId::TrustedServer],
+            DEFAULT_EVIDENCE_WIDTH,
+        );
+
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].at.map(|p| p.line), Some(6), "{found:?}");
+    }
+
     /// YAML writes a key's values as an indented block beneath it as well as
     /// on its line, and frontmatter uses both. The block is that key's
     /// values, so a finding points at the one it is about rather than at the
