@@ -158,6 +158,7 @@ impl Rule for UnpromptedWriteAccess {
             modes,
             profiles,
             projects,
+            opaque,
         } = at
         else {
             return Vec::new();
@@ -186,10 +187,17 @@ impl Rule for UnpromptedWriteAccess {
         // per directory holding a declaration. A run deeper than the deepest
         // of those sees the same layers as that directory does, so there is
         // nothing further to ask about.
-        // The project roots, as a set: every candidate directory walks up
-        // through them, and searching a list at each step would be the square
-        // of what a repository chose to hold.
-        let stops: BTreeSet<&RepoPath> = projects.iter().collect();
+        // Where a walk up stops: a project root, because a tool reading
+        // layered configuration starts there, and a file the scan could not
+        // read, because what it said about either key is unknown and a pair
+        // joined across it would be about a configuration nobody has read.
+        //
+        // As a set: every candidate directory walks up through these, and
+        // searching a list at each step would be the square of what a
+        // repository chose to hold.
+        let mut stops: BTreeSet<RepoPath> = projects.iter().cloned().collect();
+        stops.extend(opaque.iter().map(project_of));
+        let stops: BTreeSet<&RepoPath> = stops.iter().collect();
 
         let mut answers: Vec<Finding> = Vec::new();
         // Compared before the evidence is built, not after. Evidence is
@@ -348,6 +356,7 @@ mod tests {
                 modes: &modes,
                 profiles: &profiles,
                 projects: &projects,
+                opaque: &[],
             },
             &[RuleId::UnpromptedWriteAccess],
             width,
@@ -675,6 +684,41 @@ mod tests {
         }
     }
 
+    /// A layer the scan could not read may have overridden either key, so a
+    /// pair cannot be joined across it. Reporting one would be a finding
+    /// against a configuration nobody has seen.
+    #[test]
+    fn a_layer_that_could_not_be_read_stops_the_chain() {
+        let modes = found_in(&[
+            File {
+                path: ".codex/config.toml",
+                source: "approval_policy = \"never\"\n",
+                modes: &[("approval_policy", "never")],
+                profiles: &[],
+            },
+            File {
+                path: "one/two/.codex/config.toml",
+                source: "sandbox_mode = \"workspace-write\"\n",
+                modes: &[("sandbox_mode", "workspace-write")],
+                profiles: &[],
+            },
+        ]);
+        let opaque = [RepoPath::root().join("one/.codex/config.toml")];
+
+        let found = judge(
+            &Examined::Report {
+                modes: &modes,
+                profiles: &[],
+                projects: &[RepoPath::root()],
+                opaque: &opaque,
+            },
+            &[RuleId::UnpromptedWriteAccess],
+            DEFAULT_EVIDENCE_WIDTH,
+        );
+
+        assert!(found.is_empty(), "{found:?}");
+    }
+
     /// A directory holding another tool's settings is a layer too, since a
     /// mode was read there, and the pair it inherits is the same pair. One
     /// thing to fix is one finding.
@@ -961,6 +1005,7 @@ mod tests {
                     modes: &held,
                     profiles: &[],
                     projects: &[RepoPath::root()],
+                    opaque: &[],
                 },
                 &[],
                 DEFAULT_EVIDENCE_WIDTH

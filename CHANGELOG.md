@@ -39,8 +39,12 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   value: placement finds the key and then counts copies of the value after it,
   so a note between two declarations used to put the second finding on the
   note. The scan now carries through the values as well, and counts only the
-  values a key was given, which is the list or block after it or the rest of
-  its line: a `label` holding the same word between two `runOn` declarations
+  values a key was given, which is the list or block after it, the next entry
+  where it sits inside one, or the rest of its line where it does not: a
+  compact file writes a whole object on one line, and running to the newline
+  there swallowed every key after this one, while outside a collection a comma
+  separates nothing, which is how `allowed-tools: Bash(a), Read` gives one key
+  two values. So a `label` holding the same word between two `runOn` declarations
   is another key's value, and counting it put the second finding on the label.
 
   One pass also means a file holding many copies of a key costs its length
@@ -93,8 +97,15 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   once for each directory a run could start under. The walk stopping at a
   project root is what keeps a submodule out of it: a submodule holds its own
   `.git`, so a run inside it never loads the superproject's configuration, and
-  the scan notes where those markers are although `.git` is no surface and is
-  never entered.
+  the scan notes where those markers are, `.hg` and `.sl` among them, although
+  none is a surface and none is entered. A marker named only in
+  `project_root_markers` is not read: that setting lives in a machine's own
+  configuration outside any repository, which a scan of a repository never
+  opens.
+
+  A file the scan could not read or understand stops the walk as well. What
+  it said about either key is unknown, and a pair joined across it would be a
+  finding against a configuration nobody has read.
 
   A finding carries one path, so it is placed at the sandbox and the evidence
   names the file the other half came from, last, because evidence is clipped

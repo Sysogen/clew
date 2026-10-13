@@ -124,10 +124,13 @@ impl DiscoveryReport {
 /// What marks the directory a tool stops walking up at.
 ///
 /// Codex's reference says it treats a directory containing `.git` as the
-/// project root, and `project_root_markers` can name others, which clew does
-/// not read: a repository using one of those is a configuration clew reads as
-/// though the marker were not there.
-const PROJECT_MARKER: &str = ".git";
+/// project root, and gives `.hg` and `.sl` as the others
+/// `project_root_markers` is set to. A marker named there and nowhere else
+/// is not read: that setting lives in the configuration a machine holds
+/// outside any repository, which a scan of a repository never opens, so a
+/// boundary moved only that way is one clew reads as though it were not
+/// there.
+const PROJECT_MARKERS: &[&str] = &[".git", ".hg", ".sl"];
 
 /// Discovers agent surfaces beneath a scan root.
 pub struct DiscoverSurfaces<'a, T: FileTree, C: FileContents> {
@@ -420,11 +423,15 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
         report: &mut DiscoveryReport,
     ) {
         let projects = report.projects.clone();
+        // A file the scan could not read or understand is a layer whose
+        // contents are unknown, and a rule reading layers has to stop there.
+        let opaque: Vec<RepoPath> = report.unparsed.iter().map(|(at, _)| at.clone()).collect();
         report.findings.extend(rule::judge(
             &Examined::Report {
                 modes: declared,
                 profiles: defined,
                 projects: &projects,
+                opaque: &opaque,
             },
             catalogue().report_checks(),
             self.policy.evidence_width(),
@@ -637,7 +644,7 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
                 // A directory holding this is where a tool reading layered
                 // configuration stops walking up, so the scan notes it even
                 // though it is no surface of its own and is never entered.
-                if entry.path.file_name() == PROJECT_MARKER {
+                if PROJECT_MARKERS.contains(&entry.path.file_name()) {
                     report.projects.push(dir.clone());
                 }
                 if self.policy.should_descend(&entry) {

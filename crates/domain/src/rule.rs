@@ -191,6 +191,13 @@ pub enum Examined<'a> {
         /// from where it was run and stops at one of these, so a rule
         /// resolving those layers needs to know where they are.
         projects: &'a [RepoPath],
+        /// The files the scan could not read or understand.
+        ///
+        /// One of these between two layers may have overridden either of
+        /// them, so a rule resolving layers stops where it cannot see: a
+        /// finding joined across one would be about a configuration nobody
+        /// has read.
+        opaque: &'a [RepoPath],
     },
 }
 

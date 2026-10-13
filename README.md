@@ -168,7 +168,8 @@ down, and the closest file to the run wins a key, so a root that stops the askin
 nested file that permits writes leave neither control for a run below, and a
 nested file putting the sandbox back is the fix rather than a finding. A
 submodule holds its own `.git`, so the walk stops there and a run inside it
-never loads the superproject's configuration. A
+never loads the superproject's configuration. It stops at a file clew could
+not read, too, since what that file said about either key is unknown. A
 finding carries one path, so it is placed at the sandbox and names the file the
 other half came from. A `default_permissions` naming a `[permissions.<name>]`
 table of its own is resolved against that table, which grants writes with

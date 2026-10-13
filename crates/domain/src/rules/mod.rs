@@ -189,6 +189,7 @@ fn given(source: &str, format: Format, key: &str) -> Vec<(usize, usize)> {
     let text = source.as_bytes();
     let mut scan = Scan::default();
     let mut found = Vec::new();
+    let mut within = 0_usize;
     let mut i = 0;
 
     while i < text.len() {
@@ -197,7 +198,7 @@ fn given(source: &str, format: Format, key: &str) -> Vec<(usize, usize)> {
             continue;
         }
         if let Some(end) = key_at(source, syntax, i, key) {
-            found.push((end, span(source, format, end)));
+            found.push((end, span(source, format, end, within)));
             i = end;
             continue;
         }
@@ -205,14 +206,22 @@ fn given(source: &str, format: Format, key: &str) -> Vec<(usize, usize)> {
             i = on;
             continue;
         }
+        // How deep in a list or a block this key sits, which is what says
+        // whether a comma separates anything where its values are written.
+        match text[i] {
+            b'[' | b'{' => within += 1,
+            b']' | b'}' => within = within.saturating_sub(1),
+            _ => {}
+        }
         i += 1;
     }
 
     found
 }
 
-/// Where the values written after byte `at` end.
-fn span(source: &str, format: Format, at: usize) -> usize {
+/// Where the values written after byte `at` end, for a key `within` that
+/// many lists or blocks.
+fn span(source: &str, format: Format, at: usize, within: usize) -> usize {
     let syntax = format.syntax();
     let text = source.as_bytes();
     let opens = source[at..]
@@ -221,9 +230,18 @@ fn span(source: &str, format: Format, at: usize) -> usize {
         .map(|(offset, c)| (at + offset, c));
     let Some((from, c @ ('[' | '{'))) = opens else {
         // One value, or several on one line, which is frontmatter's shape.
-        return source[at..]
+        // Inside a list or a block the next entry ends it instead: a compact
+        // file writes a whole object on one line, and running to the newline
+        // there would swallow every key after this one. Outside one a comma
+        // separates nothing, which is how `allowed-tools: Bash(a), Read`
+        // gives one key two values.
+        let line = source[at..]
             .find('\n')
             .map_or(text.len(), |newline| at + newline);
+        if within == 0 {
+            return line;
+        }
+        return entry(source, format, at).min(line);
     };
 
     // To the close that matches, counting the nesting between and reading
@@ -251,6 +269,38 @@ fn span(source: &str, format: Format, at: usize) -> usize {
         }
         i += 1;
     }
+    text.len()
+}
+
+/// Where the entry starting at byte `at` ends: the next comma or closing
+/// bracket the file writes in code, at the depth it started from.
+fn entry(source: &str, format: Format, at: usize) -> usize {
+    let syntax = format.syntax();
+    let text = source.as_bytes();
+    let mut scan = Scan::default();
+    let mut depth = 0_usize;
+    let mut i = at;
+
+    while i < text.len() {
+        if let Some(on) = scan.inside(text, i) {
+            i = on;
+            continue;
+        }
+        match text[i] {
+            b'[' | b'{' => depth += 1,
+            // A comma at the depth this entry started from separates it from
+            // the next; a close at that depth ends what holds it.
+            b',' | b']' | b'}' if depth == 0 => return i,
+            b']' | b'}' => depth -= 1,
+            _ => {}
+        }
+        if let Some(on) = scan.opens(text, i, syntax) {
+            i = on;
+            continue;
+        }
+        i += 1;
+    }
+
     text.len()
 }
 
@@ -294,10 +344,19 @@ fn in_code(
     let text = source.as_bytes();
     let mut scan = Scan::default();
     let mut found = Vec::new();
+    // The ranges come out of `given` in order and never overlap, so one
+    // cursor walks them: searching all of them at every byte cost the file
+    // once for each declaration in it.
+    let mut next = 0;
     let mut i = 0;
 
     while i < text.len() {
-        if given.iter().any(|(from, to)| i >= *from && i < *to)
+        while next < given.len() && i >= given[next].1 {
+            next += 1;
+        }
+        if given
+            .get(next)
+            .is_some_and(|(from, to)| i >= *from && i < *to)
             && !scan.in_comment()
             && text[i..].starts_with(needle.as_bytes())
             && (!whole || bare(text, i, needle.len()))
@@ -818,6 +877,34 @@ mod tests {
             after_key(toml, Format::Toml, "sandbox_mode", "danger-full-access", 0).expect("placed");
 
         assert_eq!(placed(toml, at).expect("a position").0.line, 4);
+    }
+
+    /// A compact file writes a whole object on one line, so a value's span
+    /// cannot run to the newline there: it ends where the next entry begins.
+    /// Otherwise the first key's span swallows every key after it.
+    #[test]
+    fn a_value_in_a_flow_collection_ends_at_the_next_entry() {
+        let json = "{\"runOn\":\"folderOpen\",\"label\":\"folderOpen\",\"runOn\":\"folderOpen\"}\n";
+
+        let second = after_key(json, Format::Json, "runOn", "folderOpen", 1).expect("placed");
+
+        // The second `runOn`, which is the last of the three values.
+        assert!(
+            second > json.rfind("\"runOn\"").expect("a second key"),
+            "{second} is not past the second key"
+        );
+    }
+
+    /// And YAML writes one on a line too, where a comma separates nothing:
+    /// `allowed-tools: Bash(a), Read` is one key given two values.
+    #[test]
+    fn a_comma_outside_a_flow_collection_ends_nothing() {
+        let frontmatter = "---\nallowed-tools: Bash(cargo test:*), Read\n---\n";
+
+        let at =
+            after_key(frontmatter, Format::Markdown, "allowed-tools", "Read", 0).expect("placed");
+
+        assert_eq!(placed(frontmatter, at).expect("a position").0.line, 2);
     }
 
     /// An occurrence counts the values a key was given, not every copy of
