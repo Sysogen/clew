@@ -158,15 +158,64 @@ pub(crate) fn after_key(
     // as one nesting `defaultMode` under `permissions` does.
     let leaf = key.rsplit('.').next().unwrap_or(key);
     let from = key_end(source, format, key).or_else(|| key_end(source, format, leaf))?;
-    let rest = source.get(from..)?;
+    // Counted in code only, as the key was. A value named in a comment is a
+    // note, so a note between two declarations would otherwise put the second
+    // finding on the note rather than on the second declaration.
     let quoted = format!("\"{value}\"");
-    let at = match rest.match_indices(&quoted).nth(occurrence) {
+    let written = in_code(source, format, from, &quoted, false);
+    if let Some(at) = written.get(occurrence) {
         // Past the opening quote, so the finding points at the value.
-        Some((at, _)) => at + 1,
-        // Frontmatter writes a list unquoted.
-        None => whole_word(rest, value).nth(occurrence)?,
-    };
-    Some(from + at)
+        return Some(at + 1);
+    }
+    // Frontmatter writes a list unquoted.
+    in_code(source, format, from, value, true)
+        .get(occurrence)
+        .copied()
+}
+
+/// Where `source` writes `needle` at or after byte `from`, in code.
+///
+/// A value sits inside a string, so a string counts and only a comment does
+/// not: what this excludes is a copy the file is not declaring. `whole` asks
+/// for the bare form, where no identifier character runs into it and nothing
+/// opens a longer one after it.
+fn in_code(source: &str, format: Format, from: usize, needle: &str, whole: bool) -> Vec<usize> {
+    let syntax = format.syntax();
+    let text = source.as_bytes();
+    let mut scan = Scan::default();
+    let mut found = Vec::new();
+    let mut i = 0;
+
+    while i < text.len() {
+        if i >= from
+            && !scan.in_comment()
+            && text[i..].starts_with(needle.as_bytes())
+            && (!whole || bare(text, i, needle.len()))
+        {
+            found.push(i);
+        }
+        if let Some(on) = scan.inside(text, i) {
+            i = on;
+            continue;
+        }
+        if let Some(on) = scan.opens(text, i, syntax) {
+            i = on;
+            continue;
+        }
+        i += 1;
+    }
+
+    found
+}
+
+/// Whether the `len` bytes at `at` stand on their own: no identifier
+/// character runs into them, and nothing opens a longer form after them.
+fn bare(text: &[u8], at: usize, len: usize) -> bool {
+    let word = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
+    let before = at > 0 && word(text[at - 1]);
+    let after = text.get(at + len).copied();
+    // `Bash` must not be taken for the start of `Bash(*)` either.
+    !before && !after.is_some_and(|c| word(c) || c == b'(')
 }
 
 /// The builtin a `crushrc` lists its pre-approvals with. A `crushrc` holds no
@@ -244,6 +293,11 @@ struct Scan {
 }
 
 impl Scan {
+    /// Whether the scan is inside a comment.
+    fn in_comment(&self) -> bool {
+        matches!(self.at, At::Line | At::Block)
+    }
+
     /// Where to carry on from, when byte `i` is inside a string or a comment.
     ///
     /// `None` where it is not, which is the caller's cue to read the byte.
@@ -705,6 +759,20 @@ mod tests {
             after_key(toml, Format::Toml, "sandbox_mode", "danger-full-access", 0).expect("placed");
 
         assert_eq!(placed(toml, at).expect("a position").0.line, 4);
+    }
+
+    /// A value named in a comment is a note too. Placement finds the key and
+    /// then counts copies of the value after it, so a note between two
+    /// declarations put the second finding on the note.
+    #[test]
+    fn a_value_in_a_comment_is_not_a_copy_of_it() {
+        let jsonc = "{\n  \"runOn\": \"folderOpen\",\n  // \"folderOpen\" was here\n  \"runOn\": \"folderOpen\"\n}\n";
+
+        let first = after_key(jsonc, Format::Jsonc, "runOn", "folderOpen", 0).expect("placed");
+        let second = after_key(jsonc, Format::Jsonc, "runOn", "folderOpen", 1).expect("placed");
+
+        assert_eq!(placed(jsonc, first).expect("a position").0.line, 2);
+        assert_eq!(placed(jsonc, second).expect("a position").0.line, 4);
     }
 
     /// A long basic string honours escapes, so an escaped quote does not

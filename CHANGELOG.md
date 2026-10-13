@@ -31,7 +31,10 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   single-quoted string literally and runs a long one between three quotes,
   honouring escapes in the basic form and none in the literal one. Bash also
   begins a token after an operator, so `:;# x` comments where `a#b` does not.
-  A key written in any of those is text, not a declaration.
+  A key written in any of those is text, not a declaration, and neither is a
+  value: placement finds the key and then counts copies of the value after it,
+  so a note between two declarations used to put the second finding on the
+  note. The scan now carries through the values as well.
 
   One pass also means a file holding many copies of a key costs its length
   rather than its square. Measured on a 760 KB file with twenty thousand
@@ -111,8 +114,11 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   it out of the candidate layers meant never asking about the one place that
   selection resolves to a write.
 
-  A report is gathered in one pass over the modes, so a repository with many
-  nested configurations is read once rather than once for each of them.
+  A report indexes the declarations by the directory each sits in, once, and
+  then walks a run's own directories rather than every declaration for each
+  run. Measured on a chain four hundred deep holding eight thousand profiles:
+  five point eight seconds became under one, and the cost is now bounded by
+  how deep a repository nests rather than by how much it declares.
 
   Each mode is placed where its file wrote it as the scan reads that file, so
   the report carries a position rather than the text it came from. Holding the

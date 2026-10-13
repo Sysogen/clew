@@ -9,7 +9,8 @@ use crate::finding::{Finding, RuleId, Severity};
 use crate::hook::project_of;
 use crate::profile::Profile;
 use crate::repo_path::RepoPath;
-use crate::rule::{Examined, FoundMode, FoundProfile, Rule, Subject};
+use crate::rule::{Examined, FoundMode, Rule, Subject};
+use std::collections::BTreeMap;
 
 /// See [`Rule::detail`] for what this flags and why.
 pub struct UnpromptedWriteAccess;
@@ -25,42 +26,33 @@ const NEVER: (&str, &str) = ("approval_policy", "never");
 const SANDBOX: &str = "sandbox_mode";
 const PROFILE: &str = "default_permissions";
 
-/// The project directories a run could start under, one for each directory
-/// holding a file the scan read something from, in path order.
-///
-/// A run deeper than the deepest such directory sees the layers that
-/// directory sees, so there is nothing further to ask about, and two files in
-/// one directory are one configuration rather than two.
+/// What one directory declares, gathered so it is read once.
 ///
 /// The profiles count as well as the modes. A file defining the profile a
-/// file above it selects declares no mode of its own, and leaving it out
-/// would mean never asking about the one place that selection resolves to a
-/// write.
-fn layers(modes: &[FoundMode], profiles: &[FoundProfile]) -> Vec<RepoPath> {
-    let mut held: Vec<RepoPath> = modes
-        .iter()
-        .map(|m| project_of(&m.path))
-        .chain(profiles.iter().map(|p| project_of(&p.path)))
-        .collect();
-    held.sort();
-    held.dedup();
-    held
+/// file above it selects declares no mode of its own, and leaving its
+/// directory out would mean never asking about the one place that selection
+/// resolves to a write.
+#[derive(Default)]
+struct Declared<'a> {
+    modes: Vec<&'a FoundMode>,
+    profiles: Vec<&'a Profile>,
 }
 
-/// Whether the file at `path` is in force for a run under the project
-/// directory `at`.
+/// The directories a run under `at` loads a configuration from, closest
+/// first: `at` itself, then its parent, up to the root.
 ///
 /// Codex walks from the project root to the working directory and loads every
-/// `.codex/config.toml` it finds, so a file applies where its own project
-/// directory holds the one being asked about. The project directory rather
-/// than the file's own: `.codex` sits between them, and `a/.codex` is no
-/// prefix of `a/b/.codex` although `a` is of `a/b`.
-fn applies(path: &RepoPath, at: &RepoPath) -> bool {
-    let above = project_of(path);
-    above == *at
-        || above.as_str().is_empty()
-        || at.as_str().starts_with(above.as_str())
-            && at.as_str().as_bytes().get(above.as_str().len()) == Some(&b'/')
+/// `.codex/config.toml` it finds, letting the closest file to the run win a
+/// key, so this is that walk read backwards. The project directory rather
+/// than the file's own throughout: `.codex` sits between them, and `a/.codex`
+/// is no prefix of `a/b/.codex` although `a` is of `a/b`.
+fn ancestry(at: &RepoPath) -> impl Iterator<Item = RepoPath> {
+    let mut next = Some(at.clone());
+    std::iter::from_fn(move || {
+        let here = next.take()?;
+        next = here.parent();
+        Some(here)
+    })
 }
 
 /// Whether a mode lets the agent write the working tree.
@@ -153,44 +145,60 @@ impl Rule for UnpromptedWriteAccess {
             return Vec::new();
         };
 
+        // Indexed by the directory each declaration sits in, once, so what
+        // follows costs a walk of the directories rather than a walk of every
+        // declaration for each of them.
+        let mut by_dir: BTreeMap<RepoPath, Declared<'_>> = BTreeMap::new();
+        for held in *modes {
+            by_dir
+                .entry(project_of(&held.path))
+                .or_default()
+                .modes
+                .push(held);
+        }
+        for held in *profiles {
+            by_dir
+                .entry(project_of(&held.path))
+                .or_default()
+                .profiles
+                .push(&held.profile);
+        }
+
         // One answer per configuration a run could start under, which is one
-        // per directory holding a file. A run deeper than the deepest file
-        // sees the same layers as that file does, so there is nothing further
-        // to ask about.
+        // per directory holding a declaration. A run deeper than the deepest
+        // of those sees the same layers as that directory does, so there is
+        // nothing further to ask about.
         let mut answers: Vec<Finding> = Vec::new();
-        for under in layers(modes, profiles) {
-            let under = &under;
-            // What the layers from the root down to `under` settle on. The
-            // closest file to the run wins, so the deepest layer naming a key
-            // is the one in force.
+        for under in by_dir.keys() {
+            // The layers a run there loads, closest first, which is the order
+            // they win in: the closest file to the run wins a key, and a
+            // profile table is a key like any other.
+            let chain: Vec<&Declared<'_>> =
+                ancestry(under).filter_map(|dir| by_dir.get(&dir)).collect();
             let effective = |key: &str| -> Option<&FoundMode> {
-                modes
+                chain
                     .iter()
-                    .filter(|m| m.mode.key == key && applies(&m.path, under))
-                    .max_by_key(|m| project_of(&m.path).depth())
+                    .flat_map(|held| held.modes.iter())
+                    .find(|m| m.mode.key == key)
+                    .copied()
             };
             let Some(unprompted) = effective(NEVER.0).filter(|m| m.mode.value == NEVER.1) else {
                 continue;
             };
-            // Both spellings of the sandbox, the deeper of the two winning
+            // Both spellings of the sandbox, the closer of the two winning
             // where a file writes both, which the reference tells it not to.
-            let Some(sandbox) = [SANDBOX, PROFILE]
+            let Some(sandbox) = chain
                 .iter()
-                .filter_map(|key| effective(key))
-                .max_by_key(|m| project_of(&m.path).depth())
+                .flat_map(|held| held.modes.iter())
+                .find(|m| m.mode.key == SANDBOX || m.mode.key == PROFILE)
+                .copied()
             else {
                 continue;
             };
-            // Closest first, because the closest file wins a key and a
-            // profile table is a key: a root defining `ours` as read-only and
-            // a nested file redefining it as a write are two answers, and
-            // resolution takes the first it finds.
-            let mut defined: Vec<&FoundProfile> = profiles
+            let defined: Vec<&Profile> = chain
                 .iter()
-                .filter(|p| applies(&p.path, under))
+                .flat_map(|held| held.profiles.iter().copied())
                 .collect();
-            defined.sort_by_key(|p| std::cmp::Reverse(project_of(&p.path).depth()));
-            let defined: Vec<&Profile> = defined.into_iter().map(|p| &p.profile).collect();
             if !writes(&sandbox.mode, &defined) {
                 continue;
             }
@@ -211,8 +219,8 @@ impl Rule for UnpromptedWriteAccess {
                 sandbox.mode.key, sandbox.mode.value, NEVER.0, NEVER.1
             );
             let found = said_at(&sandbox.path, self.id(), sandbox.at, &said, width);
-            // The same pair settles several runs where a deeper file says
-            // nothing about either key, and that is one thing to fix.
+            // The same pair settles several runs where a deeper directory
+            // says nothing about either key, and that is one thing to fix.
             if !answers.contains(&found) {
                 answers.push(found);
             }
