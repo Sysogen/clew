@@ -3,7 +3,7 @@
 
 //! The `bypass-permissions` rule.
 
-use super::{about_file, after_key, found_at};
+use super::{about_file, found_at};
 use crate::finding::{Finding, RuleId, Severity};
 use crate::rule::{Examined, Rule, Subject};
 
@@ -64,7 +64,7 @@ impl Rule for BypassPermissions {
             path,
             mode,
             source,
-            format,
+            at,
         } = at
         else {
             return Vec::new();
@@ -73,8 +73,7 @@ impl Rule for BypassPermissions {
             return Vec::new();
         }
         vec![
-            after_key(source, *format, &mode.key, &mode.value, 0)
-                .and_then(|at| found_at(path, self.id(), source, at, width))
+            at.and_then(|at| found_at(path, self.id(), source, at, width))
                 .unwrap_or_else(|| about_file(path, self.id(), &mode.value, width)),
         ]
     }

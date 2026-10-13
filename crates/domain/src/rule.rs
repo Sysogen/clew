@@ -91,7 +91,12 @@ impl FoundMode {
     }
 }
 
-/// One thing to judge, and what is needed to place a finding in its file.
+/// One thing to judge, and where in its file to report it.
+///
+/// Each carries the place the scan found rather than the text and the count
+/// to find it with. A rule is asked about one declaration at a time, so
+/// searching inside the rule read the whole file once for every declaration
+/// in it; [`crate::place::Places`] reads it once for all of them.
 #[derive(Debug, Clone, Copy)]
 pub enum Examined<'a> {
     /// A file's whole text.
@@ -101,20 +106,19 @@ pub enum Examined<'a> {
         /// Its contents.
         text: &'a str,
     },
-    /// One command a hook registers, `source` holding its `occurrence`th copy.
+    /// One command a hook registers.
     HookCommand {
         /// The file that registered it.
         path: &'a RepoPath,
         /// The command.
         command: &'a str,
-        /// The file's text, for placing the finding.
+        /// The file's text, for quoting the line a finding is on.
         source: &'a str,
-        /// Which copy of the command this is.
-        occurrence: usize,
-        /// Where the file wrote it, when the reader knew. A finding is placed
-        /// here rather than by searching for the command, which cannot tell
-        /// two copies apart. `None` for a format read without positions,
-        /// where the copy is all there is to go on.
+        /// How far the file's text the command reaches over, found by the
+        /// scan. A rule looking for a line inside the command searches
+        /// there and nowhere else, so what it cannot find in this one it
+        /// cannot find in the next. `None` where the command could not be
+        /// found, which leaves the finding about the file.
         at: Option<Span>,
     },
     /// A mode a file starts an agent in.
@@ -123,24 +127,21 @@ pub enum Examined<'a> {
         path: &'a RepoPath,
         /// The mode.
         mode: &'a Autonomy,
-        /// The file's text, for placing the finding.
+        /// The file's text, for quoting the line a finding is on.
         source: &'a str,
-        /// What the file is written in, for reading that text.
-        format: Format,
+        /// Where the file wrote it, found by the scan.
+        at: Option<usize>,
     },
-    /// One operation a file pre-approves, where `source` holds its
-    /// `occurrence`th copy.
+    /// One operation a file pre-approves.
     Grant {
         /// The file.
         path: &'a RepoPath,
         /// The grant.
         grant: &'a Permission,
-        /// The file's text, for placing the finding.
+        /// The file's text, for quoting the line a finding is on.
         source: &'a str,
-        /// Which copy of the grant this is.
-        occurrence: usize,
-        /// What the file is written in, for reading that text.
-        format: Format,
+        /// Where the file wrote it, found by the scan.
+        at: Option<usize>,
     },
     /// One MCP server a file declares.
     Server {
@@ -148,24 +149,21 @@ pub enum Examined<'a> {
         path: &'a RepoPath,
         /// The server.
         server: &'a McpServer,
-        /// The file's text, for placing the finding.
+        /// The file's text, for quoting the line a finding is on.
         source: &'a str,
-        /// What the file is written in, for reading that text.
-        format: Format,
+        /// Where the file declared it, found by the scan.
+        at: Option<usize>,
     },
-    /// One task a workspace declares, where `source` holds the
-    /// `occurrence`th task carrying the same trigger.
+    /// One task a workspace declares.
     Task {
         /// The file.
         path: &'a RepoPath,
         /// The task.
         task: &'a Task,
-        /// The file's text, for placing the finding.
+        /// The file's text, for quoting the line a finding is on.
         source: &'a str,
-        /// Which task carrying this trigger it is, counted in file order.
-        occurrence: usize,
-        /// What the file is written in, for reading that text.
-        format: Format,
+        /// Where the file wrote its trigger, found by the scan.
+        at: Option<usize>,
     },
     /// A file that is there and cannot be read, and why.
     Unreadable {

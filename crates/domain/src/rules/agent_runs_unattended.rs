@@ -3,7 +3,7 @@
 
 //! The `agent-runs-unattended` rule.
 
-use super::{about_file, found_at, where_command_sits};
+use super::{about_file, found_at};
 use crate::finding::{Finding, RuleId, Severity};
 use crate::rule::{Examined, Rule, Subject};
 use crate::shell;
@@ -180,7 +180,6 @@ impl Rule for AgentRunsUnattended {
             path,
             command,
             source,
-            occurrence,
             at: span,
         } = at
         else {
@@ -188,9 +187,10 @@ impl Rule for AgentRunsUnattended {
         };
         // Where this command sits, so a flagged line is looked for inside it
         // rather than in an earlier step that happens to pass the same flag.
-        let from = where_command_sits(source, command, *occurrence, *span);
-        // A span bounds the search as well as starting it, so a flagged line
-        // is looked for inside this step and cannot be found in another.
+        let from = span.map(|held| held.start);
+        // The span bounds the search as well as starting it, so a flagged
+        // line is looked for inside this command and cannot be found in
+        // another.
         let until = span.map_or(source.len(), |held| held.end.min(source.len()));
         let mut seen: Vec<&str> = Vec::new();
         let mut found = Vec::new();
@@ -359,7 +359,9 @@ fn basename(word: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::extract::Format;
     use crate::finding::DEFAULT_EVIDENCE_WIDTH;
+    use crate::place::Places;
     use crate::repo_path::RepoPath;
     use crate::rule::judge;
     use crate::yaml::Span;
@@ -370,8 +372,7 @@ mod tests {
                 path: &RepoPath::root().join(".github/workflows/ci.yml"),
                 command: run,
                 source,
-                occurrence: 0,
-                at: None,
+                at: Places::written(source, Format::Yaml).command(run, 0, None),
             },
             &[RuleId::AgentRunsUnattended],
             DEFAULT_EVIDENCE_WIDTH,
@@ -645,7 +646,6 @@ mod tests {
                 path: &RepoPath::root().join(".github/workflows/ci.yml"),
                 command: run,
                 source,
-                occurrence: 0,
                 at: Some(Span {
                     start,
                     end: source.len(),
@@ -675,7 +675,6 @@ mod tests {
                 path: &RepoPath::root().join(".github/workflows/ci.yml"),
                 command: run,
                 source,
-                occurrence: 0,
                 at: Some(Span { start, end }),
             },
             &[RuleId::AgentRunsUnattended],

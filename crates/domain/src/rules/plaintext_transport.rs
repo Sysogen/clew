@@ -5,7 +5,7 @@
 
 use std::net::IpAddr;
 
-use super::{SERVER_BUILTIN, about_file, after_words, found_at, key_in};
+use super::{about_file, found_at};
 use crate::finding::{Finding, RuleId, Severity};
 use crate::mcp_server::Transport;
 use crate::rule::{Examined, Rule, Subject};
@@ -60,7 +60,7 @@ impl Rule for PlaintextTransport {
             path,
             server,
             source,
-            format,
+            at,
         } = at
         else {
             return Vec::new();
@@ -72,10 +72,7 @@ impl Rule for PlaintextTransport {
             return Vec::new();
         }
         vec![
-            key_in(source, *format, &server.block, &server.name)
-                // A `crushrc` declares by calling a builtin, with no key.
-                .or_else(|| after_words(source, SERVER_BUILTIN, &server.name, 0))
-                .and_then(|at| found_at(path, self.id(), source, at, width))
+            at.and_then(|at| found_at(path, self.id(), source, at, width))
                 .unwrap_or_else(|| about_file(path, self.id(), &server.name, width)),
         ]
     }

@@ -70,6 +70,24 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   commented copies: thirteen seconds of placement became half a second, which
   matters because the files a scanner reads are not ones it chose.
 
+  That pass now runs once per file rather than once per declaration. Reading a
+  file and placing a finding in it were separate walks: the reader found four
+  thousand grants, and then each rule that reported one searched the file
+  again for it, so the cost was the file's length times the number of things
+  it declared. A mode was already read with its position, because the reader
+  knew it; a grant, a task, a server and a hook command were not, and now
+  they are. The reader builds one index of where a file writes the things it
+  declares and the rule looks its subject up, which is the same answer in one
+  walk. Measured on a file granting four thousand tools: 6.0 seconds became
+  3.7, against 3.6 for the same file before placement began reading comments
+  at all, so what is left of the difference is the cost of reading them.
+
+  Where a found thing ends is still the reader's to say and not the index's.
+  A command written bare over several lines is indented in the file while the
+  command is not, so nothing searching for its text can honestly bound it;
+  only a reader that saw the block knows. A format read with positions gives
+  that span and placement takes it as given rather than searching at all.
+
 ### Added
 
 - Codex's named permissions profiles are read: `[permissions.<name>]` tables,

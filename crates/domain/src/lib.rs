@@ -26,6 +26,7 @@ pub mod hook;
 pub mod mcp_server;
 pub mod pack;
 pub mod permission;
+pub mod place;
 pub mod ports;
 pub mod profile;
 pub mod repo_path;

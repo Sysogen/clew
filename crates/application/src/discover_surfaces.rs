@@ -9,6 +9,8 @@ use clew_domain::extract;
 use clew_domain::extract::Format;
 use clew_domain::finding::{Finding, RuleId, Severity};
 use clew_domain::hook::{Action, project_of};
+use clew_domain::mcp_server;
+use clew_domain::place::{self, Places};
 use clew_domain::ports::file_contents::{FileContents, FileContentsError};
 use clew_domain::ports::file_tree::{EntryKind, FileTree, FileTreeError};
 use clew_domain::rule::{self, Examined, FoundMode, FoundProfile};
@@ -168,10 +170,12 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
         &self,
         at: &RepoPath,
         text: &str,
+        format: Format,
         hooks: Vec<Hook>,
         report: &mut DiscoveryReport,
     ) {
         let checks = catalogue().checks_for(SurfaceKind::HookScript);
+        let places = Places::written(text, format);
         let mut commands: Vec<String> = Vec::new();
         for hook in hooks {
             if let Action::Command(command) = &hook.action {
@@ -182,8 +186,7 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
                         path: at,
                         command,
                         source: text,
-                        occurrence,
-                        at: None,
+                        at: places.command(command, occurrence, None),
                     },
                     checks,
                     self.policy.evidence_width(),
@@ -207,18 +210,18 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
         permissions: Vec<Permission>,
         report: &mut DiscoveryReport,
     ) {
+        let places = Places::given(text, format, place::GRANT_LISTS, place::GRANT_BUILTIN);
         let mut granted: Vec<String> = Vec::new();
         for permission in permissions {
             let entry = permission.written();
             let occurrence = granted.iter().filter(|g| **g == entry).count();
-            granted.push(entry);
+            granted.push(entry.clone());
             report.findings.extend(rule::judge(
                 &Examined::Grant {
                     path: at,
                     grant: &permission,
                     source: text,
-                    occurrence,
-                    format,
+                    at: places.nth(&entry, occurrence),
                 },
                 checks,
                 self.policy.evidence_width(),
@@ -266,7 +269,7 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
                 }
             };
 
-            self.read_hooks(&path, &text, found.hooks, report);
+            self.read_hooks(&path, &text, matched.format, found.hooks, report);
             self.read_grants(
                 &path,
                 &text,
@@ -275,13 +278,20 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
                 found.permissions,
                 report,
             );
+            let blocks = Places::declared(&text, matched.format, mcp_server::BLOCKS);
+            let called = Places::given(&text, matched.format, &[], place::SERVER_BUILTIN);
             for server in found.servers {
                 report.findings.extend(rule::judge(
                     &Examined::Server {
                         path: &path,
                         server: &server,
                         source: &text,
-                        format: matched.format,
+                        // A `crushrc` declares by calling a builtin, with no
+                        // key to find.
+                        at: blocks
+                            .nth_in(&server.block, &server.name, 0)
+                            .map(|held| held.start)
+                            .or_else(|| called.nth(&server.name, 0)),
                     },
                     matched.check,
                     self.policy.evidence_width(),
@@ -293,6 +303,7 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
             }
             // Counted like hook commands, and in file order: every automatic
             // task writes the same trigger, so the copy is what places it.
+            let runs = Places::given(&text, matched.format, &["runOn"], &[]);
             let mut triggers: Vec<Option<String>> = Vec::new();
             for task in found.tasks {
                 let occurrence = triggers.iter().filter(|t| **t == task.runs_on).count();
@@ -302,8 +313,10 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
                         path: &path,
                         task: &task,
                         source: &text,
-                        occurrence,
-                        format: matched.format,
+                        at: task
+                            .runs_on
+                            .as_deref()
+                            .and_then(|trigger| runs.nth(trigger, occurrence)),
                     },
                     matched.check,
                     self.policy.evidence_width(),
@@ -354,6 +367,7 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
         report: &mut DiscoveryReport,
     ) {
         let mut ran: Vec<&str> = Vec::new();
+        let places = Places::written(text, Format::Yaml);
         for step in steps {
             let opens = step.run.lines().next().unwrap_or_default();
             let occurrence = ran.iter().filter(|r| **r == opens).count();
@@ -367,8 +381,7 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
                         path,
                         command: &step.run,
                         source: text,
-                        occurrence,
-                        at: step.at,
+                        at: places.command(&step.run, occurrence, step.at),
                     },
                     checks,
                     self.policy.evidence_width(),
@@ -394,12 +407,16 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
         report: &mut DiscoveryReport,
     ) {
         for mode in modes {
+            // Asked about by its own key, because a file setting two modes to
+            // the same word needs the second placed at its own key. A file
+            // sets one or two, so asking per key costs what asking once does.
+            let places = Places::given(text, format, &[mode.key.as_str()], &[]);
             report.findings.extend(rule::judge(
                 &Examined::Mode {
                     path,
                     mode,
                     source: text,
-                    format,
+                    at: places.nth(&mode.value, 0),
                 },
                 checks,
                 self.policy.evidence_width(),

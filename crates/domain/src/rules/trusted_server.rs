@@ -3,7 +3,7 @@
 
 //! The `trusted-server` rule.
 
-use super::{about_file, found_at, key_in};
+use super::{about_file, found_at};
 use crate::finding::{Finding, RuleId, Severity};
 use crate::rule::{Examined, Rule, Subject};
 
@@ -54,7 +54,7 @@ impl Rule for TrustedServer {
             path,
             server,
             source,
-            format,
+            at,
         } = at
         else {
             return Vec::new();
@@ -63,8 +63,7 @@ impl Rule for TrustedServer {
             return Vec::new();
         }
         vec![
-            key_in(source, *format, &server.block, &server.name)
-                .and_then(|at| found_at(path, self.id(), source, at, width))
+            at.and_then(|at| found_at(path, self.id(), source, at, width))
                 .unwrap_or_else(|| about_file(path, self.id(), &server.name, width)),
         ]
     }
