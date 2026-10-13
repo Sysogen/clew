@@ -357,6 +357,7 @@ mod tests {
             servers: vec![DeclaredServer {
                 source: path,
                 server: McpServer {
+                    block: "mcpServers".to_owned(),
                     name: "pg".to_owned(),
                     transport: Transport::local("srv".to_owned(), &[]),
                     env: vec![],
@@ -635,6 +636,7 @@ mod tests {
             servers: vec![DeclaredServer {
                 source: path,
                 server: McpServer {
+                    block: "mcpServers".to_owned(),
                     name: "postgres".to_owned(),
                     transport: Transport::Local {
                         command: "npx".to_owned(),
@@ -676,6 +678,7 @@ mod tests {
             servers: vec![DeclaredServer {
                 source: path,
                 server: McpServer {
+                    block: "mcpServers".to_owned(),
                     name: format!("evil{newline}  server \"trustworthy\""),
                     transport: Transport::remote("http://evil.invalid/mcp"),
                     env: vec![format!("TOKEN{newline}    declared trusted")],
@@ -748,6 +751,7 @@ mod tests {
                 servers: vec![DeclaredServer {
                     source: path.clone(),
                     server: McpServer {
+                        block: "mcpServers".to_owned(),
                         name: format!("a{hidden}b"),
                         transport: Transport::local("srv".to_owned(), &[]),
                         env: vec![],
@@ -852,6 +856,7 @@ mod tests {
             servers: vec![DeclaredServer {
                 source: path,
                 server: McpServer {
+                    block: "mcpServers".to_owned(),
                     name: "atlassian".to_owned(),
                     transport: Transport::Remote {
                         url: "https://mcp.example.invalid/sse".to_owned(),

@@ -757,20 +757,23 @@ fn trigger(entry: &serde_json::Value) -> Option<String> {
 fn mcp_servers(root: &serde_json::Value) -> Vec<McpServer> {
     // Every spelling is read, not the first found, or a file carrying two
     // would report only one of them.
-    let mut found: Vec<McpServer> = [
-        "mcpServers",
-        "mcp_servers",
-        "context_servers",
-        "servers",
-        "mcp",
-    ]
-    .iter()
-    .filter_map(|key| root.get(key)?.as_object())
-    .flatten()
-    .filter_map(|(name, config)| server(name, config))
-    .collect();
+    let mut found: Vec<McpServer> = crate::mcp_server::BLOCKS
+        .iter()
+        .filter_map(|key| Some((*key, root.get(key)?.as_object()?)))
+        .flat_map(|(key, declared)| {
+            declared
+                .iter()
+                .filter_map(move |(name, config)| server(key, name, config))
+        })
+        .collect();
     found.sort();
-    found.dedup();
+    // Two blocks declaring one server the same way declare one server, and
+    // the block each was read from is not part of that: it says where to
+    // point a finding, and with the declarations identical either place is
+    // the same place.
+    found.dedup_by(|a, b| {
+        (&a.name, &a.transport, &a.env, a.trusted) == (&b.name, &b.transport, &b.env, b.trusted)
+    });
     found
 }
 
@@ -944,7 +947,7 @@ fn matrix_keys(text: &str) -> Vec<&str> {
 
 /// One server declaration. `None` when it reaches nothing: no command, and no
 /// url under either key a remote transport is declared with.
-fn server(name: &str, config: &serde_json::Value) -> Option<McpServer> {
+fn server(block: &str, name: &str, config: &serde_json::Value) -> Option<McpServer> {
     // A declaration carrying both keys is still one server, and `httpUrl` is
     // the one reported: Gemini CLI connects to it and warns that it is doing
     // so, so reporting `url` would name an endpoint nothing reaches.
@@ -974,6 +977,7 @@ fn server(name: &str, config: &serde_json::Value) -> Option<McpServer> {
     env.sort();
 
     Some(McpServer {
+        block: block.to_owned(),
         name: name.to_owned(),
         transport,
         env,
@@ -1350,7 +1354,12 @@ DATABASE_URL = "postgres://u:hunter2@h/d"
 
         assert_eq!(camel.len(), 1, "Claude Code and Cursor spelling");
         assert_eq!(snake.len(), 1, "Codex spelling");
-        assert_eq!(camel, snake);
+        // The same server either way, but each remembers the block it was
+        // read from, which is where a finding about it is placed.
+        assert_eq!(camel[0].name, snake[0].name);
+        assert_eq!(camel[0].transport, snake[0].transport);
+        assert_eq!(camel[0].block, "mcpServers");
+        assert_eq!(snake[0].block, "mcp_servers");
     }
 
     /// Crush names the block `mcp`, so a reader of the other four spellings

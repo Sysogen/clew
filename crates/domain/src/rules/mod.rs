@@ -658,17 +658,6 @@ pub(crate) fn about_file(path: &RepoPath, rule: RuleId, said: &str, width: usize
 /// `allowed_tools` is not half-matched as `allowed` and left unplaced.
 pub(crate) const GRANT_LISTS: &[&str] = &["allow", "allowed-tools", "allowed_tools", "allowed"];
 
-/// The keys a tool declares its servers under. A name is looked for only after
-/// one of them, so a name repeated in a description is not taken for the
-/// declaration.
-pub(crate) const SERVER_BLOCKS: &[&str] = &[
-    "mcpServers",
-    "mcp_servers",
-    "context_servers",
-    "servers",
-    "mcp",
-];
-
 /// Whether `text` is a shell script, by its name, its extension or its `#!`
 /// line.
 pub(crate) fn is_shell(path: &RepoPath, text: &str) -> bool {
@@ -945,6 +934,33 @@ mod tests {
             after_key(toml, Format::Toml, "sandbox_mode", "danger-full-access", 0).expect("placed");
 
         assert_eq!(placed(toml, at).expect("a position").0.line, 4);
+    }
+
+    /// A file may declare the same name in two of the blocks clew reads, and
+    /// extraction keeps both because they are two declarations. A finding
+    /// about one of them is placed at that one: looking the name up again
+    /// would find whichever block came first and could quote the safe
+    /// sibling as the evidence for the unsafe one.
+    #[test]
+    fn a_name_declared_in_two_blocks_is_placed_in_its_own() {
+        let json = "{\n  \"mcpServers\": {\n    \"pg\": {\n      \"command\": \"pg\"\n    }\n  },\n  \"servers\": {\n    \"pg\": {\n      \"trust\": true\n    }\n  }\n}\n";
+
+        let found = judge(
+            &Examined::Server {
+                path: &RepoPath::root().join(".mcp.json"),
+                server: &McpServer {
+                    block: "servers".to_owned(),
+                    ..declared("pg", true)
+                },
+                source: json,
+                format: Format::Json,
+            },
+            &[RuleId::TrustedServer],
+            DEFAULT_EVIDENCE_WIDTH,
+        );
+
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].at.map(|p| p.line), Some(8), "{found:?}");
     }
 
     /// A server's name is placed at the key declaring it, not at the first
@@ -1285,6 +1301,7 @@ mod tests {
 
     fn declared(name: &str, trusted: bool) -> McpServer {
         McpServer {
+            block: "mcpServers".to_owned(),
             name: name.to_owned(),
             transport: crate::mcp_server::Transport::local("srv".to_owned(), &[]),
             env: Vec::new(),
@@ -1393,6 +1410,7 @@ mod tests {
 
     fn reached_at(name: &str, url: &str) -> McpServer {
         McpServer {
+            block: "mcpServers".to_owned(),
             name: name.to_owned(),
             transport: crate::mcp_server::Transport::remote(url),
             env: Vec::new(),
@@ -1545,14 +1563,22 @@ mod tests {
             "servers",
             "mcp",
         ];
-        assert_eq!(keys.len(), SERVER_BLOCKS.len(), "a key has no case here");
+        assert_eq!(
+            keys.len(),
+            crate::mcp_server::BLOCKS.len(),
+            "a key has no case here"
+        );
         for key in keys {
             let source = format!(
                 "{{\n  \"{key}\": {{\n    \"pg\": {{\n      \"url\": \"http://h.invalid/x\"\n    }}\n  }}\n}}\n"
             );
 
-            let found = transport_found_in(&reached_at("pg", "http://h.invalid/x"), &source)
-                .expect("a finding");
+            let declared = McpServer {
+                block: key.to_owned(),
+                ..reached_at("pg", "http://h.invalid/x")
+            };
+
+            let found = transport_found_in(&declared, &source).expect("a finding");
 
             assert_eq!(found.at.map(|p| p.line), Some(3), "{key}: {found:?}");
         }

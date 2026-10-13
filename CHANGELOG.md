@@ -7,10 +7,15 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
-- A server's name is placed at the key declaring it. Placement looked for the
-  name among the values of the block holding it, so a server named in a
-  sibling's arguments came first in the file and `trusted-server` and
-  `plaintext-transport` both pointed at that sibling's line instead.
+- A server's name is placed at the key declaring it, in the block it was
+  declared under. Placement looked for the name among the values of the block
+  holding it, so a server named in a sibling's arguments came first in the
+  file and `trusted-server` and `plaintext-transport` both pointed at that
+  sibling's line instead. And a file may declare one name in two of the
+  blocks clew reads, which are two declarations: each server now remembers
+  the block it came from, so a finding about the trusted one does not quote
+  its safe namesake. The five spellings live in one place for that, since a
+  copy of a set that lives somewhere else is how the two come to disagree.
 
 - A finding is no longer placed on a key written inside a comment. Placement
   finds a key by searching the text and took the first match, so a
