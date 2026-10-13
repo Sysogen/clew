@@ -22,6 +22,10 @@ pub struct UnpromptedWriteAccess;
 /// `on-failure` as deprecated, so neither is named.
 const NEVER: (&str, &str) = ("approval_policy", "never");
 
+/// The file these keys are written in, which is the only one whose being
+/// unreadable says anything about them.
+const CONFIG: &str = ".codex/config.toml";
+
 /// The key naming the sandbox as a mode, and the one naming it as a profile.
 const SANDBOX: &str = "sandbox_mode";
 const PROFILE: &str = "default_permissions";
@@ -196,7 +200,15 @@ impl Rule for UnpromptedWriteAccess {
         // searching a list at each step would be the square of what a
         // repository chose to hold.
         let mut stops: BTreeSet<RepoPath> = projects.iter().cloned().collect();
-        stops.extend(opaque.iter().map(project_of));
+        // Only a configuration this rule reads can have overridden these
+        // keys. Another tool's file failing to parse says nothing about them,
+        // and stopping there lost a pair that really was in force.
+        stops.extend(
+            opaque
+                .iter()
+                .filter(|at| at.as_str().ends_with(CONFIG))
+                .map(project_of),
+        );
         let stops: BTreeSet<&RepoPath> = stops.iter().collect();
 
         let mut answers: Vec<Finding> = Vec::new();
@@ -717,6 +729,41 @@ mod tests {
         );
 
         assert!(found.is_empty(), "{found:?}");
+    }
+
+    /// Only a configuration this rule reads can have overridden these keys.
+    /// Another tool's file failing to parse says nothing about them, and
+    /// stopping the walk there lost a pair that really was in force.
+    #[test]
+    fn another_tool_s_unreadable_file_does_not_stop_the_chain() {
+        let modes = found_in(&[
+            File {
+                path: ".codex/config.toml",
+                source: "approval_policy = \"never\"\n",
+                modes: &[("approval_policy", "never")],
+                profiles: &[],
+            },
+            File {
+                path: "one/two/.codex/config.toml",
+                source: "sandbox_mode = \"workspace-write\"\n",
+                modes: &[("sandbox_mode", "workspace-write")],
+                profiles: &[],
+            },
+        ]);
+        let opaque = [RepoPath::root().join("one/.claude/settings.json")];
+
+        let found = judge(
+            &Examined::Report {
+                modes: &modes,
+                profiles: &[],
+                projects: &[RepoPath::root()],
+                opaque: &opaque,
+            },
+            &[RuleId::UnpromptedWriteAccess],
+            DEFAULT_EVIDENCE_WIDTH,
+        );
+
+        assert_eq!(found.len(), 1, "{found:?}");
     }
 
     /// A directory holding another tool's settings is a layer too, since a

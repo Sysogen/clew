@@ -44,7 +44,9 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   compact file writes a whole object on one line, and running to the newline
   there swallowed every key after this one, while outside a collection a comma
   separates nothing, which is how `allowed-tools: Bash(a), Read` gives one key
-  two values. So a `label` holding the same word between two `runOn` declarations
+  two values, and the block indented beneath a key is that key's values too,
+  which is how frontmatter writes a list of tools: a grant written that way
+  used to fall back to naming the file rather than the line. So a `label` holding the same word between two `runOn` declarations
   is another key's value, and counting it put the second finding on the label.
 
   One pass also means a file holding many copies of a key costs its length
@@ -103,9 +105,11 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   configuration outside any repository, which a scan of a repository never
   opens.
 
-  A file the scan could not read or understand stops the walk as well. What
-  it said about either key is unknown, and a pair joined across it would be a
-  finding against a configuration nobody has read.
+  A `.codex/config.toml` the scan could not read or understand stops the walk
+  as well. What it said about either key is unknown, and a pair joined across
+  it would be a finding against a configuration nobody has read. Another
+  tool's file failing to parse says nothing about these keys and does not
+  stop it.
 
   A finding carries one path, so it is placed at the sandbox and the evidence
   names the file the other half came from, last, because evidence is clipped

@@ -238,10 +238,19 @@ fn span(source: &str, format: Format, at: usize, within: usize) -> usize {
         let line = source[at..]
             .find('\n')
             .map_or(text.len(), |newline| at + newline);
-        if within == 0 {
-            return line;
+        if within > 0 {
+            return entry(source, format, at).min(line);
         }
-        return entry(source, format, at).min(line);
+        // Nothing but the separator on the key's own line, so the values are
+        // the block indented beneath it, which is how YAML writes a list and
+        // how frontmatter writes several tools.
+        if source[at..line]
+            .trim_start_matches([':', '=', ' ', '\t'])
+            .is_empty()
+        {
+            return block(source, line);
+        }
+        return line;
     };
 
     // To the close that matches, counting the nesting between and reading
@@ -270,6 +279,24 @@ fn span(source: &str, format: Format, at: usize, within: usize) -> usize {
         i += 1;
     }
     text.len()
+}
+
+/// Where the block indented beneath a key ends, starting from the newline
+/// at `line`.
+///
+/// The first line indented no further than the key's own ends it, which is
+/// the next key beside it, or the fence frontmatter closes with.
+fn block(source: &str, line: usize) -> usize {
+    let opens = source[..line].rfind('\n').map_or(0, |newline| newline + 1);
+    let indent = source[opens..line].len() - source[opens..line].trim_start().len();
+    let mut at = line;
+    for next in source[line..].split_inclusive('\n').skip(1) {
+        if !next.trim().is_empty() && next.len() - next.trim_start().len() <= indent {
+            return at;
+        }
+        at += next.len();
+    }
+    source.len()
 }
 
 /// Where the entry starting at byte `at` ends: the next comma or closing
@@ -877,6 +904,41 @@ mod tests {
             after_key(toml, Format::Toml, "sandbox_mode", "danger-full-access", 0).expect("placed");
 
         assert_eq!(placed(toml, at).expect("a position").0.line, 4);
+    }
+
+    /// YAML writes a key's values as an indented block beneath it as well as
+    /// on its line, and frontmatter uses both. The block is that key's
+    /// values, so a finding points at the one it is about rather than at the
+    /// file.
+    #[test]
+    fn a_block_beneath_a_key_holds_its_values() {
+        let frontmatter = "---\nallowed-tools:\n  - Bash(ls)\n  - Read\n---\n";
+
+        let first = after_key(
+            frontmatter,
+            Format::Markdown,
+            "allowed-tools",
+            "Bash(ls)",
+            0,
+        )
+        .expect("placed");
+        let second =
+            after_key(frontmatter, Format::Markdown, "allowed-tools", "Read", 0).expect("placed");
+
+        assert_eq!(placed(frontmatter, first).expect("a position").0.line, 3);
+        assert_eq!(placed(frontmatter, second).expect("a position").0.line, 4);
+    }
+
+    /// And the block ends where the indentation does, so a sibling key's
+    /// value is not one of these.
+    #[test]
+    fn a_block_ends_at_the_next_key_beside_it() {
+        let frontmatter = "---\nallowed-tools:\n  - Bash(ls)\nname: Read\n---\n";
+
+        assert!(
+            after_key(frontmatter, Format::Markdown, "allowed-tools", "Read", 0).is_none(),
+            "a sibling key's value is not in the block"
+        );
     }
 
     /// A compact file writes a whole object on one line, so a value's span
