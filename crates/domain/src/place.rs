@@ -81,6 +81,7 @@ impl Places {
             len: source.len(),
             ..Self::default()
         };
+        let wrote = values(source, format);
         for key in keys {
             // The whole key, as VS Code writes it, or its segments nested,
             // as one putting `defaultMode` under `permissions` does.
@@ -89,10 +90,10 @@ impl Places {
                 given = nested(source, format, key);
             }
             for (from, to) in given {
-                for (text, at) in written_between(source, format, from, to) {
+                for (text, at) in within(&wrote, from, to) {
                     held.add(
                         "",
-                        &text,
+                        text,
                         Span {
                             start: at,
                             end: at + text.len(),
@@ -151,10 +152,10 @@ impl Places {
             len: source.len(),
             ..Self::default()
         };
-        for (text, at) in written_between(source, format, 0, source.len()) {
+        for (text, at) in within(&values(source, format), 0, source.len()) {
             held.add(
                 "",
-                &text,
+                text,
                 Span {
                     start: at,
                     end: at + text.len(),
@@ -284,8 +285,13 @@ fn scalar(line: &str) -> &str {
 /// one's text starts.
 ///
 /// A value sits inside a string, so a string is what is being read here, and
-/// a comment is not: a value named in a note is not one the file declares.
-fn written_between(source: &str, format: Format, from: usize, to: usize) -> Vec<(String, usize)> {
+/// Every value the file writes, with where its text starts, in the order
+/// the file writes them.
+///
+/// Walked once for the whole file rather than once per key, because a file
+/// writing a key N times would otherwise cost N times its length, which is
+/// the shape this index exists to remove.
+fn values(source: &str, format: Format) -> Vec<(String, usize)> {
     let syntax = format.syntax();
     let text = source.as_bytes();
     let mut scan = Scan::default();
@@ -300,8 +306,6 @@ fn written_between(source: &str, format: Format, from: usize, to: usize) -> Vec<
             if was
                 && !scan.in_string()
                 && let Some(opens) = word.take()
-                && i >= from
-                && i <= to
                 && let Some(held) = source.get(opens..i)
             {
                 found.push((held.to_owned(), opens));
@@ -324,10 +328,7 @@ fn written_between(source: &str, format: Format, from: usize, to: usize) -> Vec<
         match (word, ends) {
             (None, false) => word = Some(i),
             (Some(opens), true) => {
-                if opens >= from
-                    && opens < to
-                    && let Some(held) = source.get(opens..i)
-                {
+                if let Some(held) = source.get(opens..i) {
                     found.push((held.to_owned(), opens));
                 }
                 word = None;
@@ -337,14 +338,28 @@ fn written_between(source: &str, format: Format, from: usize, to: usize) -> Vec<
         i += 1;
     }
     if let Some(opens) = word
-        && opens >= from
-        && opens < to
         && let Some(held) = source.get(opens..)
     {
         found.push((held.to_owned(), opens));
     }
 
     found
+}
+
+/// The values whose text starts between bytes `from` and `to`.
+///
+/// Where a value starts is what says whose it is: one beginning before a
+/// key's values belongs to the key before it, and one beginning inside them
+/// is this key's however far it runs on.
+fn within(
+    values: &[(String, usize)],
+    from: usize,
+    to: usize,
+) -> impl Iterator<Item = (&str, usize)> {
+    values
+        .iter()
+        .filter(move |(_, at)| *at >= from && *at < to)
+        .map(|(text, at)| (text.as_str(), *at))
 }
 
 /// Every key written between bytes `from` and `to`, with where a finding
@@ -438,8 +453,8 @@ fn called(source: &str, words: &[&str]) -> Vec<(String, usize)> {
         }
 
         let from = line.len() - rest.len();
-        for (text, offset) in written_between(rest, Format::Crushrc, 0, rest.len()) {
-            found.push((text, at + from + offset));
+        for (text, offset) in within(&values(rest, Format::Crushrc), 0, rest.len()) {
+            found.push((text.to_owned(), at + from + offset));
         }
     }
     found
@@ -625,12 +640,20 @@ fn span(source: &str, format: Format, at: usize, within: usize) -> usize {
         // there would swallow every key after this one. Outside one a comma
         // separates nothing, which is how `allowed-tools: Bash(a), Read`
         // gives one key two values.
+        if within > 0 {
+            // The newline only decides this where it comes first, so it is
+            // looked for no further than the entry: a file written on one
+            // line would otherwise be read to its end for every key in it,
+            // which is this index's own cost all over again.
+            let ends = entry(source, format, at);
+            return source
+                .get(at..ends)
+                .and_then(|held| held.find('\n'))
+                .map_or(ends, |newline| at + newline);
+        }
         let line = source[at..]
             .find('\n')
             .map_or(text.len(), |newline| at + newline);
-        if within > 0 {
-            return entry(source, format, at).min(line);
-        }
         // Nothing but the separator on the key's own line, so the values are
         // the block indented beneath it, which is how YAML writes a list and
         // how frontmatter writes several tools.

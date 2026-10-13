@@ -82,6 +82,20 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   3.7, against 3.6 for the same file before placement began reading comments
   at all, so what is left of the difference is the cost of reading them.
 
+  A key the file writes many times is one walk too. Taking the values of a
+  key meant reading the file from its start, because what is a comment and
+  what is a string is only known from there, and a file declaring two
+  thousand automatic tasks writes `runOn` two thousand times: one walk each,
+  which is the shape the index was built to remove, left in place for every
+  key a file repeats. The walk is now separate from the range, so the values
+  are collected once and each key takes the ones beginning inside its own.
+  Measured on that file, 10.9 seconds became 9.1.
+
+  What is left of that one is not placement. A finding quotes the line it
+  sits on and masking a credential in that line costs the line's length, so
+  a file written on one line pays for the whole file in every finding it
+  earns. That is its own cost and this does not change it.
+
   Where a found thing ends is still the reader's to say and not the index's.
   A command written bare over several lines is indented in the file while the
   command is not, so nothing searching for its text can honestly bound it;
