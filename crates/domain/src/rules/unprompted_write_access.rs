@@ -30,14 +30,29 @@ const NEVER: (&str, &str) = ("approval_policy", "never");
 const DIRECTORY: &str = ".codex";
 const CONFIG: &str = "config.toml";
 
-/// Whether `at` is a configuration this rule reads, or the directory holding
-/// one.
+/// The project directory of a configuration this rule reads, or of the
+/// directory holding one.
 ///
-/// Another tool's file failing to parse says nothing about these keys, and
-/// stopping the walk there loses a pair that really is in force.
-fn is_config(at: &RepoPath) -> bool {
+/// `None` for anything else: another tool's file failing to parse says
+/// nothing about these keys, and stopping the walk there loses a pair that
+/// really is in force.
+///
+/// The segments are counted off rather than read for the last dot-named one,
+/// which is what [`project_of`] does: for `.worktrees/service/.codex` that
+/// finds `.worktrees` and answers the scan root, putting the barrier
+/// nowhere near the layer it belongs to.
+fn configured_at(at: &RepoPath) -> Option<RepoPath> {
     let held: Vec<&str> = at.segments().collect();
-    matches!(held.as_slice(), [.., DIRECTORY] | [.., DIRECTORY, CONFIG])
+    let keep = match held.as_slice() {
+        [.., DIRECTORY] => held.len() - 1,
+        [.., DIRECTORY, CONFIG] => held.len() - 2,
+        _ => return None,
+    };
+    Some(
+        held[..keep]
+            .iter()
+            .fold(RepoPath::root(), |path, segment| path.join(segment)),
+    )
 }
 
 /// The key naming the sandbox as a mode, and the one naming it as a profile.
@@ -217,7 +232,7 @@ impl Rule for UnpromptedWriteAccess {
         // Only a configuration this rule reads can have overridden these
         // keys. Another tool's file failing to parse says nothing about them,
         // and stopping there lost a pair that really was in force.
-        stops.extend(opaque.iter().filter(|at| is_config(at)).map(project_of));
+        stops.extend(opaque.iter().filter_map(configured_at));
         let stops: BTreeSet<&RepoPath> = stops.iter().collect();
 
         let mut answers: Vec<Finding> = Vec::new();
@@ -724,6 +739,42 @@ mod tests {
             },
         ]);
         let opaque = [RepoPath::root().join("one/.codex/config.toml")];
+
+        let found = judge(
+            &Examined::Report {
+                modes: &modes,
+                profiles: &[],
+                projects: &[RepoPath::root()],
+                opaque: &opaque,
+            },
+            &[RuleId::UnpromptedWriteAccess],
+            DEFAULT_EVIDENCE_WIDTH,
+        );
+
+        assert!(found.is_empty(), "{found:?}");
+    }
+
+    /// A directory under a dot-named one is still its own project. Reading
+    /// the project directory by looking for the last dot-named segment put
+    /// `.worktrees/service/.codex` at the scan root, so the barrier landed
+    /// nowhere and the pair was joined across it.
+    #[test]
+    fn an_unreadable_directory_under_a_dot_named_one_still_stops_the_chain() {
+        let modes = found_in(&[
+            File {
+                path: ".worktrees/service/.codex/config.toml",
+                source: "approval_policy = \"never\"\n",
+                modes: &[("approval_policy", "never")],
+                profiles: &[],
+            },
+            File {
+                path: ".worktrees/service/deeper/.codex/config.toml",
+                source: "sandbox_mode = \"workspace-write\"\n",
+                modes: &[("sandbox_mode", "workspace-write")],
+                profiles: &[],
+            },
+        ]);
+        let opaque = [RepoPath::root().join(".worktrees/service/deeper/.codex")];
 
         let found = judge(
             &Examined::Report {

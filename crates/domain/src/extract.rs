@@ -766,14 +766,24 @@ fn mcp_servers(root: &serde_json::Value) -> Vec<McpServer> {
                 .filter_map(move |(name, config)| server(key, name, config))
         })
         .collect();
-    found.sort();
     // Two blocks declaring one server the same way declare one server, and
     // the block each was read from is not part of that: it says where to
     // point a finding, and with the declarations identical either place is
     // the same place.
-    found.dedup_by(|a, b| {
-        (&a.name, &a.transport, &a.env, a.trusted) == (&b.name, &b.transport, &b.env, b.trusted)
-    });
+    //
+    // Sorted by what makes them the same, with the block only breaking a
+    // tie, because a declaration sorting between two copies leaves them apart
+    // and both survive.
+    let same = |s: &McpServer| {
+        (
+            s.name.clone(),
+            s.transport.clone(),
+            s.env.clone(),
+            s.trusted,
+        )
+    };
+    found.sort_by_key(|s| (same(s), s.block.clone()));
+    found.dedup_by(|a, b| same(a) == same(b));
     found
 }
 
@@ -1392,6 +1402,21 @@ DATABASE_URL = "postgres://u:hunter2@h/d"
         );
 
         assert_eq!(found.len(), 1, "{found:?}");
+    }
+
+    /// Two blocks declaring one server the same way declare one server, and
+    /// a third block declaring it differently must not come between them:
+    /// the order has to put the copies side by side or the pair survives.
+    #[test]
+    fn a_declaration_between_two_copies_does_not_hide_them() {
+        let found = servers_of(
+            r#"{"mcpServers":{"a":{"command":"x"}},
+                "mcp_servers":{"a":{"command":"x","trust":true}},
+                "servers":{"a":{"command":"x"}}}"#,
+        );
+
+        assert_eq!(found.len(), 2, "{found:?}");
+        assert_eq!(found.iter().filter(|s| s.trusted).count(), 1, "{found:?}");
     }
 
     #[test]
