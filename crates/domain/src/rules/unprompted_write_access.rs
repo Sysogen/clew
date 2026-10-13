@@ -22,9 +22,23 @@ pub struct UnpromptedWriteAccess;
 /// `on-failure` as deprecated, so neither is named.
 const NEVER: (&str, &str) = ("approval_policy", "never");
 
-/// The file these keys are written in, which is the only one whose being
-/// unreadable says anything about them.
-const CONFIG: &str = ".codex/config.toml";
+/// The directory these keys are written in, and the file inside it.
+///
+/// Either being unreadable leaves the configuration unknown: a file that
+/// would not parse, and a directory that would not list, say the same thing
+/// about what might be in there.
+const DIRECTORY: &str = ".codex";
+const CONFIG: &str = "config.toml";
+
+/// Whether `at` is a configuration this rule reads, or the directory holding
+/// one.
+///
+/// Another tool's file failing to parse says nothing about these keys, and
+/// stopping the walk there loses a pair that really is in force.
+fn is_config(at: &RepoPath) -> bool {
+    let held: Vec<&str> = at.segments().collect();
+    matches!(held.as_slice(), [.., DIRECTORY] | [.., DIRECTORY, CONFIG])
+}
 
 /// The key naming the sandbox as a mode, and the one naming it as a profile.
 const SANDBOX: &str = "sandbox_mode";
@@ -203,12 +217,7 @@ impl Rule for UnpromptedWriteAccess {
         // Only a configuration this rule reads can have overridden these
         // keys. Another tool's file failing to parse says nothing about them,
         // and stopping there lost a pair that really was in force.
-        stops.extend(
-            opaque
-                .iter()
-                .filter(|at| at.as_str().ends_with(CONFIG))
-                .map(project_of),
-        );
+        stops.extend(opaque.iter().filter(|at| is_config(at)).map(project_of));
         let stops: BTreeSet<&RepoPath> = stops.iter().collect();
 
         let mut answers: Vec<Finding> = Vec::new();
@@ -217,7 +226,7 @@ impl Rule for UnpromptedWriteAccess {
         // far half sits in collapsed into one whenever that part fell off the
         // end, which made the number of findings depend on how wide a report
         // quotes.
-        let mut said_already: Vec<(&RepoPath, &RepoPath, &str)> = Vec::new();
+        let mut said_already: BTreeSet<(&RepoPath, &RepoPath, &str)> = BTreeSet::new();
         for under in by_dir.keys() {
             // The layers a run there loads, closest first, which is the order
             // they win in: the closest file to the run wins a key, and a
@@ -271,8 +280,7 @@ impl Rule for UnpromptedWriteAccess {
             // The same pair settles several runs where a deeper directory
             // says nothing about either key, and that is one thing to fix.
             let pair = (&sandbox.path, &unprompted.path, sandbox.mode.value.as_str());
-            if !said_already.contains(&pair) {
-                said_already.push(pair);
+            if said_already.insert(pair) {
                 answers.push(said_at(&sandbox.path, self.id(), sandbox.at, &said, width));
             }
         }
@@ -716,6 +724,40 @@ mod tests {
             },
         ]);
         let opaque = [RepoPath::root().join("one/.codex/config.toml")];
+
+        let found = judge(
+            &Examined::Report {
+                modes: &modes,
+                profiles: &[],
+                projects: &[RepoPath::root()],
+                opaque: &opaque,
+            },
+            &[RuleId::UnpromptedWriteAccess],
+            DEFAULT_EVIDENCE_WIDTH,
+        );
+
+        assert!(found.is_empty(), "{found:?}");
+    }
+
+    /// A `.codex` the scan could not list holds a configuration nobody has
+    /// read, so it stops the walk as surely as one that would not parse.
+    #[test]
+    fn a_codex_directory_that_could_not_be_listed_stops_the_chain() {
+        let modes = found_in(&[
+            File {
+                path: ".codex/config.toml",
+                source: "approval_policy = \"never\"\n",
+                modes: &[("approval_policy", "never")],
+                profiles: &[],
+            },
+            File {
+                path: "one/two/.codex/config.toml",
+                source: "sandbox_mode = \"workspace-write\"\n",
+                modes: &[("sandbox_mode", "workspace-write")],
+                profiles: &[],
+            },
+        ]);
+        let opaque = [RepoPath::root().join("one/.codex")];
 
         let found = judge(
             &Examined::Report {

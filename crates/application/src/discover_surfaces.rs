@@ -423,9 +423,16 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
         report: &mut DiscoveryReport,
     ) {
         let projects = report.projects.clone();
-        // A file the scan could not read or understand is a layer whose
-        // contents are unknown, and a rule reading layers has to stop there.
-        let opaque: Vec<RepoPath> = report.unparsed.iter().map(|(at, _)| at.clone()).collect();
+        // A file the scan could not read or understand, and a directory it
+        // could not list, are both layers whose contents are unknown, and a
+        // rule reading layers has to stop at either.
+        let opaque: Vec<RepoPath> = report
+            .unparsed
+            .iter()
+            .map(|(at, _)| at)
+            .chain(report.unreadable.iter().map(|(at, _)| at))
+            .cloned()
+            .collect();
         report.findings.extend(rule::judge(
             &Examined::Report {
                 modes: declared,
@@ -2763,6 +2770,45 @@ mod tests {
             vec!["", "shared/thing"],
             "{report:?}"
         );
+    }
+
+    /// A `.codex` the scan could not list holds a configuration nobody has
+    /// read, and a pair joined across it would be a finding against settings
+    /// no run ever had. The scan hands those directories to the report for
+    /// that reason.
+    #[test]
+    fn a_codex_directory_that_cannot_be_listed_blocks_the_pair() {
+        let tree = FakeTree::default()
+            .dir(
+                "",
+                &[
+                    (".git", EntryKind::Directory),
+                    (".codex", EntryKind::Directory),
+                    ("one", EntryKind::Directory),
+                ],
+            )
+            .dir(".codex", &[("config.toml", EntryKind::File)])
+            .dir(
+                "one",
+                &[
+                    (".codex", EntryKind::Directory),
+                    ("two", EntryKind::Directory),
+                ],
+            )
+            .dir("one/two", &[(".codex", EntryKind::Directory)])
+            .dir("one/two/.codex", &[("config.toml", EntryKind::File)])
+            .deny("one/.codex");
+        let contents = FakeContents::default()
+            .file(".codex/config.toml", "approval_policy = \"never\"\n")
+            .file(
+                "one/two/.codex/config.toml",
+                "sandbox_mode = \"workspace-write\"\n",
+            );
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &ScanPolicy::default()).run();
+
+        assert!(report.findings.is_empty(), "{report:?}");
+        assert!(!report.is_complete(), "the scan says it could not look");
     }
 
     /// And the pair is not joined across that boundary: a run inside the

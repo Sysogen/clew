@@ -5,7 +5,7 @@
 
 use std::net::IpAddr;
 
-use super::{SERVER_BLOCKS, SERVER_BUILTIN, about_file, after_key, after_words, found_at};
+use super::{SERVER_BLOCKS, SERVER_BUILTIN, about_file, after_words, found_at, key_in};
 use crate::finding::{Finding, RuleId, Severity};
 use crate::mcp_server::Transport;
 use crate::rule::{Examined, Rule, Subject};
@@ -74,7 +74,7 @@ impl Rule for PlaintextTransport {
         vec![
             SERVER_BLOCKS
                 .iter()
-                .find_map(|key| after_key(source, *format, key, &server.name, 0))
+                .find_map(|key| key_in(source, *format, key, &server.name))
                 // A `crushrc` declares by calling a builtin, with no key.
                 .or_else(|| after_words(source, SERVER_BUILTIN, &server.name, 0))
                 .and_then(|at| found_at(path, self.id(), source, at, width))

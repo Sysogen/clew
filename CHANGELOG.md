@@ -7,6 +7,11 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- A server's name is placed at the key declaring it. Placement looked for the
+  name among the values of the block holding it, so a server named in a
+  sibling's arguments came first in the file and `trusted-server` and
+  `plaintext-transport` both pointed at that sibling's line instead.
+
 - A finding is no longer placed on a key written inside a comment. Placement
   finds a key by searching the text and took the first match, so a
   `# sandbox_mode = "danger-full-access"` left in a file as a note had
@@ -106,10 +111,10 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   opens.
 
   A `.codex/config.toml` the scan could not read or understand stops the walk
-  as well. What it said about either key is unknown, and a pair joined across
-  it would be a finding against a configuration nobody has read. Another
-  tool's file failing to parse says nothing about these keys and does not
-  stop it.
+  as well, and so does a `.codex` it could not list: either way the
+  configuration there is unknown, and a pair joined across it would be a
+  finding against settings no run ever had. Another tool's file failing to
+  parse says nothing about these keys and does not stop it.
 
   A finding carries one path, so it is placed at the sandbox and the evidence
   names the file the other half came from, last, because evidence is clipped

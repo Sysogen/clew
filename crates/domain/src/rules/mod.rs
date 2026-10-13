@@ -175,6 +175,47 @@ pub(crate) fn after_key(
     None
 }
 
+/// Just past `named` where it is written as a key inside what `block` is
+/// given, which is where a thing named by a key is declared.
+///
+/// A block holds a whole object, so looking for the name among its values
+/// finds it wherever that object happens to say it: a server named in a
+/// sibling's arguments comes first in the file and is not the declaration.
+pub(crate) fn key_in(source: &str, format: Format, block: &str, named: &str) -> Option<usize> {
+    let syntax = format.syntax();
+    let text = source.as_bytes();
+    let given = given(source, format, block);
+    let mut scan = Scan::default();
+    let mut next = 0;
+    let mut i = 0;
+
+    while i < text.len() {
+        while next < given.len() && i >= given[next].1 {
+            next += 1;
+        }
+        let inside = given
+            .get(next)
+            .is_some_and(|(from, to)| i >= *from && i < *to);
+        if inside
+            && !scan.in_comment()
+            && let Some(end) = key_at(source, syntax, i, named)
+        {
+            return Some(end);
+        }
+        if let Some(on) = scan.inside(text, i) {
+            i = on;
+            continue;
+        }
+        if let Some(on) = scan.opens(text, i, syntax) {
+            i = on;
+            continue;
+        }
+        i += 1;
+    }
+
+    None
+}
+
 /// The byte ranges holding the values `key` is given, one for each place the
 /// file writes it as a key, in order.
 ///
@@ -904,6 +945,28 @@ mod tests {
             after_key(toml, Format::Toml, "sandbox_mode", "danger-full-access", 0).expect("placed");
 
         assert_eq!(placed(toml, at).expect("a position").0.line, 4);
+    }
+
+    /// A server's name is placed at the key declaring it, not at the first
+    /// place the block happens to say it: a sibling naming it in its own
+    /// arguments comes first in the file and is not the declaration.
+    #[test]
+    fn a_server_named_in_a_sibling_is_not_its_declaration() {
+        let json = "{\n  \"mcpServers\": {\n    \"proxy\": {\n      \"args\": [\"--to\", \"pg\"]\n    },\n    \"pg\": {\n      \"trust\": true\n    }\n  }\n}\n";
+
+        let found = judge(
+            &Examined::Server {
+                path: &RepoPath::root().join(".mcp.json"),
+                server: &declared("pg", true),
+                source: json,
+                format: Format::Json,
+            },
+            &[RuleId::TrustedServer],
+            DEFAULT_EVIDENCE_WIDTH,
+        );
+
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].at.map(|p| p.line), Some(6), "{found:?}");
     }
 
     /// YAML writes a key's values as an indented block beneath it as well as
