@@ -28,8 +28,10 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   it appears and runs a block to `*/`, TOML ends one at a `#` wherever it sits
   while YAML and Bash need whitespace or a line start before it, since `a#b`
   is a scalar holding a hash in one and a word in the other, and TOML takes a
-  single-quoted string literally and runs a long one between three quotes. A
-  key written in any of those is text, not a declaration.
+  single-quoted string literally and runs a long one between three quotes,
+  honouring escapes in the basic form and none in the literal one. Bash also
+  begins a token after an operator, so `:;# x` comments where `a#b` does not.
+  A key written in any of those is text, not a declaration.
 
   One pass also means a file holding many copies of a key costs its length
   rather than its square. Measured on a 760 KB file with twenty thousand
@@ -96,7 +98,13 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   are a finding on a configuration that may be unbounded and silence on one
   that is, and silence is the worse of them. It is also the one case
   `bypass-permissions` cannot see, because that rule reads the key selecting
-  the profile, which says `ours` rather than its parent.
+  the profile, which says `ours` rather than its parent. Written out, that
+  value is graded higher by that rule; behind a profile name it is graded here,
+  which understates it by a grade and is better than saying nothing.
+
+  The closest file wins a profile table as it wins any other key, so a root
+  defining `ours` as read-only and a nested file redefining it as a write are
+  two answers, and the nested one is in force below it.
 
   A directory holding only a profile is a run location too. A file defining
   the profile a file above it selects declares no mode of its own, and leaving

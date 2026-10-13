@@ -76,6 +76,11 @@ fn applies(path: &RepoPath, at: &RepoPath) -> bool {
 fn writes(mode: &Autonomy, defined: &[&Profile]) -> bool {
     match (mode.key.as_str(), mode.value.as_str()) {
         (SANDBOX, "workspace-write") => true,
+        // Written out, `danger-full-access` is `bypass-permissions`, which
+        // grades it higher than this rule does. Behind a profile name it is
+        // this rule's, because that one reads the key doing the selecting and
+        // a profile is where it stops being able to see: reporting it here
+        // understates it by a grade, and not reporting it says nothing at all.
         (PROFILE, ":danger-full-access") => false,
         (PROFILE, selected) => Profile::selected(defined, selected),
         _ => false,
@@ -120,7 +125,11 @@ impl Rule for UnpromptedWriteAccess {
                 is placed at the sandbox, and names the file the other half came from. A \
                 default_permissions naming a [permissions.<name>] table of its own is \
                 resolved against that table, which grants writes with filesystem rules \
-                or by extending :workspace, rather than guessed at from the name."
+                or by extending :workspace, rather than guessed at from the name. A \
+                profile extending :danger-full-access is reported here too, although \
+                bypass-permissions grades that value higher: that rule reads the key \
+                doing the selecting, which names the profile rather than its parent, so \
+                a profile is where it stops being able to see."
     }
 
     fn remediation(&self) -> &'static str {
@@ -172,11 +181,16 @@ impl Rule for UnpromptedWriteAccess {
             else {
                 continue;
             };
-            let defined: Vec<&Profile> = profiles
+            // Closest first, because the closest file wins a key and a
+            // profile table is a key: a root defining `ours` as read-only and
+            // a nested file redefining it as a write are two answers, and
+            // resolution takes the first it finds.
+            let mut defined: Vec<&FoundProfile> = profiles
                 .iter()
                 .filter(|p| applies(&p.path, under))
-                .map(|p| &p.profile)
                 .collect();
+            defined.sort_by_key(|p| std::cmp::Reverse(project_of(&p.path).depth()));
+            let defined: Vec<&Profile> = defined.into_iter().map(|p| &p.profile).collect();
             if !writes(&sandbox.mode, &defined) {
                 continue;
             }
@@ -631,6 +645,34 @@ mod tests {
         }]);
 
         assert_eq!(found.len(), 1, "{found:?}");
+    }
+
+    /// The closest file wins a key, and a profile table is a key. A root
+    /// defining `ours` as read-only and a nested file redefining it as a
+    /// write are two answers, and the nested one is in force below.
+    #[test]
+    fn the_closest_definition_of_a_profile_wins() {
+        let found = said_about(&[
+            File {
+                path: ".codex/config.toml",
+                source: "approval_policy = \"never\"\ndefault_permissions = \"ours\"\n\n[permissions.ours]\nextends = \":read-only\"\n",
+                modes: &[
+                    ("approval_policy", "never"),
+                    ("default_permissions", "ours"),
+                ],
+                profiles: &[("ours", Some(":read-only"), false)],
+            },
+            File {
+                path: "service/.codex/config.toml",
+                source: "[permissions.ours]\nextends = \":workspace\"\n",
+                modes: &[],
+                profiles: &[("ours", Some(":workspace"), false)],
+            },
+        ]);
+
+        assert_eq!(found.len(), 1, "{found:?}");
+        // The selection is at the root, which is the line to change.
+        assert_eq!(found[0].path.as_str(), ".codex/config.toml");
     }
 
     /// Only the chain from the root down. A profile defined beside the file

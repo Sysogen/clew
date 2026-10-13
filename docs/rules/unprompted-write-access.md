@@ -25,7 +25,10 @@ writes leave neither control for a run below. The finding is placed at the
 sandbox, and names the file the other half came from. A default_permissions
 naming a [permissions.<name>] table of its own is resolved against that table,
 which grants writes with filesystem rules or by extending :workspace, rather
-than guessed at from the name.
+than guessed at from the name. A profile extending :danger-full-access is
+reported here too, although bypass-permissions grades that value higher: that
+rule reads the key doing the selecting, which names the profile rather than its
+parent, so a profile is where it stops being able to see.
 
 ## What to do
 

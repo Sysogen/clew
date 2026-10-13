@@ -264,7 +264,13 @@ impl Scan {
                 }
             }
             At::Long(quote) => {
-                if c == quote && next == Some(quote) && text.get(i + 2) == Some(&quote) {
+                // A long basic string honours escapes, so an escaped quote
+                // does not close it; a long literal one honours none.
+                if self.escaped {
+                    self.escaped = false;
+                } else if c == b'\\' && quote == b'"' {
+                    self.escaped = true;
+                } else if c == quote && next == Some(quote) && text.get(i + 2) == Some(&quote) {
                     self.at = At::Code;
                     return Some(i + 3);
                 }
@@ -289,7 +295,8 @@ impl Scan {
     /// `None` where none does.
     fn opens(&mut self, text: &[u8], i: usize, syntax: Syntax) -> Option<usize> {
         let c = text[i];
-        let spaced = i == 0 || text[i - 1].is_ascii_whitespace();
+        let spaced =
+            i == 0 || text[i - 1].is_ascii_whitespace() || syntax.breaks.contains(&text[i - 1]);
         if let Some(marker) = syntax
             .line
             .iter()
@@ -698,6 +705,49 @@ mod tests {
             after_key(toml, Format::Toml, "sandbox_mode", "danger-full-access", 0).expect("placed");
 
         assert_eq!(placed(toml, at).expect("a position").0.line, 4);
+    }
+
+    /// A long basic string honours escapes, so an escaped quote does not
+    /// close it. Three quotes counted without that leave the scan outside a
+    /// string it is still inside, and the note starts declaring things.
+    #[test]
+    fn an_escaped_quote_does_not_close_a_long_string() {
+        let toml = "note = \"\"\"a \\\"\"\" then sandbox_mode = \"danger-full-access\"\n\"\"\"\nsandbox_mode = \"danger-full-access\"\n";
+
+        let at =
+            after_key(toml, Format::Toml, "sandbox_mode", "danger-full-access", 0).expect("placed");
+
+        assert_eq!(placed(toml, at).expect("a position").0.line, 3);
+    }
+
+    /// A long literal string honours none, so a backslash in one is a
+    /// backslash and the three quotes after it still close.
+    #[test]
+    fn a_backslash_in_a_long_literal_string_closes_nothing() {
+        let toml = "note = '''a \\'''\nsandbox_mode = \"danger-full-access\"\n";
+
+        let at =
+            after_key(toml, Format::Toml, "sandbox_mode", "danger-full-access", 0).expect("placed");
+
+        assert_eq!(placed(toml, at).expect("a position").0.line, 2);
+    }
+
+    /// Shell opens a comment wherever a token begins, which is after an
+    /// operator as much as after a space. A `crushrc` is Bash, and placement
+    /// looks for a key before it looks for the builtin that grants, so a
+    /// commented `allow =` would otherwise win over the real call.
+    #[test]
+    fn a_hash_after_a_shell_operator_opens_a_comment() {
+        for opens in [":;", ":&&", ":||", "(:)"] {
+            // The commented line holds the value as well as the key, or the
+            // search for the value would land on the real call anyway and
+            // this would pass whatever the comment rule says.
+            let source = format!("{opens}# allow = \"Bash(*)\"\npermissions allow \"Bash(*)\"\n");
+
+            let found = grant_found_as("Bash(*)", &source, 0, Format::Crushrc).expect("a finding");
+
+            assert_eq!(found.at.map(|p| p.line), Some(2), "{opens:?}: {found:?}");
+        }
     }
 
     /// YAML needs whitespace before a `#` for it to be a comment, so a hash
@@ -1244,13 +1294,22 @@ mod tests {
     }
 
     fn grant_found_in(entry: &str, source: &str, occurrence: usize) -> Option<Finding> {
+        grant_found_as(entry, source, occurrence, Format::Json)
+    }
+
+    fn grant_found_as(
+        entry: &str,
+        source: &str,
+        occurrence: usize,
+        format: Format,
+    ) -> Option<Finding> {
         judge(
             &Examined::Grant {
                 path: &RepoPath::root().join(".claude/settings.json"),
                 grant: &grant(entry),
                 source,
                 occurrence,
-                format: Format::Json,
+                format,
             },
             &[RuleId::UnrestrictedShell],
             DEFAULT_EVIDENCE_WIDTH,
