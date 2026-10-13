@@ -154,25 +154,62 @@ pub(crate) fn after_key(
     value: &str,
     occurrence: usize,
 ) -> Option<usize> {
-    // A file writes the whole key, as VS Code does, or only its last segment,
-    // as one nesting `defaultMode` under `permissions` does.
-    let leaf = key.rsplit('.').next().unwrap_or(key);
     let quoted = format!("\"{value}\"");
-    for name in [key, leaf] {
-        let given = given(source, format, name);
-        if given.is_empty() {
-            continue;
-        }
+    // The whole key first, and the nested form only if the file wrote none,
+    // because working out where a nested key sits is another walk of the
+    // file and most files write the key whole.
+    let whole = |given: &[(usize, usize)]| {
         // Past the opening quote, so the finding points at the value.
-        if let Some(at) = in_code(source, format, &given, &quoted, false).get(occurrence) {
-            return Some(at + 1);
-        }
-        // Frontmatter writes a list unquoted.
-        if let Some(at) = in_code(source, format, &given, value, true).get(occurrence) {
-            return Some(*at);
+        in_code(source, format, given, &quoted, false, occurrence)
+            .map(|at| at + 1)
+            // Frontmatter writes a list unquoted.
+            .or_else(|| in_code(source, format, given, value, true, occurrence))
+    };
+
+    let given = spans(source, format, key);
+    if !given.is_empty()
+        && let Some(at) = whole(&given)
+    {
+        return Some(at);
+    }
+    let given = nested(source, format, key);
+    if given.is_empty() {
+        return None;
+    }
+    whole(&given)
+}
+
+/// The values a dotted key is given where the file writes only its segments,
+/// each one nested in the last.
+///
+/// A file writes the whole key, as VS Code does, or nests it, as one putting
+/// `defaultMode` under `permissions` does. The leaf is looked for under the
+/// parent the key names rather than anywhere: another block writing the same
+/// leaf is a different setting, and anchoring there puts the finding on it.
+fn nested(source: &str, format: Format, key: &str) -> Vec<(usize, usize)> {
+    let mut held: Option<Vec<(usize, usize)>> = None;
+    for segment in key.split('.') {
+        held = Some(match held {
+            None => spans(source, format, segment),
+            Some(outer) => under(source, format, &outer, segment),
+        });
+        if held.as_ref().is_some_and(Vec::is_empty) {
+            return Vec::new();
         }
     }
-    None
+    held.unwrap_or_default()
+}
+
+/// The values `key` is given where it is written inside one of `outer`.
+fn under(source: &str, format: Format, outer: &[(usize, usize)], key: &str) -> Vec<(usize, usize)> {
+    spans(source, format, key)
+        .into_iter()
+        .filter(|(from, _)| {
+            outer
+                .iter()
+                .any(|(opens, shuts)| from > opens && from < shuts)
+        })
+        .collect()
 }
 
 /// Just past `named` where it is written as a key inside what `block` is
@@ -184,7 +221,7 @@ pub(crate) fn after_key(
 pub(crate) fn key_in(source: &str, format: Format, block: &str, named: &str) -> Option<usize> {
     let syntax = format.syntax();
     let text = source.as_bytes();
-    let given = given(source, format, block);
+    let given = spans(source, format, block);
     let mut scan = Scan::default();
     let mut next = 0;
     let mut i = 0;
@@ -225,7 +262,7 @@ pub(crate) fn key_in(source: &str, format: Format, block: &str, named: &str) -> 
 ///
 /// A list or a block runs to its close, and anything else to the end of the
 /// line, which is where frontmatter writes several values for one key.
-fn given(source: &str, format: Format, key: &str) -> Vec<(usize, usize)> {
+fn spans(source: &str, format: Format, key: &str) -> Vec<(usize, usize)> {
     let syntax = format.syntax();
     let text = source.as_bytes();
     let mut scan = Scan::default();
@@ -395,26 +432,32 @@ fn key_at(source: &str, syntax: Syntax, i: usize, key: &str) -> Option<usize> {
     (!runs_on && separated(source, i + wanted.len())).then_some(i + wanted.len())
 }
 
-/// Where `source` writes `needle` inside one of `given`, in code.
+/// Where `source` writes the `occurrence`th `needle` inside one of `given`,
+/// in code.
 ///
 /// A value sits inside a string, so a string counts and only a comment does
 /// not: what this excludes is a copy the file is not declaring. `whole` asks
 /// for the bare form, where no identifier character runs into it and nothing
 /// opens a longer one after it.
+///
+/// Stops at the copy it was asked for rather than collecting them all, since
+/// it is asked once for each copy and reading past that one is work done
+/// again on the next call.
 fn in_code(
     source: &str,
     format: Format,
     given: &[(usize, usize)],
     needle: &str,
     whole: bool,
-) -> Vec<usize> {
+    occurrence: usize,
+) -> Option<usize> {
     let syntax = format.syntax();
     let text = source.as_bytes();
     let mut scan = Scan::default();
-    let mut found = Vec::new();
-    // The ranges come out of `given` in order and never overlap, so one
-    // cursor walks them: searching all of them at every byte cost the file
-    // once for each declaration in it.
+    let mut seen = 0;
+    // The ranges come out in order and never overlap, so one cursor walks
+    // them: searching all of them at every byte cost the file once for each
+    // declaration in it.
     let mut next = 0;
     let mut i = 0;
 
@@ -429,7 +472,10 @@ fn in_code(
             && text[i..].starts_with(needle.as_bytes())
             && (!whole || bare(text, i, needle.len()))
         {
-            found.push(i);
+            if seen == occurrence {
+                return Some(i);
+            }
+            seen += 1;
         }
         if let Some(on) = scan.inside(text, i) {
             i = on;
@@ -442,7 +488,7 @@ fn in_code(
         i += 1;
     }
 
-    found
+    None
 }
 
 /// The builtin a `crushrc` lists its pre-approvals with. A `crushrc` holds no
@@ -1046,6 +1092,26 @@ mod tests {
             after_key(frontmatter, Format::Markdown, "allowed-tools", "Read", 0).expect("placed");
 
         assert_eq!(placed(frontmatter, at).expect("a position").0.line, 2);
+    }
+
+    /// A dotted key names a path, and a file may write only its last
+    /// segment, so placement looks for that too. It looks for it under the
+    /// parent the key names: another block writing the same leaf is a
+    /// different setting, and anchoring there put the finding on it.
+    #[test]
+    fn a_leaf_is_looked_for_under_the_parent_its_key_names() {
+        let json = "{\n  \"other\": {\n    \"defaultMode\": \"bypassPermissions\"\n  },\n  \"permissions\": {\n    \"defaultMode\": \"bypassPermissions\"\n  }\n}\n";
+
+        let at = after_key(
+            json,
+            Format::Json,
+            "permissions.defaultMode",
+            "bypassPermissions",
+            0,
+        )
+        .expect("placed");
+
+        assert_eq!(placed(json, at).expect("a position").0.line, 6);
     }
 
     /// An occurrence counts the values a key was given, not every copy of

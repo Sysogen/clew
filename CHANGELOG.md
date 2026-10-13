@@ -7,6 +7,12 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- A dotted key's last segment is looked for under the parent the key names.
+  A file writes the whole key, as VS Code does, or nests it, as one putting
+  `defaultMode` under `permissions` does, and placement looked for that
+  segment anywhere: another block writing the same one is a different setting,
+  and anchoring there put the finding on it.
+
 - A server's name is placed at the key declaring it, in the block it was
   declared under. Placement looked for the name among the values of the block
   holding it, so a server named in a sibling's arguments came first in the
