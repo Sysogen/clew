@@ -233,12 +233,12 @@ alone.
 
 What pins a decision is the corpus: `crates/bootstrap/tests/corpus/`, a small
 repository per rule with the findings recorded in `corpus.snapshot`. A rule
-whose logic changes fails there. Seventeen fixtures fire and thirteen are
+whose logic changes fails there. Nineteen fixtures fire and fourteen are
 silent on purpose, each of those a case some rule's own prose promises it does not fire
 on, because a rule that starts firing is as much a regression as one that
 stops. Those two numbers are asserted by the corpus itself, so a fixture added
-without updating them fails rather than leaving this paragraph describing a
-corpus that no longer exists.
+without updating them fails there; this paragraph is kept by hand, and a
+change to the corpus is a change to it.
 
 So a study should still cite the clew release alongside both numbers: the
 corpus covers every rule once and the silent cases their prose names, not every
