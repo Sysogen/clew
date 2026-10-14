@@ -126,13 +126,15 @@ impl DiscoveryReport {
 /// What marks the directory a tool stops walking up at.
 ///
 /// Codex's reference says it treats a directory containing `.git` as the
-/// project root, and gives `.hg` and `.sl` as the others
-/// `project_root_markers` is set to. A marker named there and nowhere else
-/// is not read: that setting lives in the configuration a machine holds
-/// outside any repository, which a scan of a repository never opens, so a
-/// boundary moved only that way is one clew reads as though it were not
-/// there.
-const PROJECT_MARKERS: &[&str] = &[".git", ".hg", ".sl"];
+/// project root, and nothing else unless `project_root_markers` names it,
+/// which is how `.hg` and `.sl` come to count. That setting lives in the
+/// configuration a machine holds outside any repository, which a scan of a
+/// repository never opens, so a boundary moved only that way is one clew
+/// reads as though it were not there. Stopping at `.hg` and `.sl` regardless
+/// read a boundary Codex does not have by default, and a pair split across
+/// a nested Mercurial checkout, in force for every run inside it, went
+/// unreported.
+const PROJECT_MARKER: &str = ".git";
 
 /// Discovers agent surfaces beneath a scan root.
 pub struct DiscoverSurfaces<'a, T: FileTree, C: FileContents> {
@@ -668,7 +670,7 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
                 // A directory holding this is where a tool reading layered
                 // configuration stops walking up, so the scan notes it even
                 // though it is no surface of its own and is never entered.
-                if PROJECT_MARKERS.contains(&entry.path.file_name()) {
+                if entry.path.file_name() == PROJECT_MARKER {
                     report.projects.push(dir.clone());
                 }
                 if self.policy.should_descend(&entry) {
@@ -2802,6 +2804,57 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["", "shared/thing"],
             "{report:?}"
+        );
+    }
+
+    /// Codex's default project-root marker is `.git` alone. `.hg` and `.sl`
+    /// mark a root only where `project_root_markers` names them, and that
+    /// setting lives outside any repository, where a scan never reads it. So
+    /// a nested Mercurial checkout is no boundary: a run inside it still
+    /// loads the configuration above, and a pair split across it is in force.
+    #[test]
+    fn a_mercurial_checkout_does_not_stop_the_layered_walk() {
+        let tree = FakeTree::default()
+            .dir(
+                "",
+                &[
+                    (".git", EntryKind::Directory),
+                    (".codex", EntryKind::Directory),
+                    ("service", EntryKind::Directory),
+                ],
+            )
+            .dir(".codex", &[("config.toml", EntryKind::File)])
+            .dir(
+                "service",
+                &[
+                    (".hg", EntryKind::Directory),
+                    (".codex", EntryKind::Directory),
+                ],
+            )
+            .dir("service/.codex", &[("config.toml", EntryKind::File)]);
+        let contents = FakeContents::default()
+            .file(".codex/config.toml", "approval_policy = \"never\"\n")
+            .file(
+                "service/.codex/config.toml",
+                "sandbox_mode = \"workspace-write\"\n",
+            );
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &ScanPolicy::default()).run();
+
+        assert_eq!(
+            report
+                .projects
+                .iter()
+                .map(RepoPath::as_str)
+                .collect::<Vec<_>>(),
+            vec![""],
+            "{report:?}"
+        );
+        let rules: Vec<RuleId> = report.findings.iter().map(|f| f.rule).collect();
+        assert_eq!(rules, vec![RuleId::UnpromptedWriteAccess], "{report:?}");
+        assert_eq!(
+            report.findings[0].path.as_str(),
+            "service/.codex/config.toml"
         );
     }
 

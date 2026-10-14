@@ -192,11 +192,14 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   once for each directory a run could start under. The walk stopping at a
   project root is what keeps a submodule out of it: a submodule holds its own
   `.git`, so a run inside it never loads the superproject's configuration, and
-  the scan notes where those markers are, `.hg` and `.sl` among them, although
-  none is a surface and none is entered. A marker named only in
-  `project_root_markers` is not read: that setting lives in a machine's own
-  configuration outside any repository, which a scan of a repository never
-  opens.
+  the scan notes where those are, although `.git` is no surface and is never
+  entered. `.git` is the only marker, because it is the only one the
+  reference gives by default: `.hg` and `.sl` count where
+  `project_root_markers` names them, and that setting lives in a machine's
+  own configuration outside any repository, which a scan of a repository
+  never opens. Stopping at them regardless read a boundary Codex does not
+  have, and a pair split across a nested Mercurial checkout, in force for
+  every run inside it, went unreported.
 
   A `.codex/config.toml` the scan could not read or understand stops the walk
   as well, and so does a `.codex` it could not list: either way the
