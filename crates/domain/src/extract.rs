@@ -65,6 +65,7 @@ pub enum Format {
 /// thing that cannot be decided without knowing which format is being read:
 /// `//` opens a comment in JSONC and sits inside a url in YAML.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(clippy::struct_excessive_bools)] // each one fact about a format, read apart
 pub struct Syntax {
     /// What opens a comment that ends with the line, wherever it appears.
     pub line: &'static [&'static str],
@@ -94,6 +95,11 @@ pub struct Syntax {
     /// indenting is for the reader, so a file laid out over several lines
     /// would otherwise read as several levels.
     pub indented: bool,
+    /// Whether a bracket opening a line declares a table, as TOML's `[a.b]`
+    /// does: each segment is a key nested under the one before it, and the
+    /// lines beneath belong to the last. Opening a line anywhere else, a
+    /// bracket opens a list.
+    pub tables: bool,
 }
 
 impl Format {
@@ -110,6 +116,7 @@ impl Format {
                 block: false,
                 long: false,
                 indented: false,
+                tables: false,
             },
             Self::Jsonc => Syntax {
                 line: &["//"],
@@ -119,6 +126,7 @@ impl Format {
                 block: true,
                 long: false,
                 indented: false,
+                tables: false,
             },
             Self::Toml => Syntax {
                 line: &["#"],
@@ -128,6 +136,7 @@ impl Format {
                 block: false,
                 long: true,
                 indented: false,
+                tables: true,
             },
             // A Markdown file declares in a leading YAML block, so YAML's
             // answer is its answer.
@@ -139,6 +148,7 @@ impl Format {
                 block: false,
                 long: false,
                 indented: true,
+                tables: false,
             },
             // Bash, which comments and quotes as YAML does but begins a token
             // after an operator too, so `:;# x` is a comment.
@@ -150,6 +160,7 @@ impl Format {
                 block: false,
                 long: false,
                 indented: false,
+                tables: false,
             },
         }
     }

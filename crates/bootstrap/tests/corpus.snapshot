@@ -29,6 +29,7 @@
 15-unprompted-write-access unprompted-write-access medium .codex/config.toml:2
 16-unprompted-write-across-layers unprompted-write-access medium service/.codex/config.toml:1
 17-unprompted-write-by-profile unprompted-write-access medium .codex/config.toml:2
+18-codex-server-table plaintext-transport medium .codex/config.toml:1
 20-silent-grep-names-a-pipe -
 21-silent-download-to-an-archive -
 22-silent-local-package -

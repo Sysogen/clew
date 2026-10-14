@@ -1,0 +1,7 @@
+A server Codex declares as a table, which is how its reference writes one,
+reached over plain HTTP. A table header holds no separator after the name,
+so the finding is placed at the header rather than at the file.
+
+>>> .codex/config.toml
+[mcp_servers.remote]
+url = "http://mcp.invalid/sse"

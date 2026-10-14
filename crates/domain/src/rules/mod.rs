@@ -477,6 +477,34 @@ mod tests {
         assert_eq!(found[0].at.map(|p| p.line), Some(6), "{found:?}");
     }
 
+    /// Codex's reference declares a server as a table, `[mcp_servers.pg]`,
+    /// and a finding about it is placed at that header rather than at the
+    /// file.
+    #[test]
+    fn a_server_declared_as_a_table_is_placed_at_its_header() {
+        let toml = "# servers\n[mcp_servers.pg]\nurl = \"http://mcp.invalid/sse\"\n";
+
+        let found = judge(
+            &Examined::Server {
+                path: &RepoPath::root().join(".codex/config.toml"),
+                server: &McpServer {
+                    block: "mcp_servers".to_owned(),
+                    transport: crate::mcp_server::Transport::remote("http://mcp.invalid/sse"),
+                    ..declared("pg", false)
+                },
+                source: toml,
+                at: Places::declared(toml, Format::Toml, crate::mcp_server::BLOCKS)
+                    .nth_in("mcp_servers", "pg", 0)
+                    .map(|held| held.start),
+            },
+            &[RuleId::PlaintextTransport],
+            DEFAULT_EVIDENCE_WIDTH,
+        );
+
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].at.map(|p| p.line), Some(2), "{found:?}");
+    }
+
     /// YAML writes a key's values as an indented block beneath it as well as
     /// on its line, and frontmatter uses both. The block is that key's
     /// values, so a finding points at the one it is about rather than at the

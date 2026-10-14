@@ -47,6 +47,19 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the rule a value already followed. A server named like a word another
   server's value happens to hold was placed inside that value.
 
+  A server declared as a TOML table is placed at its header. Codex's
+  reference writes one as `[mcp_servers.pg]`, and a header holds no
+  separator after any segment, which is what placement read a key by, so
+  the finding fell back to naming the file. A header now declares its
+  segments, each nested under the one before, and the lines beneath it
+  belong to the last: `[mcp_servers.pg.env]` is `pg`'s environment and
+  declares no server, and a `command = ...` beneath `[mcp_servers.pg]` is a
+  property of `pg` rather than another server. A table runs to the next
+  header, so a key written in its body is found under it the way a nested
+  key is found under its parent. A bracket opening a line is a header only in
+  TOML: YAML writes a flow sequence that way, and reading it as a header
+  would nest everything after it a level deeper.
+
 - A finding is no longer placed on a key written inside a comment. Placement
   finds a key by searching the text and took the first match, so a
   `# sandbox_mode = "danger-full-access"` left in a file as a note had

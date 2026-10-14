@@ -383,12 +383,32 @@ fn keys_between(source: &str, format: Format, from: usize, to: usize) -> Vec<(St
     let text = source.as_bytes();
     let mut scan = Scan::default();
     let mut found: Vec<(String, usize, (usize, usize))> = Vec::new();
+    let tables = headers(source, syntax);
+    let mut next = 0;
+    let mut base = 0_usize;
     let mut depth = 0_usize;
     let mut indent = 0_usize;
     let mut leading = true;
     let mut i = 0;
 
     while i < text.len() {
+        // A table header nests its segments left to right and puts the lines
+        // beneath it under the last, so `[mcp_servers.pg]` declares `pg` one
+        // level down and `command = ...` beneath it one level further.
+        if let Some(table) = tables.get(next)
+            && table.opens == i
+        {
+            for (k, segment) in table.segments.iter().enumerate() {
+                if segment.start >= from && segment.start < to {
+                    found.push((segment.name.clone(), segment.past, (k, 0)));
+                }
+            }
+            base = table.segments.len();
+            next += 1;
+            leading = false;
+            i = table.ends;
+            continue;
+        }
         if i >= from
             && i < to
             && !scan.in_comment()
@@ -398,7 +418,7 @@ fn keys_between(source: &str, format: Format, from: usize, to: usize) -> Vec<(St
             // Indenting says what nests only where the format says it does,
             // so elsewhere every key is read as equally indented and the
             // brackets decide alone.
-            let under = (depth, if syntax.indented { indent } else { 0 });
+            let under = (base + depth, if syntax.indented { indent } else { 0 });
             found.push((name, at, under));
             leading = false;
             i = past;
@@ -628,6 +648,159 @@ impl Scan {
     }
 }
 
+/// One segment of a table header.
+struct Segment {
+    /// The key it declares.
+    name: String,
+    /// Where its name starts.
+    start: usize,
+    /// Where a finding about it points, which is just past it.
+    past: usize,
+}
+
+/// A TOML table header, `[a.b]` or `[[a.b]]`.
+struct Header {
+    /// Where its bracket opens.
+    opens: usize,
+    /// Its segments, each a key nested under the one before.
+    segments: Vec<Segment>,
+    /// Where it ends, just past its closing bracket.
+    ends: usize,
+}
+
+/// The table header opening at byte `i`, which holds the bracket.
+///
+/// A segment bare or quoted. `None` where the bracket opens something else,
+/// such as a list, which a comma or a value gives away.
+fn header(source: &str, i: usize) -> Option<Header> {
+    let text = source.as_bytes();
+    let doubled = text.get(i + 1) == Some(&b'[');
+    let mut at = i + if doubled { 2 } else { 1 };
+    let mut segments = Vec::new();
+    loop {
+        at += text
+            .get(at..)?
+            .iter()
+            .take_while(|c| matches!(c, b' ' | b'\t'))
+            .count();
+        let c = *text.get(at)?;
+        let (name, past) = if c == b'"' || c == b'\'' {
+            let shuts = source.get(at + 1..)?.find(c as char)? + at + 1;
+            (source.get(at + 1..shuts)?.to_owned(), shuts + 1)
+        } else {
+            let ends = at
+                + text[at..]
+                    .iter()
+                    .take_while(|c| is_key(**c) && **c != b'.')
+                    .count();
+            (source.get(at..ends)?.to_owned(), ends)
+        };
+        if name.is_empty() {
+            return None;
+        }
+        segments.push(Segment {
+            name,
+            start: at,
+            past,
+        });
+        at = past
+            + text
+                .get(past..)?
+                .iter()
+                .take_while(|c| matches!(c, b' ' | b'\t'))
+                .count();
+        let shuts = if doubled { 2 } else { 1 };
+        match text.get(at)? {
+            b'.' => at += 1,
+            b']' if !doubled || text.get(at + 1) == Some(&b']') => {
+                return Some(Header {
+                    opens: i,
+                    segments,
+                    ends: at + shuts,
+                });
+            }
+            _ => return None,
+        }
+    }
+}
+
+/// Every table header a file writes, in order: where its bracket opens, its
+/// segments, and where it ends.
+///
+/// A header is a bracket opening a line, in code and at no depth, in a format
+/// that declares tables. Inside a value a bracket opens a list, and a line
+/// opening with one elsewhere is a list too: YAML writes a flow sequence that
+/// way, and reading it as a header would nest everything after it a level
+/// deeper.
+fn headers(source: &str, syntax: Syntax) -> Vec<Header> {
+    if !syntax.tables {
+        return Vec::new();
+    }
+    let text = source.as_bytes();
+    let mut scan = Scan::default();
+    let mut found = Vec::new();
+    let mut depth = 0_usize;
+    let mut leading = true;
+    let mut i = 0;
+
+    while i < text.len() {
+        if let Some(on) = scan.inside(text, i) {
+            if text[i] == b'\n' {
+                leading = true;
+            }
+            i = on;
+            continue;
+        }
+        if leading
+            && depth == 0
+            && text[i] == b'['
+            && let Some(table) = header(source, i)
+        {
+            i = table.ends;
+            found.push(table);
+            leading = false;
+            continue;
+        }
+        if let Some(on) = scan.opens(text, i, syntax) {
+            leading = false;
+            i = on;
+            continue;
+        }
+        match text[i] {
+            b'\n' => leading = true,
+            b' ' | b'\t' => {}
+            b'[' | b'{' => {
+                depth += 1;
+                leading = false;
+            }
+            b']' | b'}' => {
+                depth = depth.saturating_sub(1);
+                leading = false;
+            }
+            _ => leading = false,
+        }
+        i += 1;
+    }
+
+    found
+}
+
+/// Where a file declares `key` as a segment of a table header, each with how
+/// far its table runs: to the next header, or to the end of the file.
+fn tabled(source: &str, syntax: Syntax, key: &str) -> Vec<(usize, usize)> {
+    let tables = headers(source, syntax);
+    let mut found = Vec::new();
+    for (n, table) in tables.iter().enumerate() {
+        let runs_to = tables.get(n + 1).map_or(source.len(), |next| next.opens);
+        for segment in &table.segments {
+            if segment.name == key {
+                found.push((segment.past, runs_to));
+            }
+        }
+    }
+    found
+}
+
 /// The byte ranges holding the values `key` is given, one for each place the
 /// file writes it as a key, in order.
 ///
@@ -669,6 +842,11 @@ fn spans(source: &str, format: Format, key: &str) -> Vec<(usize, usize)> {
         i += 1;
     }
 
+    // A table header declares its segments with no separator after any of
+    // them, so they are looked for apart and put back in file order, since
+    // the order is what a copy of a key is counted in.
+    found.extend(tabled(source, syntax, key));
+    found.sort_unstable();
     found
 }
 
@@ -972,6 +1150,110 @@ mod tests {
             Some("{\"mcpServers\":{\"a\":\"b: c\",\"b\"")
         );
         assert_eq!(held.nth_in("mcpServers", "b", 1), None);
+    }
+
+    /// TOML declares a table in a header, and its reference writes a server
+    /// that way: `[mcp_servers.pg]` declares `pg` under `mcp_servers` with
+    /// no separator after either. The last segment is the declaration, and
+    /// a finding points just past it, as it does for any key.
+    #[test]
+    fn a_table_header_declares_its_last_segment() {
+        let toml = "[mcp_servers.pg]\ncommand = \"psql\"\n";
+
+        let held = Places::declared(toml, Format::Toml, &["mcp_servers"]);
+
+        let at = held
+            .nth_in("mcp_servers", "pg", 0)
+            .expect("the header")
+            .start;
+        assert_eq!(toml.get(..at), Some("[mcp_servers.pg"));
+    }
+
+    /// The keys in a table's body belong to the table, so a server named like
+    /// a key an earlier table's body holds is placed at its own header.
+    #[test]
+    fn a_key_in_a_table_body_is_not_another_declaration() {
+        let toml = "[mcp_servers.a]\ncommand = \"x\"\n[mcp_servers.command]\nurl = \"http://e\"\n";
+
+        let held = Places::declared(toml, Format::Toml, &["mcp_servers"]);
+
+        let first = held.nth_in("mcp_servers", "a", 0).expect("the first");
+        let named = held
+            .nth_in("mcp_servers", "command", 0)
+            .expect("the second");
+        assert_eq!(line_of(toml, first.start), 1);
+        assert_eq!(line_of(toml, named.start), 3);
+        assert_eq!(held.nth_in("mcp_servers", "command", 1), None);
+    }
+
+    /// A table header followed by inline tables declares each key in its
+    /// body, and what those hold is theirs.
+    #[test]
+    fn a_table_declares_the_keys_in_its_body() {
+        let toml = "[mcp_servers]\npg = { command = \"psql\" }\n";
+
+        let held = Places::declared(toml, Format::Toml, &["mcp_servers"]);
+
+        let at = held.nth_in("mcp_servers", "pg", 0).expect("the key").start;
+        assert_eq!(line_of(toml, at), 2);
+        assert_eq!(held.nth_in("mcp_servers", "command", 0), None);
+    }
+
+    /// A header nests its segments left to right, so `[mcp_servers.pg.env]`
+    /// is `pg`'s environment and declares no server, which is how Codex
+    /// writes one. A server named like a deeper segment is placed at its own
+    /// header.
+    #[test]
+    fn a_deeper_segment_is_not_a_declaration_of_the_block() {
+        let toml = "[mcp_servers.pg]\n[mcp_servers.pg.env]\nFOO = \"x\"\n[mcp_servers.env]\nurl = \"http://e\"\n";
+
+        let held = Places::declared(toml, Format::Toml, &["mcp_servers"]);
+
+        let named = held.nth_in("mcp_servers", "env", 0).expect("the server");
+        assert_eq!(line_of(toml, named.start), 4);
+        assert_eq!(held.nth_in("mcp_servers", "env", 1), None);
+    }
+
+    /// A segment is quoted where its name holds what a bare one cannot, a
+    /// dot among them, and a finding points just past the closing quote as
+    /// it does for any quoted key.
+    #[test]
+    fn a_quoted_segment_is_read_whole() {
+        let toml = "[mcp_servers.\"my.server\"]\nurl = \"http://e\"\n";
+
+        let held = Places::declared(toml, Format::Toml, &["mcp_servers"]);
+
+        let at = held
+            .nth_in("mcp_servers", "my.server", 0)
+            .expect("the server")
+            .start;
+        assert_eq!(toml.get(..at), Some("[mcp_servers.\"my.server\""));
+    }
+
+    /// A table runs to the next header, so a key given values in its body is
+    /// found under it the way a nested key is found under its parent.
+    #[test]
+    fn a_table_runs_to_the_next_header() {
+        let toml = "[permissions]\nallow = [\"Bash(*)\"]\n[other]\nallow = [\"Bash(*)\"]\n";
+
+        let held = Places::given(toml, Format::Toml, &["permissions.allow"], &[]);
+
+        let at = held.nth("Bash(*)", 0).expect("the grant");
+        assert_eq!(line_of(toml, at), 2);
+        assert_eq!(held.nth("Bash(*)", 1), None);
+    }
+
+    /// A line beginning with a bracket is a header only where the format
+    /// declares tables. YAML writes a flow sequence that way, and reading it
+    /// as a header would nest everything after it one level deeper.
+    #[test]
+    fn a_bracket_opening_a_line_is_a_header_only_in_toml() {
+        let yaml = "mcpServers:\n  a:\n    args:\n      [x]\n  b:\n    url: y\n";
+
+        let held = Places::declared(yaml, Format::Yaml, &["mcpServers"]);
+
+        assert!(held.nth_in("mcpServers", "a", 0).is_some());
+        assert!(held.nth_in("mcpServers", "b", 0).is_some(), "{:?}", held.at);
     }
 
     /// A declaration points just past its key, which is where a finding has
