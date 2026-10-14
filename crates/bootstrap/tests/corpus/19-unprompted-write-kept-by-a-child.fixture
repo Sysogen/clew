@@ -1,0 +1,20 @@
+A child profile that overrides one of its parent's paths keeps the writes it
+says nothing about. Codex applies the parent and then the child, rule by rule,
+so `ours` turning `/srv` back to read leaves the workspace roots writable, and
+nothing asks.
+
+>>> .codex/config.toml
+approval_policy = "never"
+default_permissions = "ours"
+
+[permissions.base.filesystem]
+"/srv" = "write"
+
+[permissions.base.filesystem.":workspace_roots"]
+"." = "write"
+
+[permissions.ours]
+extends = "base"
+
+[permissions.ours.filesystem]
+"/srv" = "read"

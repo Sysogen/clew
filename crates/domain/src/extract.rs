@@ -16,7 +16,7 @@ use crate::yaml;
 use yaml_rust2::{Yaml, YamlLoader};
 
 use crate::permission::Permission;
-use crate::profile::Profile;
+use crate::profile::{Access, Profile};
 
 /// Why a file could not be understood.
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
@@ -608,26 +608,36 @@ fn profiles(root: &serde_json::Value) -> Vec<Profile> {
                 .get("extends")
                 .and_then(serde_json::Value::as_str)
                 .map(str::to_owned),
-            writes: grants_a_write(body.get("filesystem")),
+            filesystem: access_of(body.get("filesystem")),
         })
         .collect();
     found.sort();
     found
 }
 
-/// Whether any rule under a filesystem table grants a write.
+/// The filesystem rules under a profile, each as the file wrote it.
 ///
-/// Searched rather than read key by key, because a rule nests: the reference
-/// gives a path either a grant or a table of its own, and `:workspace_roots`
-/// always holds one. A number under there, the glob depth, is not a grant and
-/// a search for the word passes over it.
-fn grants_a_write(at: Option<&serde_json::Value>) -> bool {
-    match at {
-        Some(serde_json::Value::String(grant)) => grant == "write",
-        Some(serde_json::Value::Object(nested)) => {
-            nested.values().any(|at| grants_a_write(Some(at)))
-        }
-        _ => false,
+/// Read rule by rule rather than searched for a write, because what a rule
+/// gives a path is what a child profile or a nearer layer overrides, and that
+/// is decided at the path: a rule nests, the reference gives a path either a
+/// grant or a table of its own, and `:workspace_roots` always holds one. A
+/// number under there, the glob depth, is neither.
+fn access_of(at: Option<&serde_json::Value>) -> std::collections::BTreeMap<String, Access> {
+    at.and_then(serde_json::Value::as_object)
+        .map(|table| {
+            table
+                .iter()
+                .map(|(path, given)| (path.clone(), access(given)))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn access(given: &serde_json::Value) -> Access {
+    match given {
+        serde_json::Value::String(grant) => Access::Granted(grant.clone()),
+        serde_json::Value::Object(_) => Access::Nested(access_of(Some(given))),
+        _ => Access::Other,
     }
 }
 
@@ -1524,7 +1534,7 @@ env = { DATABASE_URL = "postgres://u:hunter2@h/d", PGPORT = "5432" }
         assert_eq!(found.len(), 1, "{found:?}");
         assert_eq!(found[0].name, "ours");
         assert_eq!(found[0].extends.as_deref(), Some(":read-only"));
-        assert!(found[0].writes);
+        assert!(Profile::selected(&[&found[0]], "ours"));
     }
 
     /// A rule nests, and the reference says a path may hold a table of its
@@ -1536,7 +1546,7 @@ env = { DATABASE_URL = "postgres://u:hunter2@h/d", PGPORT = "5432" }
             profiles_of("[permissions.ours.filesystem.\":workspace_roots\"]\n\".\" = \"write\"\n");
 
         assert_eq!(found.len(), 1, "{found:?}");
-        assert!(found[0].writes, "{found:?}");
+        assert!(Profile::selected(&[&found[0]], "ours"), "{found:?}");
     }
 
     /// Reading only, which is the profile that bounds what it reaches.
@@ -1547,7 +1557,7 @@ env = { DATABASE_URL = "postgres://u:hunter2@h/d", PGPORT = "5432" }
         );
 
         assert_eq!(found.len(), 1, "{found:?}");
-        assert!(!found[0].writes, "{found:?}");
+        assert!(!Profile::selected(&[&found[0]], "ours"), "{found:?}");
     }
 
     /// The glob depth sits in the same table and is a number, not a grant.
@@ -1557,7 +1567,7 @@ env = { DATABASE_URL = "postgres://u:hunter2@h/d", PGPORT = "5432" }
         let found = profiles_of("[permissions.ours.filesystem]\nglob_scan_max_depth = 4\n");
 
         assert_eq!(found.len(), 1, "{found:?}");
-        assert!(!found[0].writes, "{found:?}");
+        assert!(!Profile::selected(&[&found[0]], "ours"), "{found:?}");
     }
 
     /// Several profiles in one file, in a settled order so a report of them

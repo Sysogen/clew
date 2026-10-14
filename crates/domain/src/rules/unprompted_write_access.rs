@@ -164,6 +164,10 @@ impl Rule for UnpromptedWriteAccess {
                 default_permissions naming a [permissions.<name>] table of its own is \
                 resolved against that table, which grants writes with filesystem rules \
                 or by extending :workspace, rather than guessed at from the name. A \
+                profile extending another is the parent overlaid with the child, rule \
+                by rule, and a nearer layer overlays a farther one the same way, so a \
+                child or a nearer file setting a path to read takes that write away and \
+                one saying nothing about it leaves it. A \
                 profile extending :danger-full-access is reported here too, although \
                 bypass-permissions grades that value higher: that rule reads the key \
                 doing the selecting, which names the profile rather than its parent, so \
@@ -308,6 +312,7 @@ mod tests {
     use super::*;
     use crate::extract::Format;
     use crate::finding::{DEFAULT_EVIDENCE_WIDTH, MIN_EVIDENCE_WIDTH};
+    use crate::profile::Access;
     use crate::rule::FoundProfile;
     use crate::rule::judge;
 
@@ -318,13 +323,17 @@ mod tests {
         }
     }
 
+    /// A profile as a test writes it: its name, its parent, and the word
+    /// each path is given.
+    type Defined<'a> = (&'a str, Option<&'a str>, &'a [(&'a str, &'a str)]);
+
     /// A file as a test writes it: where it is, what it says, the modes a
     /// scan would have read out of it, and any profile it defines.
     struct File<'a> {
         path: &'a str,
         source: &'a str,
         modes: &'a [(&'a str, &'a str)],
-        profiles: &'a [(&'a str, Option<&'a str>, bool)],
+        profiles: &'a [Defined<'a>],
     }
 
     /// Judged the way the scan judges it, one report over every file, with
@@ -349,12 +358,17 @@ mod tests {
                 let path = RepoPath::root().join(file.path);
                 file.profiles
                     .iter()
-                    .map(move |(name, extends, writes)| FoundProfile {
+                    .map(move |(name, extends, rules)| FoundProfile {
                         path: path.clone(),
                         profile: Profile {
                             name: (*name).to_owned(),
                             extends: extends.map(str::to_owned),
-                            writes: *writes,
+                            filesystem: rules
+                                .iter()
+                                .map(|(path, grant)| {
+                                    ((*path).to_owned(), Access::Granted((*grant).to_owned()))
+                                })
+                                .collect(),
                         },
                     })
             })
@@ -897,7 +911,7 @@ mod tests {
                 ("approval_policy", "never"),
                 ("default_permissions", "ours"),
             ],
-            profiles: &[("ours", None, true)],
+            profiles: &[("ours", None, &[("/srv", "write")])],
         }]);
 
         assert_eq!(found.len(), 1, "{found:?}");
@@ -915,7 +929,7 @@ mod tests {
                 ("approval_policy", "never"),
                 ("default_permissions", "ours"),
             ],
-            profiles: &[("ours", Some(":read-only"), false)],
+            profiles: &[("ours", Some(":read-only"), &[])],
         }]);
 
         assert!(found.is_empty(), "{found:?}");
@@ -930,7 +944,7 @@ mod tests {
                 path: ".codex/config.toml",
                 source: "[permissions.ours]\nextends = \":workspace\"\n",
                 modes: &[],
-                profiles: &[("ours", Some(":workspace"), false)],
+                profiles: &[("ours", Some(":workspace"), &[])],
             },
             File {
                 path: "nested/.codex/config.toml",
@@ -967,7 +981,7 @@ mod tests {
                 path: "service/.codex/config.toml",
                 source: "[permissions.ours.filesystem]\n\"/srv\" = \"write\"\n",
                 modes: &[],
-                profiles: &[("ours", None, true)],
+                profiles: &[("ours", None, &[("/srv", "write")])],
             },
         ]);
 
@@ -988,7 +1002,7 @@ mod tests {
                 ("approval_policy", "never"),
                 ("default_permissions", "ours"),
             ],
-            profiles: &[("ours", Some(":danger-full-access"), false)],
+            profiles: &[("ours", Some(":danger-full-access"), &[])],
         }]);
 
         assert_eq!(found.len(), 1, "{found:?}");
@@ -1007,19 +1021,68 @@ mod tests {
                     ("approval_policy", "never"),
                     ("default_permissions", "ours"),
                 ],
-                profiles: &[("ours", Some(":read-only"), false)],
+                profiles: &[("ours", Some(":read-only"), &[])],
             },
             File {
                 path: "service/.codex/config.toml",
                 source: "[permissions.ours]\nextends = \":workspace\"\n",
                 modes: &[],
-                profiles: &[("ours", Some(":workspace"), false)],
+                profiles: &[("ours", Some(":workspace"), &[])],
             },
         ]);
 
         assert_eq!(found.len(), 1, "{found:?}");
         // The selection is at the root, which is the line to change.
         assert_eq!(found[0].path.as_str(), ".codex/config.toml");
+    }
+
+    /// A nearer layer overlays the farther one rule by rule rather than
+    /// replacing its table, so a nested file setting one path back to read
+    /// leaves the root's other write in force for a run there. A root that
+    /// only defines, with the nested file doing the selecting, so the one
+    /// run that resolves the pair is the nested one.
+    #[test]
+    fn a_farther_layers_write_survives_a_nearer_override_of_another_path() {
+        let found = said_about(&[
+            File {
+                path: ".codex/config.toml",
+                source: "approval_policy = \"never\"\n\n[permissions.ours.filesystem]\n\"/srv\" = \"write\"\n\"/data\" = \"write\"\n",
+                modes: &[("approval_policy", "never")],
+                profiles: &[("ours", None, &[("/srv", "write"), ("/data", "write")])],
+            },
+            File {
+                path: "service/.codex/config.toml",
+                source: "default_permissions = \"ours\"\n\n[permissions.ours.filesystem]\n\"/srv\" = \"read\"\n",
+                modes: &[("default_permissions", "ours")],
+                profiles: &[("ours", None, &[("/srv", "read")])],
+            },
+        ]);
+
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].path.as_str(), "service/.codex/config.toml");
+    }
+
+    /// And a nearer file setting the only write back to read leaves none,
+    /// which is the override the reference describes and a scan reading the
+    /// root's grant on its own would miss.
+    #[test]
+    fn a_nearer_layer_overriding_the_only_write_leaves_none() {
+        let found = said_about(&[
+            File {
+                path: ".codex/config.toml",
+                source: "approval_policy = \"never\"\n\n[permissions.ours.filesystem]\n\"/srv\" = \"write\"\n",
+                modes: &[("approval_policy", "never")],
+                profiles: &[("ours", None, &[("/srv", "write")])],
+            },
+            File {
+                path: "service/.codex/config.toml",
+                source: "default_permissions = \"ours\"\n\n[permissions.ours.filesystem]\n\"/srv\" = \"read\"\n",
+                modes: &[("default_permissions", "ours")],
+                profiles: &[("ours", None, &[("/srv", "read")])],
+            },
+        ]);
+
+        assert!(found.is_empty(), "{found:?}");
     }
 
     /// Only the chain from the root down. A profile defined beside the file
@@ -1041,7 +1104,7 @@ mod tests {
                 path: "b/.codex/config.toml",
                 source: "[permissions.ours.filesystem]\n\"/srv\" = \"write\"\n",
                 modes: &[],
-                profiles: &[("ours", None, true)],
+                profiles: &[("ours", None, &[("/srv", "write")])],
             },
         ]);
 

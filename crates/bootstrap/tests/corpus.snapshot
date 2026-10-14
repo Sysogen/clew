@@ -30,6 +30,7 @@
 16-unprompted-write-across-layers unprompted-write-access medium service/.codex/config.toml:1
 17-unprompted-write-by-profile unprompted-write-access medium .codex/config.toml:2
 18-codex-server-table plaintext-transport medium .codex/config.toml:1
+19-unprompted-write-kept-by-a-child unprompted-write-access medium .codex/config.toml:2
 20-silent-grep-names-a-pipe -
 21-silent-download-to-an-archive -
 22-silent-local-package -
@@ -43,3 +44,4 @@
 30-silent-unprompted-read-only -
 31-silent-layer-putting-the-sandbox-back -
 32-silent-profile-that-writes-nothing -
+33-silent-profile-overriding-a-parents-write -

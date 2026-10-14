@@ -218,6 +218,20 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   writes where its parent does. A file is free to write a cycle, and the
   answer there is no rather than a scan that does not finish.
 
+  A profile is resolved the way the reference applies it. A nearer layer
+  overlays a farther one rule by rule rather than replacing its table, and
+  `extends` applies a parent before the profile the same way, so what a
+  child or a nearer file says at a path is what holds there and what it says
+  nothing about is left as it was: a child setting its parent's write back
+  to read has no write, and one overriding another path keeps it. A grant
+  written over a table replaces the table whole. Reading each profile for
+  whether it held a write anywhere, and the chain for whether any did,
+  reported a write on a child that had turned its parent's off, and dropped
+  a root's write when a nearer file redefined the profile without naming
+  that path. A built-in that writes still ends the walk: its rules are not
+  in the file, so nothing in the file is read as overriding them, and that
+  is where this stops.
+
   A profile extending `:danger-full-access` is read as the write it is. The
   reference does not list that built-in among the values `extends` takes, so a
   profile naming it names something undocumented; the two answers available

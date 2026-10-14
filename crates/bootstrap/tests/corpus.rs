@@ -10,7 +10,7 @@
 //! `corpus.snapshot` holds the findings clew reports in it, so a rule whose
 //! logic changes fails here rather than passing quietly under the same number.
 //!
-//! Thirteen of the thirty-one fixtures are silent on purpose. Every rule's
+//! Fourteen of the thirty-three fixtures are silent on purpose. Every rule's
 //! prose promises cases it does not fire on, and a rule that starts firing on
 //! one of those is as much a regression as one that stops firing at all.
 //! `the_corpus_is_the_size_this_file_says` keeps those two numbers honest, so
@@ -113,8 +113,8 @@ fn the_corpus_is_the_size_this_file_says() {
         .filter(|l| l.split_whitespace().count() == 2 && l.ends_with(" -"))
         .count();
 
-    assert_eq!(fixtures().len(), 31, "fixtures");
-    assert_eq!(silent, 13, "silent fixtures");
+    assert_eq!(fixtures().len(), 33, "fixtures");
+    assert_eq!(silent, 14, "silent fixtures");
 }
 
 /// Every rule has a fixture that fires it, so a rule cannot ship with nothing

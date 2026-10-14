@@ -1,0 +1,17 @@
+A child profile that sets its parent's only write back to read grants none.
+Codex applies the parent and then the child, rule by rule, so what the child
+says at a path is what holds there, and a scan reading the parent's grant on
+its own would report a write the agent does not have.
+
+>>> .codex/config.toml
+approval_policy = "never"
+default_permissions = "ours"
+
+[permissions.base.filesystem]
+"/srv" = "write"
+
+[permissions.ours]
+extends = "base"
+
+[permissions.ours.filesystem]
+"/srv" = "read"
