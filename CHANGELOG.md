@@ -60,6 +60,14 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   TOML: YAML writes a flow sequence that way, and reading it as a header
   would nest everything after it a level deeper.
 
+  A comment written against a bare value, with no space between, ends the
+  value. JSONC's `//` and TOML's `#` open wherever they sit, and placement
+  read on into the comment, so the value it indexed was the value with the
+  comment left in it and nothing looked that up: a VS Code
+  `"chat.tools.global.autoApprove": true// trust everything` had
+  `bypass-permissions` naming the file rather than the line. The comment
+  now ends the word, as whitespace already did.
+
 - A finding is no longer placed on a key written inside a comment. Placement
   finds a key by searching the text and took the first match, so a
   `# sandbox_mode = "danger-full-access"` left in a file as a note had

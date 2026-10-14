@@ -325,6 +325,16 @@ fn values(source: &str, format: Format) -> Vec<(String, usize)> {
             continue;
         }
         if let Some(on) = scan.opens(text, i, syntax) {
+            // A comment opening against a bare word ends it, as whitespace
+            // would: JSONC's `//` and TOML's `#` open wherever they sit, and
+            // a value with the comment left in it is not the value the file
+            // gave.
+            if scan.in_comment()
+                && let Some(opens) = word.take()
+                && let Some(held) = source.get(opens..i)
+            {
+                found.push((held.to_owned(), opens));
+            }
             // Past the quote, so a finding points at the text rather than at
             // the quote in front of it.
             if scan.in_string() {
@@ -1254,6 +1264,27 @@ mod tests {
 
         assert!(held.nth_in("mcpServers", "a", 0).is_some());
         assert!(held.nth_in("mcpServers", "b", 0).is_some(), "{:?}", held.at);
+    }
+
+    /// A comment opening against a bare value ends it, as whitespace would:
+    /// JSONC's `//` and TOML's `#` open wherever they sit, and a value with
+    /// the comment left in it is not the value the file gave.
+    #[test]
+    fn a_comment_against_a_bare_value_ends_it() {
+        let jsonc = "{\n  \"chat.tools.global.autoApprove\": true// trust everything\n}\n";
+        let held = Places::given(
+            jsonc,
+            Format::Jsonc,
+            &["chat.tools.global.autoApprove"],
+            &[],
+        );
+        let at = held.nth("true", 0).expect("the value");
+        assert_eq!(jsonc.get(at..at + 4), Some("true"));
+
+        let toml = "trust = true#note\n";
+        let held = Places::given(toml, Format::Toml, &["trust"], &[]);
+        let at = held.nth("true", 0).expect("the value");
+        assert_eq!(toml.get(at..at + 4), Some("true"));
     }
 
     /// A declaration points just past its key, which is where a finding has

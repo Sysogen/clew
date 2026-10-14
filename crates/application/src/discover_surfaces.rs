@@ -1844,6 +1844,22 @@ mod tests {
         assert_eq!(report.findings[0].at.map(|p| p.line), Some(3));
     }
 
+    /// A comment written against the value, with no space, is still a
+    /// comment in JSONC, and the finding still has its line.
+    #[test]
+    fn a_comment_against_the_mode_does_not_lose_its_line() {
+        let tree = tree_of(&[(".vscode/settings.json", EntryKind::File)]);
+        let contents = FakeContents::default().file(
+            ".vscode/settings.json",
+            "{\n  \"chat.tools.global.autoApprove\": true// trust everything\n}\n",
+        );
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &ScanPolicy::default()).run();
+
+        assert_eq!(report.findings.len(), 1, "{report:?}");
+        assert_eq!(report.findings[0].at.map(|p| p.line), Some(2), "{report:?}");
+    }
+
     #[test]
     fn a_zed_workspace_allowing_every_tool_is_a_finding() {
         let tree = tree_of(&[(".zed/settings.json", EntryKind::File)]);
