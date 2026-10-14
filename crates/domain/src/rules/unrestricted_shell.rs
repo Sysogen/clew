@@ -3,7 +3,7 @@
 
 //! The `unrestricted-shell` rule.
 
-use super::{GRANT_BUILTIN, GRANT_LISTS, about_file, after_key, after_words, found_at};
+use super::{about_file, found_at};
 use crate::finding::{Finding, RuleId, Severity};
 use crate::rule::{Examined, Rule, Subject};
 
@@ -55,7 +55,7 @@ impl Rule for UnrestrictedShell {
             path,
             grant,
             source,
-            occurrence,
+            at,
         } = at
         else {
             return Vec::new();
@@ -63,15 +63,9 @@ impl Rule for UnrestrictedShell {
         if !grant.is_unrestricted_shell() {
             return Vec::new();
         }
-        let entry = grant.written();
         vec![
-            GRANT_LISTS
-                .iter()
-                .find_map(|key| after_key(source, key, &entry, *occurrence))
-                // A `crushrc` grants by calling a builtin, with no key to find.
-                .or_else(|| after_words(source, GRANT_BUILTIN, &entry, *occurrence))
-                .and_then(|at| found_at(path, self.id(), source, at, width))
-                .unwrap_or_else(|| about_file(path, self.id(), &entry, width)),
+            at.and_then(|at| found_at(path, self.id(), source, at, width))
+                .unwrap_or_else(|| about_file(path, self.id(), &grant.written(), width)),
         ]
     }
 }

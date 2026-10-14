@@ -12,7 +12,8 @@ use crate::rule::Rule;
 use crate::rules::{
     agent_runs_unattended, auto_run_task, bypass_permissions, credential_exfiltration,
     decode_and_execute, download_and_execute, invisible_unicode, opaque_hook, plaintext_transport,
-    trusted_server, unpinned_remote_package, unrestricted_shell, unverified_download,
+    trusted_server, unpinned_remote_package, unprompted_write_access, unrestricted_shell,
+    unverified_download,
 };
 
 /// A named set of rules, with a version of its own.
@@ -36,7 +37,7 @@ pub struct Pack {
 /// The rules clew was built around: everything it judges today.
 pub const CORE: Pack = Pack {
     name: "core",
-    version: 4,
+    version: 5,
     rules: &[
         &invisible_unicode::InvisibleUnicode,
         &opaque_hook::OpaqueHook,
@@ -51,6 +52,7 @@ pub const CORE: Pack = Pack {
         &plaintext_transport::PlaintextTransport,
         &auto_run_task::AutoRunTask,
         &agent_runs_unattended::AgentRunsUnattended,
+        &unprompted_write_access::UnpromptedWriteAccess,
     ],
 };
 

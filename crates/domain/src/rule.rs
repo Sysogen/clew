@@ -10,14 +10,17 @@
 use std::sync::OnceLock;
 
 use crate::autonomy::Autonomy;
-use crate::finding::{Finding, RuleId, Severity};
+use crate::extract::Format;
+use crate::finding::{Finding, Position, RuleId, Severity};
 use crate::mcp_server::McpServer;
 use crate::permission::Permission;
+use crate::profile::Profile;
 use crate::repo_path::RepoPath;
 use crate::rules::{
     agent_runs_unattended, auto_run_task, bypass_permissions, credential_exfiltration,
     decode_and_execute, download_and_execute, invisible_unicode, opaque_hook, plaintext_transport,
-    trusted_server, unpinned_remote_package, unrestricted_shell, unverified_download,
+    trusted_server, unpinned_remote_package, unprompted_write_access, unrestricted_shell,
+    unverified_download,
 };
 use crate::task::Task;
 use crate::yaml::Span;
@@ -39,9 +42,61 @@ pub enum Subject {
     Task,
     /// A file that is there and cannot be read.
     Unreadable,
+    /// Everything one scan found, judged once rather than file by file.
+    Report,
 }
 
-/// One thing to judge, and what is needed to place a finding in its file.
+/// One mode a scan found, and what is needed to place a finding in its file.
+///
+/// A report rule is handed these rather than an [`Examined::Mode`] at a time,
+/// because what it reads is the set: two keys that each leave one control
+/// standing, and together leave none.
+///
+/// Owned, and holding a position rather than the text it came from. A scan
+/// that kept every file declaring a mode open until it ended would hold as
+/// many megabytes as it found such files, and the only thing a report rule
+/// wanted from the text was where to point.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FoundMode {
+    /// The file that set it.
+    pub path: RepoPath,
+    /// The mode, as the file wrote it and before anything was masked.
+    pub mode: Autonomy,
+    /// Where that file wrote the mode's value, when it could be found.
+    pub at: Option<Position>,
+}
+
+/// One named permissions profile a scan found, and the file defining it.
+///
+/// A profile is defined in one file and selected in another: Codex applies
+/// the configurations from the project root down, so a profile a root file
+/// defines is in force for a run in a directory below it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FoundProfile {
+    /// The file that defined it.
+    pub path: RepoPath,
+    /// The profile.
+    pub profile: Profile,
+}
+
+impl FoundMode {
+    /// A mode found in `source`, placed while that text is still in hand.
+    #[must_use]
+    pub fn new(path: &RepoPath, mode: &Autonomy, source: &str, format: Format) -> Self {
+        Self {
+            path: path.clone(),
+            mode: mode.clone(),
+            at: crate::rules::placed_value(source, format, &mode.key, &mode.value),
+        }
+    }
+}
+
+/// One thing to judge, and where in its file to report it.
+///
+/// Each carries the place the scan found rather than the text and the count
+/// to find it with. A rule is asked about one declaration at a time, so
+/// searching inside the rule read the whole file once for every declaration
+/// in it; [`crate::place::Places`] reads it once for all of them.
 #[derive(Debug, Clone, Copy)]
 pub enum Examined<'a> {
     /// A file's whole text.
@@ -51,20 +106,19 @@ pub enum Examined<'a> {
         /// Its contents.
         text: &'a str,
     },
-    /// One command a hook registers, `source` holding its `occurrence`th copy.
+    /// One command a hook registers.
     HookCommand {
         /// The file that registered it.
         path: &'a RepoPath,
         /// The command.
         command: &'a str,
-        /// The file's text, for placing the finding.
+        /// The file's text, for quoting the line a finding is on.
         source: &'a str,
-        /// Which copy of the command this is.
-        occurrence: usize,
-        /// Where the file wrote it, when the reader knew. A finding is placed
-        /// here rather than by searching for the command, which cannot tell
-        /// two copies apart. `None` for a format read without positions,
-        /// where the copy is all there is to go on.
+        /// How far the file's text the command reaches over, found by the
+        /// scan. A rule looking for a line inside the command searches
+        /// there and nowhere else, so what it cannot find in this one it
+        /// cannot find in the next. `None` where the command could not be
+        /// found, which leaves the finding about the file.
         at: Option<Span>,
     },
     /// A mode a file starts an agent in.
@@ -73,20 +127,21 @@ pub enum Examined<'a> {
         path: &'a RepoPath,
         /// The mode.
         mode: &'a Autonomy,
-        /// The file's text, for placing the finding.
+        /// The file's text, for quoting the line a finding is on.
         source: &'a str,
+        /// Where the file wrote it, found by the scan.
+        at: Option<usize>,
     },
-    /// One operation a file pre-approves, where `source` holds its
-    /// `occurrence`th copy.
+    /// One operation a file pre-approves.
     Grant {
         /// The file.
         path: &'a RepoPath,
         /// The grant.
         grant: &'a Permission,
-        /// The file's text, for placing the finding.
+        /// The file's text, for quoting the line a finding is on.
         source: &'a str,
-        /// Which copy of the grant this is.
-        occurrence: usize,
+        /// Where the file wrote it, found by the scan.
+        at: Option<usize>,
     },
     /// One MCP server a file declares.
     Server {
@@ -94,20 +149,21 @@ pub enum Examined<'a> {
         path: &'a RepoPath,
         /// The server.
         server: &'a McpServer,
-        /// The file's text, for placing the finding.
+        /// The file's text, for quoting the line a finding is on.
         source: &'a str,
+        /// Where the file declared it, found by the scan.
+        at: Option<usize>,
     },
-    /// One task a workspace declares, where `source` holds the
-    /// `occurrence`th task carrying the same trigger.
+    /// One task a workspace declares.
     Task {
         /// The file.
         path: &'a RepoPath,
         /// The task.
         task: &'a Task,
-        /// The file's text, for placing the finding.
+        /// The file's text, for quoting the line a finding is on.
         source: &'a str,
-        /// Which task carrying this trigger it is, counted in file order.
-        occurrence: usize,
+        /// Where the file wrote its trigger, found by the scan.
+        at: Option<usize>,
     },
     /// A file that is there and cannot be read, and why.
     Unreadable {
@@ -115,6 +171,31 @@ pub enum Examined<'a> {
         path: &'a RepoPath,
         /// Why it could not be read.
         reason: &'a str,
+    },
+    /// Everything one scan found.
+    ///
+    /// The modes, and the permissions profiles a mode may name, because a
+    /// mode selecting a profile says nothing on its own about what the agent
+    /// may reach. Another part is added when a rule needs it, rather than
+    /// carried now against the chance that one will.
+    Report {
+        /// Every mode the scan found, with the file that set each.
+        modes: &'a [FoundMode],
+        /// Every named permissions profile the scan found, with its file.
+        profiles: &'a [FoundProfile],
+        /// The directories the scan found a project root marker in.
+        ///
+        /// A tool reading a configuration from more than one file walks up
+        /// from where it was run and stops at one of these, so a rule
+        /// resolving those layers needs to know where they are.
+        projects: &'a [RepoPath],
+        /// The files the scan could not read or understand.
+        ///
+        /// One of these between two layers may have overridden either of
+        /// them, so a rule resolving layers stops where it cannot see: a
+        /// finding joined across one would be about a configuration nobody
+        /// has read.
+        opaque: &'a [RepoPath],
     },
 }
 
@@ -130,6 +211,7 @@ impl Examined<'_> {
             Self::Server { .. } => Subject::Server,
             Self::Task { .. } => Subject::Task,
             Self::Unreadable { .. } => Subject::Unreadable,
+            Self::Report { .. } => Subject::Report,
         }
     }
 }
@@ -180,6 +262,7 @@ pub fn of(id: RuleId) -> &'static dyn Rule {
         RuleId::PlaintextTransport => &plaintext_transport::PlaintextTransport,
         RuleId::AutoRunTask => &auto_run_task::AutoRunTask,
         RuleId::AgentRunsUnattended => &agent_runs_unattended::AgentRunsUnattended,
+        RuleId::UnpromptedWriteAccess => &unprompted_write_access::UnpromptedWriteAccess,
     }
 }
 

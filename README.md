@@ -96,6 +96,7 @@ weigh and log a scan; asked for either, they say so rather than ignore it.
 | [`plaintext-transport`](https://github.com/sysogen/clew/blob/main/docs/rules/plaintext-transport.md) | medium | An MCP server reached over plain HTTP |
 | [`auto-run-task`](https://github.com/sysogen/clew/blob/main/docs/rules/auto-run-task.md) | high | A task a workspace runs when the folder is opened |
 | [`agent-runs-unattended`](https://github.com/sysogen/clew/blob/main/docs/rules/agent-runs-unattended.md) | high | An agent invoked with the flag that removes its permission prompt |
+| [`unprompted-write-access`](https://github.com/sysogen/clew/blob/main/docs/rules/unprompted-write-access.md) | medium | A configuration that both stops the asking and lets the agent write |
 <!-- rules:end -->
 
 `invisible-unicode` is the Rules File Backdoor, disclosed by Pillar Security in
@@ -136,14 +137,43 @@ and a tool run by name is the one on `PATH`, not the download.
 that moves, and looks through `xargs` to find them. `npx prettier`, which runs
 what the project installed, and `npx tool@1.4.2` are silent.
 
-`bypass-permissions` is the one rule that reads a configuration file rather than
-a hook. Only the four values above fire. Codex `approval_policy = "never"` does
-not, because Codex still sandboxes, to `read-only` by default, so the agent is
-bounded even when nobody is asked; the other three tools sandbox nothing, so
-there the prompt was the only control. Two limits are worth knowing: Claude Code
-stopped honouring `bypassPermissions` from project and local settings in
-v2.1.257, so a repository setting it reaches only an older client, and Zed's
-built-in security rules still prompt for a few actions.
+`bypass-permissions` reads a configuration file rather than a hook. Only the
+values above fire, in either of the two spellings Codex writes its sandbox:
+`sandbox_mode = "danger-full-access"` and `default_permissions =
+":danger-full-access"` are the same decision. Codex `approval_policy = "never"`
+does not fire it, because Codex still sandboxes, so the agent is bounded even
+when nobody is asked; the other tools sandbox nothing, so there the prompt was
+the only control. Two limits are worth knowing: Claude Code stopped honouring
+`bypassPermissions` from project and local settings in v2.1.257, so a
+repository setting it reaches only an older client, and Zed's built-in security
+rules still prompt for a few actions.
+
+`unprompted-write-access` is the one rule that reads a whole scan rather than
+one thing in one file. It fires on the pair the sentence above describes:
+`approval_policy = "never"` together with a sandbox that permits writes,
+`sandbox_mode = "workspace-write"` or `default_permissions = ":workspace"`.
+Each half is deliberately silent, because each leaves one control standing;
+together they leave none, and the files the agent may then write unasked
+include the ones deciding what the next run does. `danger-full-access` is left
+to `bypass-permissions`, which already reports it alone. A rule like this one
+belongs to no catalogue row, so `report_checks` in the catalogue names it,
+which keeps one answer to what decides whether a rule runs. Putting a rule in
+the wrong one of the two lists is refused when the catalogue loads, because a
+rule in the wrong list is a rule that never runs.
+
+The two halves need not be in one file. Codex walks up from the working
+directory until it reaches a project root, which its reference gives as a
+directory holding `.git`, then loads every `.codex/config.toml` from there
+down, and the closest file to the run wins a key, so a root that stops the asking and a
+nested file that permits writes leave neither control for a run below, and a
+nested file putting the sandbox back is the fix rather than a finding. A
+submodule holds its own `.git`, so the walk stops there and a run inside it
+never loads the superproject's configuration. It stops at a file clew could
+not read, too, since what that file said about either key is unknown. A
+finding carries one path, so it is placed at the sandbox and names the file the
+other half came from. A `default_permissions` naming a `[permissions.<name>]`
+table of its own is resolved against that table, which grants writes with
+filesystem rules or by extending `:workspace`.
 
 `unrestricted-shell` flags the grant the other permission entries exist to avoid
 needing: every command the agent picks runs without being shown to anyone. Only

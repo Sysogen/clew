@@ -1,0 +1,11 @@
+The pair split across two configuration layers.
+
+Codex walks from the project root to the working directory and loads every
+`.codex/config.toml` it finds, so a root that stops the asking and a nested
+file that permits writes leave neither control for a run below. The finding is
+placed at the sandbox and names the file the other half came from.
+
+>>> .codex/config.toml
+approval_policy = "never"
+>>> service/.codex/config.toml
+sandbox_mode = "workspace-write"

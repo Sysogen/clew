@@ -10,9 +10,12 @@
 //! `corpus.snapshot` holds the findings clew reports in it, so a rule whose
 //! logic changes fails here rather than passing quietly under the same number.
 //!
-//! Ten of the twenty-four fixtures are silent on purpose. Every rule's prose
-//! promises cases it does not fire on, and a rule that starts firing on one of
-//! those is as much a regression as one that stops firing at all.
+//! Fourteen of the thirty-three fixtures are silent on purpose. Every rule's
+//! prose promises cases it does not fire on, and a rule that starts firing on
+//! one of those is as much a regression as one that stops firing at all.
+//! `the_corpus_is_the_size_this_file_says` keeps those two numbers honest, so
+//! a fixture added without them fails here rather than leaving the file
+//! describing a corpus that no longer exists.
 //!
 //! A fixture is a manifest rather than a directory of real files, for one
 //! reason: clew scans its own repository in CI, and a directory of deliberate
@@ -90,6 +93,28 @@ fn every_fixture_reports_what_the_snapshot_records() {
         "what clew decides changed; update tests/corpus.snapshot once every \
          line below is what the rules should say"
     );
+}
+
+/// The two numbers this file's own description gives.
+///
+/// Prose beside a growing set of files goes stale silently, and a description
+/// of a corpus that no longer exists is worse than none: a reader trusts it.
+/// Adding a fixture fails this until both numbers are right.
+#[test]
+fn the_corpus_is_the_size_this_file_says() {
+    let lines: Vec<&str> = include_str!("corpus.snapshot")
+        .lines()
+        .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
+        .collect();
+    // `fixture -`, and nothing else. A firing line can end in a dash too,
+    // where the finding is about the file rather than a place in it.
+    let silent = lines
+        .iter()
+        .filter(|l| l.split_whitespace().count() == 2 && l.ends_with(" -"))
+        .count();
+
+    assert_eq!(fixtures().len(), 33, "fixtures");
+    assert_eq!(silent, 14, "silent fixtures");
 }
 
 /// Every rule has a fixture that fires it, so a rule cannot ship with nothing

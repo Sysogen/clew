@@ -6,11 +6,14 @@
 use std::collections::BTreeSet;
 
 use clew_domain::extract;
+use clew_domain::extract::Format;
 use clew_domain::finding::{Finding, RuleId, Severity};
 use clew_domain::hook::{Action, project_of};
+use clew_domain::mcp_server;
+use clew_domain::place::{self, Places};
 use clew_domain::ports::file_contents::{FileContents, FileContentsError};
 use clew_domain::ports::file_tree::{EntryKind, FileTree, FileTreeError};
-use clew_domain::rule::{self, Examined};
+use clew_domain::rule::{self, Examined, FoundMode, FoundProfile};
 use clew_domain::scope::Scope;
 use clew_domain::{
     Autonomy, Hook, McpServer, Permission, RepoPath, ScanPolicy, Step, Surface, SurfaceKind, Task,
@@ -98,6 +101,12 @@ pub struct DiscoveryReport {
     pub unparsed: Vec<(RepoPath, String)>,
     /// What the rules said was wrong, in path order.
     pub findings: Vec<Finding>,
+    /// Directories holding a project root marker, in path order.
+    ///
+    /// Not a surface, and never entered: a tool reading its configuration
+    /// from several files walks up from where it was run and stops at one of
+    /// these, so a rule resolving those layers needs to know where they are.
+    pub projects: Vec<RepoPath>,
 }
 
 impl DiscoveryReport {
@@ -113,6 +122,19 @@ impl DiscoveryReport {
         self.findings.iter().any(|f| f.severity >= severity)
     }
 }
+
+/// What marks the directory a tool stops walking up at.
+///
+/// Codex's reference says it treats a directory containing `.git` as the
+/// project root, and nothing else unless `project_root_markers` names it,
+/// which is how `.hg` and `.sl` come to count. That setting lives in the
+/// configuration a machine holds outside any repository, which a scan of a
+/// repository never opens, so a boundary moved only that way is one clew
+/// reads as though it were not there. Stopping at `.hg` and `.sl` regardless
+/// read a boundary Codex does not have by default, and a pair split across
+/// a nested Mercurial checkout, in force for every run inside it, went
+/// unreported.
+const PROJECT_MARKER: &str = ".git";
 
 /// Discovers agent surfaces beneath a scan root.
 pub struct DiscoverSurfaces<'a, T: FileTree, C: FileContents> {
@@ -150,10 +172,12 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
         &self,
         at: &RepoPath,
         text: &str,
+        format: Format,
         hooks: Vec<Hook>,
         report: &mut DiscoveryReport,
     ) {
         let checks = catalogue().checks_for(SurfaceKind::HookScript);
+        let places = Places::written(text, format);
         let mut commands: Vec<String> = Vec::new();
         for hook in hooks {
             if let Action::Command(command) = &hook.action {
@@ -164,8 +188,7 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
                         path: at,
                         command,
                         source: text,
-                        occurrence,
-                        at: None,
+                        at: places.command(command, occurrence, None),
                     },
                     checks,
                     self.policy.evidence_width(),
@@ -184,21 +207,23 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
         &self,
         at: &RepoPath,
         text: &str,
+        format: Format,
         checks: &[RuleId],
         permissions: Vec<Permission>,
         report: &mut DiscoveryReport,
     ) {
+        let places = Places::given(text, format, place::GRANT_LISTS, place::GRANT_BUILTIN);
         let mut granted: Vec<String> = Vec::new();
         for permission in permissions {
             let entry = permission.written();
             let occurrence = granted.iter().filter(|g| **g == entry).count();
-            granted.push(entry);
+            granted.push(entry.clone());
             report.findings.extend(rule::judge(
                 &Examined::Grant {
                     path: at,
                     grant: &permission,
                     source: text,
-                    occurrence,
+                    at: places.nth(&entry, occurrence),
                 },
                 checks,
                 self.policy.evidence_width(),
@@ -211,6 +236,15 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
     }
 
     fn read_surfaces(&self, report: &mut DiscoveryReport) {
+        // Kept for the report rules, which read the set of modes rather than
+        // one of them, and read them raw: the copy in the report is masked,
+        // and masking first destroys the values a rule compares. Each is
+        // placed here, while its file's text is in hand, so the scan does not
+        // hold every such file open until it ends.
+        let mut declared: Vec<FoundMode> = Vec::new();
+        // The profiles beside them, which a mode names rather than holds.
+        let mut defined: Vec<FoundProfile> = Vec::new();
+
         let paths: Vec<RepoPath> = report.surfaces.iter().map(|s| s.path.clone()).collect();
         for path in paths {
             let Some(matched) = catalogue().lookup_in(&path, self.scope) else {
@@ -237,14 +271,29 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
                 }
             };
 
-            self.read_hooks(&path, &text, found.hooks, report);
-            self.read_grants(&path, &text, matched.check, found.permissions, report);
+            self.read_hooks(&path, &text, matched.format, found.hooks, report);
+            self.read_grants(
+                &path,
+                &text,
+                matched.format,
+                matched.check,
+                found.permissions,
+                report,
+            );
+            let blocks = Places::declared(&text, matched.format, mcp_server::BLOCKS);
+            let called = Places::given(&text, matched.format, &[], place::SERVER_BUILTIN);
             for server in found.servers {
                 report.findings.extend(rule::judge(
                     &Examined::Server {
                         path: &path,
                         server: &server,
                         source: &text,
+                        // A `crushrc` declares by calling a builtin, with no
+                        // key to find.
+                        at: blocks
+                            .nth_in(&server.block, &server.name, 0)
+                            .map(|held| held.start)
+                            .or_else(|| called.nth(&server.name, 0)),
                     },
                     matched.check,
                     self.policy.evidence_width(),
@@ -256,6 +305,7 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
             }
             // Counted like hook commands, and in file order: every automatic
             // task writes the same trigger, so the copy is what places it.
+            let runs = Places::given(&text, matched.format, &["runOn"], &[]);
             let mut triggers: Vec<Option<String>> = Vec::new();
             for task in found.tasks {
                 let occurrence = triggers.iter().filter(|t| **t == task.runs_on).count();
@@ -265,7 +315,10 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
                         path: &path,
                         task: &task,
                         source: &text,
-                        occurrence,
+                        at: task
+                            .runs_on
+                            .as_deref()
+                            .and_then(|trigger| runs.nth(trigger, occurrence)),
                     },
                     matched.check,
                     self.policy.evidence_width(),
@@ -275,58 +328,140 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
                     task,
                 });
             }
-            // A `run:` block is shell, so it is judged the way a hook's
-            // command is: one file may run the same block twice, and the copy
-            // is what places the finding.
-            //
-            // Counted by the block's first line, which is what placement
-            // looks for in a file that writes a command bare: two blocks
-            // opening on the same line would otherwise both ask for the first
-            // and the second would be placed at the first.
-            let mut ran: Vec<&str> = Vec::new();
-            for step in &found.steps {
-                let opens = step.run.lines().next().unwrap_or_default();
-                let occurrence = ran.iter().filter(|r| **r == opens).count();
-                ran.push(opens);
-                // A step that is not a POSIX shell is reported and not read as
-                // one: judging PowerShell or Python by Bash's syntax would
-                // answer a question nobody asked.
-                if step.is_posix_shell() {
-                    report.findings.extend(rule::judge(
-                        &Examined::HookCommand {
-                            path: &path,
-                            command: &step.run,
-                            source: &text,
-                            occurrence,
-                            at: step.at,
-                        },
-                        matched.check,
-                        self.policy.evidence_width(),
-                    ));
-                }
-                // Judged raw above, and redacted here, as a hook's command
-                // is: masking first destroys the text the rules read.
-                report.steps.push(WorkflowStep {
-                    source: path.clone(),
-                    step: step.redacted(),
-                });
-            }
-            for mode in found.autonomy {
+            self.read_steps(&path, &text, &found.steps, matched.check, report);
+            self.read_modes(
+                &path,
+                &text,
+                matched.format,
+                &found.autonomy,
+                matched.check,
+                report,
+            );
+            declared.extend(
+                found
+                    .autonomy
+                    .iter()
+                    .map(|mode| FoundMode::new(&path, mode, &text, matched.format)),
+            );
+            defined.extend(found.profiles.into_iter().map(|profile| FoundProfile {
+                path: path.clone(),
+                profile,
+            }));
+        }
+
+        self.read_report(&declared, &defined, report);
+    }
+
+    /// Judge each step a workflow runs, and record it.
+    ///
+    /// A `run:` block is shell, so it is judged the way a hook's command is:
+    /// one file may run the same block twice, and the copy is what places the
+    /// finding. Counted by the block's first line, which is what placement
+    /// looks for in a file that writes a command bare: two blocks opening on
+    /// the same line would otherwise both ask for the first, and the second
+    /// would be placed at the first.
+    fn read_steps(
+        &self,
+        path: &RepoPath,
+        text: &str,
+        steps: &[Step],
+        checks: &[RuleId],
+        report: &mut DiscoveryReport,
+    ) {
+        let mut ran: Vec<&str> = Vec::new();
+        let places = Places::written(text, Format::Yaml);
+        for step in steps {
+            let opens = step.run.lines().next().unwrap_or_default();
+            let occurrence = ran.iter().filter(|r| **r == opens).count();
+            ran.push(opens);
+            // A step that is not a POSIX shell is reported and not read as
+            // one: judging PowerShell or Python by Bash's syntax would answer
+            // a question nobody asked.
+            if step.is_posix_shell() {
                 report.findings.extend(rule::judge(
-                    &Examined::Mode {
-                        path: &path,
-                        mode: &mode,
-                        source: &text,
+                    &Examined::HookCommand {
+                        path,
+                        command: &step.run,
+                        source: text,
+                        at: places.command(&step.run, occurrence, step.at),
                     },
-                    matched.check,
+                    checks,
                     self.policy.evidence_width(),
                 ));
-                report.autonomy.push(DeclaredAutonomy {
-                    source: path.clone(),
-                    autonomy: mode.redacted(),
-                });
             }
+            // Judged raw above, and redacted here, as a hook's command is:
+            // masking first destroys the text the rules read.
+            report.steps.push(WorkflowStep {
+                source: path.clone(),
+                step: step.redacted(),
+            });
         }
+    }
+
+    /// Judge each mode a file declares, and record it.
+    fn read_modes(
+        &self,
+        path: &RepoPath,
+        text: &str,
+        format: Format,
+        modes: &[Autonomy],
+        checks: &[RuleId],
+        report: &mut DiscoveryReport,
+    ) {
+        for mode in modes {
+            // Asked about by its own key, because a file setting two modes to
+            // the same word needs the second placed at its own key. A file
+            // sets one or two, so asking per key costs what asking once does.
+            let places = Places::given(text, format, &[mode.key.as_str()], &[]);
+            report.findings.extend(rule::judge(
+                &Examined::Mode {
+                    path,
+                    mode,
+                    source: text,
+                    at: places.nth(&mode.value, 0),
+                },
+                checks,
+                self.policy.evidence_width(),
+            ));
+            report.autonomy.push(DeclaredAutonomy {
+                source: path.clone(),
+                autonomy: mode.redacted(),
+            });
+        }
+    }
+
+    /// Judge the scan as a whole, for the rules that read more than one file.
+    ///
+    /// Enabled by `report_checks` rather than by a row, because a rule reading
+    /// the whole scan belongs to no row. The catalogue stays the one place
+    /// deciding whether a rule runs.
+    fn read_report(
+        &self,
+        declared: &[FoundMode],
+        defined: &[FoundProfile],
+        report: &mut DiscoveryReport,
+    ) {
+        let projects = report.projects.clone();
+        // A file the scan could not read or understand, and a directory it
+        // could not list, are both layers whose contents are unknown, and a
+        // rule reading layers has to stop at either.
+        let opaque: Vec<RepoPath> = report
+            .unparsed
+            .iter()
+            .map(|(at, _)| at)
+            .chain(report.unreadable.iter().map(|(at, _)| at))
+            .cloned()
+            .collect();
+        report.findings.extend(rule::judge(
+            &Examined::Report {
+                modes: declared,
+                profiles: defined,
+                projects: &projects,
+                opaque: &opaque,
+            },
+            catalogue().report_checks(),
+            self.policy.evidence_width(),
+        ));
     }
 
     /// Read `path` and run `checks` on it, returning the text.
@@ -532,6 +667,12 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
             };
 
             for entry in entries {
+                // A directory holding this is where a tool reading layered
+                // configuration stops walking up, so the scan notes it even
+                // though it is no surface of its own and is never entered.
+                if entry.path.file_name() == PROJECT_MARKER {
+                    report.projects.push(dir.clone());
+                }
                 if self.policy.should_descend(&entry) {
                     queue.push(entry.path);
                     continue;
@@ -582,6 +723,8 @@ impl<'a, T: FileTree, C: FileContents> DiscoverSurfaces<'a, T, C> {
         // counting which copy of its trigger it is, which only means anything
         // in the order the file lists them, so `extract::tasks` returns them
         // unsorted and they stay that way.
+        report.projects.sort();
+        report.projects.dedup();
         report.unreadable.sort_by(|a, b| a.0.cmp(&b.0));
         report.unparsed.sort_by(|a, b| a.0.cmp(&b.0));
         report.findings.sort();
@@ -1703,6 +1846,22 @@ mod tests {
         assert_eq!(report.findings[0].at.map(|p| p.line), Some(3));
     }
 
+    /// A comment written against the value, with no space, is still a
+    /// comment in JSONC, and the finding still has its line.
+    #[test]
+    fn a_comment_against_the_mode_does_not_lose_its_line() {
+        let tree = tree_of(&[(".vscode/settings.json", EntryKind::File)]);
+        let contents = FakeContents::default().file(
+            ".vscode/settings.json",
+            "{\n  \"chat.tools.global.autoApprove\": true// trust everything\n}\n",
+        );
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &ScanPolicy::default()).run();
+
+        assert_eq!(report.findings.len(), 1, "{report:?}");
+        assert_eq!(report.findings[0].at.map(|p| p.line), Some(2), "{report:?}");
+    }
+
     #[test]
     fn a_zed_workspace_allowing_every_tool_is_a_finding() {
         let tree = tree_of(&[(".zed/settings.json", EntryKind::File)]);
@@ -2613,6 +2772,161 @@ mod tests {
         assert_eq!(rules, vec![RuleId::DownloadAndExecute], "{report:?}");
         // And nothing else under `.git` was walked on the way.
         assert!(report.is_complete(), "{report:?}");
+    }
+
+    /// A tool reading its configuration from several files walks up from
+    /// where it was run and stops at a project root, which Codex's reference
+    /// gives as a directory holding `.git`. The scan notes those, although
+    /// `.git` is no surface and is never entered, because nothing else can
+    /// tell a rule where one configuration ends and another begins.
+    #[test]
+    fn a_directory_holding_a_project_marker_is_noted() {
+        let tree = FakeTree::default()
+            .dir(
+                "",
+                &[
+                    (".git", EntryKind::Directory),
+                    ("shared", EntryKind::Directory),
+                ],
+            )
+            .dir("shared", &[("thing", EntryKind::Directory)])
+            // A submodule, whose `.git` is a file holding a path.
+            .dir("shared/thing", &[(".git", EntryKind::File)]);
+        let contents = FakeContents::default();
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &ScanPolicy::default()).run();
+
+        assert_eq!(
+            report
+                .projects
+                .iter()
+                .map(RepoPath::as_str)
+                .collect::<Vec<_>>(),
+            vec!["", "shared/thing"],
+            "{report:?}"
+        );
+    }
+
+    /// Codex's default project-root marker is `.git` alone. `.hg` and `.sl`
+    /// mark a root only where `project_root_markers` names them, and that
+    /// setting lives outside any repository, where a scan never reads it. So
+    /// a nested Mercurial checkout is no boundary: a run inside it still
+    /// loads the configuration above, and a pair split across it is in force.
+    #[test]
+    fn a_mercurial_checkout_does_not_stop_the_layered_walk() {
+        let tree = FakeTree::default()
+            .dir(
+                "",
+                &[
+                    (".git", EntryKind::Directory),
+                    (".codex", EntryKind::Directory),
+                    ("service", EntryKind::Directory),
+                ],
+            )
+            .dir(".codex", &[("config.toml", EntryKind::File)])
+            .dir(
+                "service",
+                &[
+                    (".hg", EntryKind::Directory),
+                    (".codex", EntryKind::Directory),
+                ],
+            )
+            .dir("service/.codex", &[("config.toml", EntryKind::File)]);
+        let contents = FakeContents::default()
+            .file(".codex/config.toml", "approval_policy = \"never\"\n")
+            .file(
+                "service/.codex/config.toml",
+                "sandbox_mode = \"workspace-write\"\n",
+            );
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &ScanPolicy::default()).run();
+
+        assert_eq!(
+            report
+                .projects
+                .iter()
+                .map(RepoPath::as_str)
+                .collect::<Vec<_>>(),
+            vec![""],
+            "{report:?}"
+        );
+        let rules: Vec<RuleId> = report.findings.iter().map(|f| f.rule).collect();
+        assert_eq!(rules, vec![RuleId::UnpromptedWriteAccess], "{report:?}");
+        assert_eq!(
+            report.findings[0].path.as_str(),
+            "service/.codex/config.toml"
+        );
+    }
+
+    /// A `.codex` the scan could not list holds a configuration nobody has
+    /// read, and a pair joined across it would be a finding against settings
+    /// no run ever had. The scan hands those directories to the report for
+    /// that reason.
+    #[test]
+    fn a_codex_directory_that_cannot_be_listed_blocks_the_pair() {
+        let tree = FakeTree::default()
+            .dir(
+                "",
+                &[
+                    (".git", EntryKind::Directory),
+                    (".codex", EntryKind::Directory),
+                    ("one", EntryKind::Directory),
+                ],
+            )
+            .dir(".codex", &[("config.toml", EntryKind::File)])
+            .dir(
+                "one",
+                &[
+                    (".codex", EntryKind::Directory),
+                    ("two", EntryKind::Directory),
+                ],
+            )
+            .dir("one/two", &[(".codex", EntryKind::Directory)])
+            .dir("one/two/.codex", &[("config.toml", EntryKind::File)])
+            .deny("one/.codex");
+        let contents = FakeContents::default()
+            .file(".codex/config.toml", "approval_policy = \"never\"\n")
+            .file(
+                "one/two/.codex/config.toml",
+                "sandbox_mode = \"workspace-write\"\n",
+            );
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &ScanPolicy::default()).run();
+
+        assert!(report.findings.is_empty(), "{report:?}");
+        assert!(!report.is_complete(), "the scan says it could not look");
+    }
+
+    /// And the pair is not joined across that boundary: a run inside the
+    /// submodule never loads the superproject's configuration.
+    #[test]
+    fn a_submodule_does_not_inherit_the_configuration_above_it() {
+        let tree = FakeTree::default()
+            .dir(
+                "",
+                &[
+                    (".git", EntryKind::Directory),
+                    (".codex", EntryKind::Directory),
+                    ("shared", EntryKind::Directory),
+                ],
+            )
+            .dir(".codex", &[("config.toml", EntryKind::File)])
+            .dir("shared", &[("thing", EntryKind::Directory)])
+            .dir(
+                "shared/thing",
+                &[(".git", EntryKind::File), (".codex", EntryKind::Directory)],
+            )
+            .dir("shared/thing/.codex", &[("config.toml", EntryKind::File)]);
+        let contents = FakeContents::default()
+            .file(".codex/config.toml", "approval_policy = \"never\"\n")
+            .file(
+                "shared/thing/.codex/config.toml",
+                "sandbox_mode = \"workspace-write\"\n",
+            );
+
+        let report = DiscoverSurfaces::new(&tree, &contents, &ScanPolicy::default()).run();
+
+        assert!(report.findings.is_empty(), "{report:?}");
     }
 
     /// A seed is handed to the tree whole, and a tree refuses a link only for

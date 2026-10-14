@@ -35,6 +35,13 @@ pub struct McpServer {
     /// Names only. A value here may be a credential, and clew never records
     /// one.
     pub env: Vec<String>,
+    /// The key the file declared it under.
+    ///
+    /// Kept because a file may declare one name in two of the blocks clew
+    /// reads, and they are two declarations: a finding about one of them is
+    /// placed in the block it came from rather than in whichever block the
+    /// name turns up in first.
+    pub block: String,
     /// Whether the declaration asks for every one of its tool calls to go
     /// unconfirmed.
     ///
@@ -43,6 +50,19 @@ pub struct McpServer {
     /// decision, since only the tool that honours the key acts on it.
     pub trusted: bool,
 }
+
+/// The keys a tool declares its servers under.
+///
+/// One definition, because a copy of a set that lives somewhere else is how
+/// the two come to disagree: extraction reads every spelling, and a finding
+/// is placed in the one its server was declared under.
+pub const BLOCKS: &[&str] = &[
+    "mcpServers",
+    "mcp_servers",
+    "context_servers",
+    "servers",
+    "mcp",
+];
 
 /// Shown in place of a value clew will not print.
 pub const REDACTED: &str = "<redacted>";
@@ -90,6 +110,7 @@ impl McpServer {
                 Transport::Remote { url } => Transport::Remote { url: redacted(url) },
             },
             env: self.env.iter().map(|name| redacted(name)).collect(),
+            block: self.block.clone(),
             trusted: self.trusted,
         }
     }
@@ -204,6 +225,7 @@ mod tests {
 
     fn server(transport: Transport) -> McpServer {
         McpServer {
+            block: "mcpServers".to_owned(),
             name: "s".to_owned(),
             transport,
             env: vec![],
@@ -377,6 +399,7 @@ mod tests {
     #[test]
     fn a_local_invocation_joins_its_arguments() {
         let s = McpServer {
+            block: "mcpServers".to_owned(),
             name: "pg".to_owned(),
             transport: Transport::Local {
                 command: "npx".to_owned(),
@@ -391,6 +414,7 @@ mod tests {
     #[test]
     fn a_local_invocation_without_arguments_is_the_command() {
         let s = McpServer {
+            block: "mcpServers".to_owned(),
             name: "x".to_owned(),
             transport: Transport::Local {
                 command: "./run.sh".to_owned(),
@@ -405,6 +429,7 @@ mod tests {
     #[test]
     fn a_remote_invocation_is_its_url() {
         let s = McpServer {
+            block: "mcpServers".to_owned(),
             name: "atlassian".to_owned(),
             transport: Transport::Remote {
                 url: "https://mcp.example.invalid/sse".to_owned(),

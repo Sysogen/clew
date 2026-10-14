@@ -1,0 +1,13 @@
+The closest file to the run wins a key, which is why the order matters: a
+nested layer putting the sandbox back is the fix, and reporting it anyway
+would be a finding against a configuration that never applied.
+
+The root still answers for a run started there, so this fixture keeps the
+root's sandbox bounded too and nothing is left to report.
+
+>>> .codex/config.toml
+approval_policy = "never"
+sandbox_mode = "read-only"
+>>> service/.codex/config.toml
+sandbox_mode = "workspace-write"
+approval_policy = "on-request"

@@ -380,6 +380,7 @@ mod tests {
         let settings = path(".claude/settings.json");
         let args = ["--api-key".to_owned(), "sk-live-SECRET".to_owned()];
         DiscoveryReport {
+            projects: Vec::new(),
             surfaces: vec![Surface {
                 path: settings.clone(),
                 kind: SurfaceKind::ClaudeCode,
@@ -400,6 +401,7 @@ mod tests {
             servers: vec![DeclaredServer {
                 source: path(".mcp.json"),
                 server: McpServer {
+                    block: "mcpServers".to_owned(),
                     name: "pg".to_owned(),
                     transport: Transport::local("npx".to_owned(), &args),
                     env: vec!["DATABASE_URL".to_owned()],

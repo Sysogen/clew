@@ -1,6 +1,6 @@
 # agent-runs-unattended
 
-Severity **high**, pack core 4.
+Severity **high**, pack core 5.
 
 An agent invoked with the flag that removes its permission prompt
 

@@ -30,14 +30,21 @@ impl Autonomy {
     /// happens.
     ///
     /// Codex `approval_policy` is absent on purpose: it stops the asking but
-    /// leaves the sandbox, which defaults to `read-only`. The other three
-    /// sandbox nothing, so the prompt was the only control they had.
+    /// leaves the sandbox, which defaults to `read-only`. The others sandbox
+    /// nothing, so the prompt was the only control they had.
+    ///
+    /// Codex writes that sandbox two ways. `default_permissions` names a
+    /// profile instead of a mode, and `:danger-full-access` is the built-in
+    /// that bounds nothing, so it is the same decision as the `sandbox_mode`
+    /// value beside it. Reading one spelling and not the other is how a
+    /// configuration escapes a rule by being written the newer way.
     #[must_use]
     pub fn is_unchecked(&self) -> bool {
         matches!(
             (self.key.as_str(), self.value.as_str()),
             ("permissions.defaultMode", "bypassPermissions")
                 | ("sandbox_mode", "danger-full-access")
+                | ("default_permissions", ":danger-full-access")
                 | ("chat.tools.global.autoApprove", "true")
                 | ("agent.tool_permissions.default", "allow")
         )
@@ -127,6 +134,27 @@ mod tests {
     fn an_empty_value_is_not_unchecked() {
         assert!(!mode("permissions.defaultMode", "").is_unchecked());
         assert!(!mode("", "").is_unchecked());
+    }
+
+    /// Codex takes the same decision in two spellings, and a rule that knows
+    /// one of them leaves the other unreported. `default_permissions` is the
+    /// profile form; `:danger-full-access` is the built-in that sandboxes
+    /// nothing, as `sandbox_mode = "danger-full-access"` does.
+    #[test]
+    fn a_permission_profile_with_full_access_is_unchecked() {
+        assert!(mode("default_permissions", ":danger-full-access").is_unchecked());
+    }
+
+    /// The other two built-ins bound what the agent reaches, so the prompt is
+    /// not the only control and this is not that rule.
+    #[test]
+    fn a_bounded_permission_profile_is_not_unchecked() {
+        for value in [":read-only", ":workspace", "project-profile"] {
+            assert!(
+                !mode("default_permissions", value).is_unchecked(),
+                "{value} bounds what the agent reaches"
+            );
+        }
     }
 
     /// Stopping the asking is not removing the sandbox.

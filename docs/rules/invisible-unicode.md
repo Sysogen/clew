@@ -1,6 +1,6 @@
 # invisible-unicode
 
-Severity **high**, pack core 4.
+Severity **high**, pack core 5.
 
 Non-printing Unicode in a file an agent reads as instructions
 

@@ -1,0 +1,13 @@
+A profile selected by name that grants no write. Resolving it rather than
+guessing from the name is what keeps this rule off every configuration that
+happens to name a profile.
+
+>>> .codex/config.toml
+approval_policy = "never"
+default_permissions = "ours"
+
+[permissions.ours]
+extends = ":read-only"
+
+[permissions.ours.filesystem]
+"/srv" = "read"

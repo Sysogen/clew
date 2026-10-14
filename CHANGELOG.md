@@ -5,7 +5,285 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- A dotted key's last segment is looked for under the parent the key names.
+  A file writes the whole key, as VS Code does, or nests it, as one putting
+  `defaultMode` under `permissions` does, and placement looked for that
+  segment anywhere: another block writing the same one is a different setting,
+  and anchoring there put the finding on it.
+
+  A grant is looked for the same way. Placement named the leaves alone,
+  `allow` and `allowed` among them, so a grant was looked for in any block
+  spelling one: a server given an `allow` list of its own came first in the
+  file, and `unrestricted-shell` pointed at that line and quoted it, which
+  grants nothing. The paths are now the ones extraction reads and no others,
+  `permissions.allow`, `permissions.allowed_tools`, `tools.allowed` and a
+  skill's `allowed-tools`, in extraction's order of preference, so a file
+  carrying two spellings is placed by the list the tool obeys.
+
+- A server's name is placed at the key declaring it, in the block it was
+  declared under. Placement looked for the name among the values of the block
+  holding it, so a server named in a sibling's arguments came first in the
+  file and `trusted-server` and `plaintext-transport` both pointed at that
+  sibling's line instead. And a file may declare one name in two of the
+  blocks clew reads, which are two declarations: each server now remembers
+  the block it came from, so a finding about the trusted one does not quote
+  its safe namesake. The five spellings live in one place for that, since a
+  copy of a set that lives somewhere else is how the two come to disagree.
+
+  A block's declarations are its own keys and not every key beneath them.
+  Placement indexed all of them, so a server named like a property an
+  earlier one holds, `command` or `url` among them, came first in the file
+  and a finding about the trusted declaration quoted that property's line.
+  What nests is now read the way the file writes it: brackets say it
+  wherever a format has them, and indentation says it as well where that is
+  what nests, which is YAML's block style. Indenting is read nowhere else,
+  because a bracketed block laid out over lines of different widths declares
+  all of them, and reading its indenting would keep only the one indented
+  least.
+
+  A key written inside a value is text rather than a declaration, which is
+  the rule a value already followed. A server named like a word another
+  server's value happens to hold was placed inside that value.
+
+  A server declared as a TOML table is placed at its header. Codex's
+  reference writes one as `[mcp_servers.pg]`, and a header holds no
+  separator after any segment, which is what placement read a key by, so
+  the finding fell back to naming the file. A header now declares its
+  segments, each nested under the one before, and the lines beneath it
+  belong to the last: `[mcp_servers.pg.env]` is `pg`'s environment and
+  declares no server, and a `command = ...` beneath `[mcp_servers.pg]` is a
+  property of `pg` rather than another server. A table runs to the next
+  header, so a key written in its body is found under it the way a nested
+  key is found under its parent. A bracket opening a line is a header only in
+  TOML: YAML writes a flow sequence that way, and reading it as a header
+  would nest everything after it a level deeper.
+
+  A comment written against a bare value, with no space between, ends the
+  value. JSONC's `//` and TOML's `#` open wherever they sit, and placement
+  read on into the comment, so the value it indexed was the value with the
+  comment left in it and nothing looked that up: a VS Code
+  `"chat.tools.global.autoApprove": true// trust everything` had
+  `bypass-permissions` naming the file rather than the line. The comment
+  now ends the word, as whitespace already did.
+
+- A finding is no longer placed on a key written inside a comment. Placement
+  finds a key by searching the text and took the first match, so a
+  `# sandbox_mode = "danger-full-access"` left in a file as a note had
+  `bypass-permissions` pointing at it and quoting the commented line as its
+  evidence: a finding that reads as an accusation about a setting somebody had
+  already turned off. Every rule placing by key had this.
+
+  A key is now read left to right in one pass, because a key is only a key
+  where the file is writing one. Inside a comment it is a note, and inside a
+  value it is prose: a quoted one looks exactly like a key, and what tells
+  them apart is the separator after the closing quote. Measured, a settings
+  file naming the setting in a note had the finding land on the next thing
+  that looked like the value, which was a different setting.
+
+  What counts as a comment and as a string is now the file's format, which
+  the rule placing a finding is given, because it is the one thing that cannot
+  be decided without it: `//` opens a comment in JSONC and sits inside a url
+  in YAML. So JSON has no comment to skip, JSONC ends a line at `//` wherever
+  it appears and runs a block to `*/`, TOML ends one at a `#` wherever it sits
+  while YAML and Bash need whitespace or a line start before it, since `a#b`
+  is a scalar holding a hash in one and a word in the other, and TOML takes a
+  single-quoted string literally and runs a long one between three quotes,
+  honouring escapes in the basic form and none in the literal one, and closing
+  on the last three of a run, since up to two quotes may sit against the
+  delimiter and belong to the value. Bash also
+  begins a token after an operator, so `:;# x` comments where `a#b` does not.
+  A quoted key is read in either quote, since TOML and YAML both take one
+  that way. A key written in any of those is text, not a declaration, and
+  neither is a
+  value: placement finds the key and then counts copies of the value after it,
+  so a note between two declarations used to put the second finding on the
+  note. The scan now carries through the values as well, and counts only the
+  values a key was given, which is the list or block after it, the next entry
+  where it sits inside one, or the rest of its line where it does not: a
+  compact file writes a whole object on one line, and running to the newline
+  there swallowed every key after this one, while outside a collection a comma
+  separates nothing, which is how `allowed-tools: Bash(a), Read` gives one key
+  two values, and the block indented beneath a key is that key's values too,
+  which is how frontmatter writes a list of tools: a grant written that way
+  used to fall back to naming the file rather than the line. So a `label` holding the same word between two `runOn` declarations
+  is another key's value, and counting it put the second finding on the label.
+
+  One pass also means a file holding many copies of a key costs its length
+  rather than its square. Measured on a 760 KB file with twenty thousand
+  commented copies: thirteen seconds of placement became half a second, which
+  matters because the files a scanner reads are not ones it chose.
+
+  That pass now runs once per file rather than once per declaration. Reading a
+  file and placing a finding in it were separate walks: the reader found four
+  thousand grants, and then each rule that reported one searched the file
+  again for it, so the cost was the file's length times the number of things
+  it declared. A mode was already read with its position, because the reader
+  knew it; a grant, a task, a server and a hook command were not, and now
+  they are. The reader builds one index of where a file writes the things it
+  declares and the rule looks its subject up, which is the same answer in one
+  walk. Measured on a file granting four thousand tools: 6.0 seconds became
+  3.7, against 3.6 for the same file before placement began reading comments
+  at all, so what is left of the difference is the cost of reading them.
+
+  A key the file writes many times is one walk too. Taking the values of a
+  key meant reading the file from its start, because what is a comment and
+  what is a string is only known from there, and a file declaring two
+  thousand automatic tasks writes `runOn` two thousand times: one walk each,
+  which is the shape the index was built to remove, left in place for every
+  key a file repeats. The walk is now separate from the range, so the values
+  are collected once and each key takes the ones beginning inside its own.
+  Measured on that file, 10.9 seconds became 9.1.
+
+  What is left of that one is not placement. A finding quotes the line it
+  sits on and masking a credential in that line costs the line's length, so
+  a file written on one line pays for the whole file in every finding it
+  earns. That is its own cost and this does not change it.
+
+  Where a found thing ends is still the reader's to say and not the index's.
+  A command written bare over several lines is indented in the file while the
+  command is not, so nothing searching for its text can honestly bound it;
+  only a reader that saw the block knows. A format read with positions gives
+  that span and placement takes it as given rather than searching at all.
+
 ### Added
+
+- Codex's named permissions profiles are read: `[permissions.<name>]` tables,
+  what each grants and the parent each extends. A profile is a sandbox written
+  apart from the key that selects it, so a mode naming one says nothing on its
+  own about what the agent may reach.
+
+- `unprompted-write-access`, the first rule that reads a whole scan rather
+  than one thing in one file. It fires on a pair of Codex settings each of
+  which clew calls harmless on its own: `approval_policy = "never"`, which
+  stops the asking, together with a sandbox that permits writes, written
+  either as `sandbox_mode = "workspace-write"` or as
+  `default_permissions = ":workspace"`.
+
+  The pair was already written down here as a limitation. `approval_policy`
+  stays out of `bypass-permissions` because Codex still sandboxes, so an
+  unasked agent is bounded; a sandbox permitting writes is bounded by
+  something asking. Set both and neither bound is left, and what the agent
+  may write unasked includes the files deciding what the next run does: a git
+  hook, an instruction file, that configuration. `danger-full-access` is left
+  to `bypass-permissions`, which reports it alone, so one key is not reported
+  twice.
+
+  A rule reading the whole scan belongs to no row, and a row's `check` list is
+  what makes the catalogue the place behaviour is decided. So the catalogue
+  names it, in `report_checks` beside `revision`, rather than every
+  report-reading rule running ungated. Schema 4, because a reader that did not
+  know the field would run none of the rules it names and report a clean scan,
+  which is the half-reading this number exists to refuse.
+
+  The finding is placed at the sandbox key, which is the half granting the
+  writes, and its evidence names both halves rather than quoting that line:
+  a reader shown `sandbox_mode = "workspace-write"` on its own, which this
+  rule's own page calls harmless, would be right to think the finding wrong.
+
+  The two halves need not be in one file. Codex walks up from the working
+  directory until it reaches a project root, which its reference gives as a
+  directory holding `.git`, then loads every `.codex/config.toml` from there
+  down, and the closest file to the run wins a key, so a root that stops the
+  asking and a nested file that permits writes leave neither control for a run
+  below. That order is what makes a nested file putting the sandbox back the
+  fix rather than another finding, and it is why the rule asks the question
+  once for each directory a run could start under. The walk stopping at a
+  project root is what keeps a submodule out of it: a submodule holds its own
+  `.git`, so a run inside it never loads the superproject's configuration, and
+  the scan notes where those are, although `.git` is no surface and is never
+  entered. `.git` is the only marker, because it is the only one the
+  reference gives by default: `.hg` and `.sl` count where
+  `project_root_markers` names them, and that setting lives in a machine's
+  own configuration outside any repository, which a scan of a repository
+  never opens. Stopping at them regardless read a boundary Codex does not
+  have, and a pair split across a nested Mercurial checkout, in force for
+  every run inside it, went unreported.
+
+  A `.codex/config.toml` the scan could not read or understand stops the walk
+  as well, and so does a `.codex` it could not list: either way the
+  configuration there is unknown, and a pair joined across it would be a
+  finding against settings no run ever had. Another tool's file failing to
+  parse says nothing about these keys and does not stop it.
+
+  A finding carries one path, so it is placed at the sandbox and the evidence
+  names the file the other half came from, last, because evidence is clipped
+  to a width and the two halves matter more than which file the far one sits
+  in. Two pairs are compared before that clipping, so how wide a report quotes
+  cannot change how many findings it holds.
+
+  A `default_permissions` naming a `[permissions.<name>]` table of its own is
+  resolved against that table rather than guessed at from its name. The
+  reference gives a profile filesystem rules, which grant `"write"` at a path
+  or under `:workspace_roots`, and an `extends` naming a parent applied before
+  it, so the chain is walked: a profile granting nothing of its own still
+  writes where its parent does. A file is free to write a cycle, and the
+  answer there is no rather than a scan that does not finish.
+
+  A profile is resolved the way the reference applies it. A nearer layer
+  overlays a farther one rule by rule rather than replacing its table, and
+  `extends` applies a parent before the profile the same way, so what a
+  child or a nearer file says at a path is what holds there and what it says
+  nothing about is left as it was: a child setting its parent's write back
+  to read has no write, and one overriding another path keeps it. A grant
+  written over a table replaces the table whole. Reading each profile for
+  whether it held a write anywhere, and the chain for whether any did,
+  reported a write on a child that had turned its parent's off, and dropped
+  a root's write when a nearer file redefined the profile without naming
+  that path. A built-in that writes still ends the walk: its rules are not
+  in the file, so nothing in the file is read as overriding them, and that
+  is where this stops.
+
+  A profile extending `:danger-full-access` is read as the write it is. The
+  reference does not list that built-in among the values `extends` takes, so a
+  profile naming it names something undocumented; the two answers available
+  are a finding on a configuration that may be unbounded and silence on one
+  that is, and silence is the worse of them. It is also the one case
+  `bypass-permissions` cannot see, because that rule reads the key selecting
+  the profile, which says `ours` rather than its parent. Written out, that
+  value is graded higher by that rule; behind a profile name it is graded here,
+  which understates it by a grade and is better than saying nothing.
+
+  The closest file wins a profile table as it wins any other key, so a root
+  defining `ours` as read-only and a nested file redefining it as a write are
+  two answers, and the nested one is in force below it.
+
+  A directory holding only a profile is a run location too. A file defining
+  the profile a file above it selects declares no mode of its own, and leaving
+  it out of the candidate layers meant never asking about the one place that
+  selection resolves to a write.
+
+  A report indexes the declarations by the directory each sits in, once, and
+  then walks a run's own directories rather than every declaration for each
+  run. Measured on a chain four hundred deep holding eight thousand profiles:
+  five point eight seconds became under one, and the cost is now bounded by
+  how deep a repository nests rather than by how much it declares.
+
+  Each mode is placed where its file wrote it as the scan reads that file, so
+  the report carries a position rather than the text it came from. Holding the
+  text instead would have kept every file declaring a mode open until the scan
+  ended, which is as many megabytes as there are such files, and the only
+  thing a report rule wanted from it was where to point.
+
+  Naming a rule in the wrong one of the two lists is refused at load, both
+  ways round. A row offers a rule the file it matched, so a row naming a
+  rule that reads the whole scan runs nothing; `report_checks` offers nothing
+  a file rule reads, so naming one there runs nothing either. Either mistake
+  would otherwise be a rule listed, never run, and a clean scan.
+
+- Codex's `default_permissions` is read, and `:danger-full-access` fires
+  `bypass-permissions` as `sandbox_mode = "danger-full-access"` already did,
+  which that rule's own page now says.
+  The two are the same decision in two spellings, and reading one of them is
+  how a configuration escapes a rule by being written the newer way.
+  `approval_policy` is read as inventory, since a scan saying what a file
+  declares cannot leave out the key deciding whether anyone is asked. Its
+  table form is recorded by the name it holds, which the reference calls
+  `granular`: a file writing it is overriding whatever a file above it said,
+  and recording nothing for it left that other file's `never` standing as
+  though nothing had replaced it. That key alone takes a table, so one found
+  under any other mode is a shape nothing documents and is still passed over.
 
 - Git hooks are read, which no row covered: `.git` is pruned by default, so
   `.git/hooks` was never entered, and clew did not see its own hooks in

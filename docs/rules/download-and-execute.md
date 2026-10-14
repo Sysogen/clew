@@ -1,6 +1,6 @@
 # download-and-execute
 
-Severity **high**, pack core 4.
+Severity **high**, pack core 5.
 
 Code fetched from the network and handed straight to an interpreter
 

@@ -16,6 +16,7 @@ use crate::yaml;
 use yaml_rust2::{Yaml, YamlLoader};
 
 use crate::permission::Permission;
+use crate::profile::{Access, Profile};
 
 /// Why a file could not be understood.
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
@@ -57,7 +58,113 @@ pub enum Format {
     Crushrc,
 }
 
+/// How a format writes a comment and a string.
+///
+/// Placement finds a key by searching the text, and a key is only a key where
+/// the file is writing one. What counts as a comment or a string is the one
+/// thing that cannot be decided without knowing which format is being read:
+/// `//` opens a comment in JSONC and sits inside a url in YAML.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(clippy::struct_excessive_bools)] // each one fact about a format, read apart
+pub struct Syntax {
+    /// What opens a comment that ends with the line, wherever it appears.
+    pub line: &'static [&'static str],
+    /// What opens one only where a token begins, which is after whitespace,
+    /// after one of `breaks`, or at a line start.
+    ///
+    /// YAML's rule for `#`, where `a#b` is a scalar holding a hash, and
+    /// Bash's, where it is a word. TOML ends a line at a `#` either way, so
+    /// its hash belongs in `line` instead.
+    pub spaced: &'static [&'static str],
+    /// What else ends a token, so a `spaced` marker after one still opens a
+    /// comment.
+    ///
+    /// Shell's operators. `:;# x` comments, because the `#` begins a token
+    /// as surely as it would after a space, and YAML has nothing like it.
+    pub breaks: &'static [u8],
+    /// What opens a string, each closing on the character that opened it.
+    pub quotes: &'static [u8],
+    /// Whether `/*` opens a comment that runs to `*/`.
+    pub block: bool,
+    /// Whether three quotes open a string that runs to the next three.
+    pub long: bool,
+    /// Whether indentation is what nests one key under another.
+    ///
+    /// YAML's block style, where a key belongs to the shallower key above
+    /// it. Everywhere else a bracket says what belongs to what and the
+    /// indenting is for the reader, so a file laid out over several lines
+    /// would otherwise read as several levels.
+    pub indented: bool,
+    /// Whether a bracket opening a line declares a table, as TOML's `[a.b]`
+    /// does: each segment is a key nested under the one before it, and the
+    /// lines beneath belong to the last. Opening a line anywhere else, a
+    /// bracket opens a list.
+    pub tables: bool,
+}
+
 impl Format {
+    /// How this format writes a comment and a string.
+    #[must_use]
+    pub fn syntax(self) -> Syntax {
+        match self {
+            // JSON has neither comment, and no string but a double-quoted one.
+            Self::Json => Syntax {
+                line: &[],
+                spaced: &[],
+                breaks: b"",
+                quotes: b"\"",
+                block: false,
+                long: false,
+                indented: false,
+                tables: false,
+            },
+            Self::Jsonc => Syntax {
+                line: &["//"],
+                spaced: &[],
+                breaks: b"",
+                quotes: b"\"",
+                block: true,
+                long: false,
+                indented: false,
+                tables: false,
+            },
+            Self::Toml => Syntax {
+                line: &["#"],
+                spaced: &[],
+                breaks: b"",
+                quotes: b"\"'",
+                block: false,
+                long: true,
+                indented: false,
+                tables: true,
+            },
+            // A Markdown file declares in a leading YAML block, so YAML's
+            // answer is its answer.
+            Self::Yaml | Self::Markdown => Syntax {
+                line: &[],
+                spaced: &["#"],
+                breaks: b"",
+                quotes: b"\"'",
+                block: false,
+                long: false,
+                indented: true,
+                tables: false,
+            },
+            // Bash, which comments and quotes as YAML does but begins a token
+            // after an operator too, so `:;# x` is a comment.
+            Self::Crushrc => Syntax {
+                line: &[],
+                spaced: &["#"],
+                breaks: b";&|()",
+                quotes: b"\"'",
+                block: false,
+                long: false,
+                indented: false,
+                tables: false,
+            },
+        }
+    }
+
     /// The format a catalogue row names, if it names one that exists.
     #[must_use]
     pub fn from_catalogue(name: &str) -> Option<Self> {
@@ -236,6 +343,8 @@ pub enum Extraction {
     Tasks,
     /// Steps a CI workflow runs.
     Workflow,
+    /// Named permissions profiles, which a mode selects by name.
+    Profiles,
 }
 
 impl Extraction {
@@ -248,6 +357,7 @@ impl Extraction {
             "mcp-servers" => Self::McpServers,
             "autonomy" => Self::Autonomy,
             "tasks" => Self::Tasks,
+            "permission-profiles" => Self::Profiles,
             "workflow" => Self::Workflow,
             _ => return None,
         })
@@ -269,6 +379,8 @@ pub struct Findings {
     pub tasks: Vec<Task>,
     /// Steps a CI workflow runs.
     pub steps: Vec<Step>,
+    /// Named permissions profiles the file defines.
+    pub profiles: Vec<Profile>,
 }
 
 /// Run `wanted` over `contents`, parsing it once.
@@ -306,6 +418,7 @@ pub fn run(wanted: &[Extraction], format: Format, contents: &str) -> Result<Find
             Extraction::McpServers => found.servers = mcp_servers(&root),
             Extraction::Autonomy => found.autonomy = autonomy(&root, format),
             Extraction::Tasks => found.tasks = tasks(&root),
+            Extraction::Profiles => found.profiles = profiles(&root),
             Extraction::Workflow => {
                 found.steps = spanned.as_ref().map(workflow).unwrap_or_default();
             }
@@ -458,6 +571,12 @@ const MODES: &[(Format, &str, &[&str])] = &[
         &["permissions", "defaultMode"],
     ),
     (Format::Toml, "sandbox_mode", &["sandbox_mode"]),
+    (Format::Toml, "approval_policy", &["approval_policy"]),
+    (
+        Format::Toml,
+        "default_permissions",
+        &["default_permissions"],
+    ),
     (
         Format::Json,
         "chat.tools.global.autoApprove",
@@ -469,6 +588,58 @@ const MODES: &[(Format, &str, &[&str])] = &[
         &["agent", "tool_permissions", "default"],
     ),
 ];
+
+/// The named permissions profiles a file defines.
+///
+/// A profile is a sandbox written apart from the key that selects it, so a
+/// mode naming one says nothing on its own about what the agent may reach.
+fn profiles(root: &serde_json::Value) -> Vec<Profile> {
+    let Some(defined) = root
+        .get("permissions")
+        .and_then(serde_json::Value::as_object)
+    else {
+        return Vec::new();
+    };
+    let mut found: Vec<Profile> = defined
+        .iter()
+        .map(|(name, body)| Profile {
+            name: name.clone(),
+            extends: body
+                .get("extends")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned),
+            filesystem: access_of(body.get("filesystem")),
+        })
+        .collect();
+    found.sort();
+    found
+}
+
+/// The filesystem rules under a profile, each as the file wrote it.
+///
+/// Read rule by rule rather than searched for a write, because what a rule
+/// gives a path is what a child profile or a nearer layer overrides, and that
+/// is decided at the path: a rule nests, the reference gives a path either a
+/// grant or a table of its own, and `:workspace_roots` always holds one. A
+/// number under there, the glob depth, is neither.
+fn access_of(at: Option<&serde_json::Value>) -> std::collections::BTreeMap<String, Access> {
+    at.and_then(serde_json::Value::as_object)
+        .map(|table| {
+            table
+                .iter()
+                .map(|(path, given)| (path.clone(), access(given)))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn access(given: &serde_json::Value) -> Access {
+    match given {
+        serde_json::Value::String(grant) => Access::Granted(grant.clone()),
+        serde_json::Value::Object(_) => Access::Nested(access_of(Some(given))),
+        _ => Access::Other,
+    }
+}
 
 /// The modes a file starts an agent in. A blank value selects none, so it is
 /// a defect rather than a declaration.
@@ -489,6 +660,19 @@ fn autonomy(root: &serde_json::Value, format: Format) -> Vec<Autonomy> {
                 serde_json::Value::String(text) => text.clone(),
                 // VS Code writes its switch as a boolean.
                 serde_json::Value::Bool(yes) => yes.to_string(),
+                // Codex writes `approval_policy` as a table too, and the
+                // reference names that form after the key it holds. Recorded
+                // by that name rather than passed over: a file writing it is
+                // overriding whatever a file above it said, and recording
+                // nothing let the override vanish and left the other file's
+                // mode standing as though nothing had replaced it.
+                //
+                // That key alone, because the reference gives every other
+                // mode a value, and a table found under one of those is a
+                // shape nothing documents rather than a form of the setting.
+                serde_json::Value::Object(table) if *key == "approval_policy" => {
+                    table.keys().next()?.clone()
+                }
                 _ => return None,
             };
             (!value.trim().is_empty()).then(|| Autonomy {
@@ -606,20 +790,33 @@ fn trigger(entry: &serde_json::Value) -> Option<String> {
 fn mcp_servers(root: &serde_json::Value) -> Vec<McpServer> {
     // Every spelling is read, not the first found, or a file carrying two
     // would report only one of them.
-    let mut found: Vec<McpServer> = [
-        "mcpServers",
-        "mcp_servers",
-        "context_servers",
-        "servers",
-        "mcp",
-    ]
-    .iter()
-    .filter_map(|key| root.get(key)?.as_object())
-    .flatten()
-    .filter_map(|(name, config)| server(name, config))
-    .collect();
-    found.sort();
-    found.dedup();
+    let mut found: Vec<McpServer> = crate::mcp_server::BLOCKS
+        .iter()
+        .filter_map(|key| Some((*key, root.get(key)?.as_object()?)))
+        .flat_map(|(key, declared)| {
+            declared
+                .iter()
+                .filter_map(move |(name, config)| server(key, name, config))
+        })
+        .collect();
+    // Two blocks declaring one server the same way declare one server, and
+    // the block each was read from is not part of that: it says where to
+    // point a finding, and with the declarations identical either place is
+    // the same place.
+    //
+    // Sorted by what makes them the same, with the block only breaking a
+    // tie, because a declaration sorting between two copies leaves them apart
+    // and both survive.
+    let same = |s: &McpServer| {
+        (
+            s.name.clone(),
+            s.transport.clone(),
+            s.env.clone(),
+            s.trusted,
+        )
+    };
+    found.sort_by_key(|s| (same(s), s.block.clone()));
+    found.dedup_by(|a, b| same(a) == same(b));
     found
 }
 
@@ -793,7 +990,7 @@ fn matrix_keys(text: &str) -> Vec<&str> {
 
 /// One server declaration. `None` when it reaches nothing: no command, and no
 /// url under either key a remote transport is declared with.
-fn server(name: &str, config: &serde_json::Value) -> Option<McpServer> {
+fn server(block: &str, name: &str, config: &serde_json::Value) -> Option<McpServer> {
     // A declaration carrying both keys is still one server, and `httpUrl` is
     // the one reported: Gemini CLI connects to it and warns that it is doing
     // so, so reporting `url` would name an endpoint nothing reaches.
@@ -823,6 +1020,7 @@ fn server(name: &str, config: &serde_json::Value) -> Option<McpServer> {
     env.sort();
 
     Some(McpServer {
+        block: block.to_owned(),
         name: name.to_owned(),
         transport,
         env,
@@ -1199,7 +1397,12 @@ DATABASE_URL = "postgres://u:hunter2@h/d"
 
         assert_eq!(camel.len(), 1, "Claude Code and Cursor spelling");
         assert_eq!(snake.len(), 1, "Codex spelling");
-        assert_eq!(camel, snake);
+        // The same server either way, but each remembers the block it was
+        // read from, which is where a finding about it is placed.
+        assert_eq!(camel[0].name, snake[0].name);
+        assert_eq!(camel[0].transport, snake[0].transport);
+        assert_eq!(camel[0].block, "mcpServers");
+        assert_eq!(snake[0].block, "mcp_servers");
     }
 
     /// Crush names the block `mcp`, so a reader of the other four spellings
@@ -1232,6 +1435,21 @@ DATABASE_URL = "postgres://u:hunter2@h/d"
         );
 
         assert_eq!(found.len(), 1, "{found:?}");
+    }
+
+    /// Two blocks declaring one server the same way declare one server, and
+    /// a third block declaring it differently must not come between them:
+    /// the order has to put the copies side by side or the pair survives.
+    #[test]
+    fn a_declaration_between_two_copies_does_not_hide_them() {
+        let found = servers_of(
+            r#"{"mcpServers":{"a":{"command":"x"}},
+                "mcp_servers":{"a":{"command":"x","trust":true}},
+                "servers":{"a":{"command":"x"}}}"#,
+        );
+
+        assert_eq!(found.len(), 2, "{found:?}");
+        assert_eq!(found.iter().filter(|s| s.trusted).count(), 1, "{found:?}");
     }
 
     #[test]
@@ -1299,6 +1517,79 @@ env = { DATABASE_URL = "postgres://u:hunter2@h/d", PGPORT = "5432" }
         );
     }
 
+    fn profiles_of(text: &str) -> Vec<Profile> {
+        run(&[Extraction::Profiles], Format::Toml, text)
+            .expect("parses")
+            .profiles
+    }
+
+    /// The reference gives a profile a description, a parent and a table of
+    /// filesystem rules. What a rule grants is read as written.
+    #[test]
+    fn a_permission_profile_is_read_for_what_it_grants() {
+        let found = profiles_of(
+            "[permissions.ours]\ndescription = \"ours\"\nextends = \":read-only\"\n\n[permissions.ours.filesystem]\n\"/srv\" = \"write\"\n",
+        );
+
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].name, "ours");
+        assert_eq!(found[0].extends.as_deref(), Some(":read-only"));
+        assert!(Profile::selected(&[&found[0]], "ours"));
+    }
+
+    /// A rule nests, and the reference says a path may hold a table of its
+    /// own, with `:workspace_roots` always holding one. A write under there
+    /// is a write.
+    #[test]
+    fn a_nested_filesystem_rule_granting_a_write_is_read() {
+        let found =
+            profiles_of("[permissions.ours.filesystem.\":workspace_roots\"]\n\".\" = \"write\"\n");
+
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(Profile::selected(&[&found[0]], "ours"), "{found:?}");
+    }
+
+    /// Reading only, which is the profile that bounds what it reaches.
+    #[test]
+    fn a_profile_granting_reads_does_not_write() {
+        let found = profiles_of(
+            "[permissions.ours.filesystem]\n\"/srv\" = \"read\"\n\"/etc\" = \"deny\"\n",
+        );
+
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(!Profile::selected(&[&found[0]], "ours"), "{found:?}");
+    }
+
+    /// The glob depth sits in the same table and is a number, not a grant.
+    /// A search for the word passes over it.
+    #[test]
+    fn the_glob_depth_is_not_a_grant() {
+        let found = profiles_of("[permissions.ours.filesystem]\nglob_scan_max_depth = 4\n");
+
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(!Profile::selected(&[&found[0]], "ours"), "{found:?}");
+    }
+
+    /// Several profiles in one file, in a settled order so a report of them
+    /// does not depend on how a table was spelt.
+    #[test]
+    fn every_profile_in_a_file_is_read_in_order() {
+        let found = profiles_of(
+            "[permissions.second]\nextends = \":workspace\"\n\n[permissions.first]\ndescription = \"x\"\n",
+        );
+
+        assert_eq!(
+            found.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(),
+            vec!["first", "second"]
+        );
+    }
+
+    /// A file with no profiles, which is almost all of them.
+    #[test]
+    fn a_file_defining_no_profile_yields_none() {
+        assert!(profiles_of("approval_policy = \"never\"\n").is_empty());
+    }
+
     fn modes_of(format: Format, text: &str) -> Vec<Autonomy> {
         run(&[Extraction::Autonomy], format, text)
             .expect("parses")
@@ -1334,6 +1625,45 @@ env = { DATABASE_URL = "postgres://u:hunter2@h/d", PGPORT = "5432" }
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].key, "sandbox_mode");
         assert_eq!(found[0].value, "danger-full-access");
+    }
+
+    /// Codex's two axes. The reference gives `approval_policy` as
+    /// `on-request | never | { granular = ... }`, and the sandbox in two
+    /// spellings: `sandbox_mode`, or a `default_permissions` profile.
+    #[test]
+    fn codex_approval_and_permission_profile_are_read() {
+        let found = modes_of(
+            Format::Toml,
+            "approval_policy = \"never\"\ndefault_permissions = \":workspace\"\n",
+        );
+
+        assert_eq!(
+            found
+                .iter()
+                .map(|m| (m.key.as_str(), m.value.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("approval_policy", "never"),
+                ("default_permissions", ":workspace"),
+            ],
+            "{found:?}"
+        );
+    }
+
+    /// `approval_policy` also takes a table, and the reference names that
+    /// form `granular`. What it selects is recorded by the name the file
+    /// wrote, because a file writing it is overriding whatever a file above
+    /// it said, and recording nothing let that override vanish.
+    #[test]
+    fn a_granular_approval_policy_is_the_mode_it_names() {
+        let found = modes_of(
+            Format::Toml,
+            "[approval_policy.granular]\nrules = true\nmcp_elicitations = false\n",
+        );
+
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].key, "approval_policy");
+        assert_eq!(found[0].value, "granular");
     }
 
     /// At the root it is a different key, and not one Claude Code honours.
@@ -1444,6 +1774,9 @@ env = { DATABASE_URL = "postgres://u:hunter2@h/d", PGPORT = "5432" }
             assert!(modes_of(Format::Json, text).is_empty(), "{text}");
         }
         assert!(modes_of(Format::Toml, "sandbox_mode = 3\n").is_empty());
+        // A table under a key the reference gives a value: a shape nothing
+        // documents, not a form of the setting.
+        assert!(modes_of(Format::Toml, "[sandbox_mode]\nmode = \"x\"\n").is_empty());
     }
 
     /// Frontmatter has no mode to read.
